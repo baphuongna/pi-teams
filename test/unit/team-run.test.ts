@@ -1,0 +1,31 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import test from "node:test";
+import assert from "node:assert/strict";
+import { handleTeamTool } from "../../src/extension/team-tool.ts";
+
+test("team run creates durable artifacts and status", async () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-run-test-"));
+	fs.mkdirSync(path.join(cwd, ".pi"));
+	try {
+		const run = await handleTeamTool({ action: "run", team: "default", goal: "Test durable run" }, { cwd });
+		assert.equal(run.isError, false);
+		const runId = run.details.runId;
+		assert.ok(runId);
+		const stateRoot = path.join(cwd, ".pi", "teams", "state", "runs", runId!);
+		const artifactsRoot = path.join(cwd, ".pi", "teams", "artifacts", runId!);
+		assert.ok(fs.existsSync(path.join(stateRoot, "manifest.json")));
+		assert.ok(fs.existsSync(path.join(stateRoot, "tasks.json")));
+		assert.ok(fs.existsSync(path.join(stateRoot, "events.jsonl")));
+		assert.ok(fs.existsSync(path.join(artifactsRoot, "goal.md")));
+		assert.ok(fs.existsSync(path.join(artifactsRoot, "prompts", "01_explore.md")));
+
+		const status = await handleTeamTool({ action: "status", runId }, { cwd });
+		assert.equal(status.isError, false);
+		assert.match(status.content[0]?.text ?? "", /Status: completed/);
+		assert.match(status.content[0]?.text ?? "", /Recent events:/);
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});

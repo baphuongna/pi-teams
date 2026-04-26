@@ -1,0 +1,56 @@
+import { execFileSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import test from "node:test";
+import assert from "node:assert/strict";
+import { handleTeamTool } from "../../src/extension/team-tool.ts";
+import { loadRunManifestById } from "../../src/state/state-store.ts";
+
+function hasGit(): boolean {
+	try {
+		execFileSync("git", ["--version"], { stdio: "ignore" });
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function git(cwd: string, args: string[]): void {
+	execFileSync("git", args, { cwd, stdio: "ignore" });
+}
+
+test("worktree mode creates task worktrees and exposes them", async (t) => {
+	if (!hasGit()) {
+		t.skip("git is not available");
+		return;
+	}
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-worktree-test-"));
+	try {
+		git(cwd, ["init"]);
+		git(cwd, ["config", "user.email", "pi-teams@example.invalid"]);
+		git(cwd, ["config", "user.name", "pi Teams Test"]);
+		fs.writeFileSync(path.join(cwd, "README.md"), "test\n", "utf-8");
+		fs.writeFileSync(path.join(cwd, ".gitignore"), ".pi/\n", "utf-8");
+		git(cwd, ["add", "README.md", ".gitignore"]);
+		git(cwd, ["commit", "-m", "initial"]);
+
+		const run = await handleTeamTool({ action: "run", team: "fast-fix", goal: "Worktree smoke", workspaceMode: "worktree" }, { cwd });
+		assert.equal(run.isError, false);
+		const runId = run.details.runId;
+		assert.ok(runId);
+		const loaded = loadRunManifestById(cwd, runId!);
+		assert.equal(loaded?.manifest.status, "completed");
+		assert.ok(loaded?.tasks.every((task) => task.worktree?.path && fs.existsSync(task.worktree.path)));
+
+		const worktrees = await handleTeamTool({ action: "worktrees", runId }, { cwd });
+		assert.equal(worktrees.isError, false);
+		assert.match(worktrees.content[0]?.text ?? "", /branch=pi-teams\//);
+
+		const cleanup = await handleTeamTool({ action: "cleanup", runId }, { cwd });
+		assert.equal(cleanup.isError, false);
+		assert.match(cleanup.content[0]?.text ?? "", /Removed:/);
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});

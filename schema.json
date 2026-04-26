@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/pi-teams.schema.json",
+  "title": "pi-teams config",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "asyncByDefault": {
+      "type": "boolean",
+      "description": "Run team workflows in detached async mode by default when the tool call omits async."
+    },
+    "executeWorkers": {
+      "type": "boolean",
+      "description": "Allow real child Pi workers without setting PI_TEAMS_EXECUTE_WORKERS=1."
+    },
+    "notifierIntervalMs": {
+      "type": "number",
+      "minimum": 1000,
+      "description": "Polling interval for async completion notifications."
+    },
+    "requireCleanWorktreeLeader": {
+      "type": "boolean",
+      "description": "Require a clean leader git repository before provisioning worktrees."
+    },
+    "autonomous": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Autonomous team routing policy injected into the agent system prompt.",
+      "properties": {
+        "profile": { "type": "string", "enum": ["manual", "suggested", "assisted", "aggressive"] },
+        "enabled": { "type": "boolean" },
+        "injectPolicy": { "type": "boolean" },
+        "preferAsyncForLongTasks": { "type": "boolean" },
+        "allowWorktreeSuggestion": { "type": "boolean" },
+        "magicKeywords": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

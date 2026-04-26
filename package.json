@@ -1,0 +1,71 @@
+{
+  "name": "pi-teams",
+  "version": "0.1.0",
+  "description": "Pi extension for coordinated AI teams, workflows, worktrees, and async task orchestration",
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "pi-teams": "install.mjs"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "teams",
+    "agents",
+    "multi-agent",
+    "orchestration"
+  ],
+  "files": [
+    "*.ts",
+    "*.mjs",
+    "src/**/*.ts",
+    "agents/",
+    "teams/",
+    "workflows/",
+    "skills/**/*",
+    "README.md",
+    "AGENTS.md",
+    "docs/",
+    "tsconfig.json",
+    "schema.json",
+    "CHANGELOG.md",
+    "LICENSE",
+    "NOTICE.md"
+  ],
+  "scripts": {
+    "check": "npm run ci",
+    "ci": "npm run typecheck && npm test && npm pack --dry-run",
+    "typecheck": "tsc --noEmit && node --experimental-strip-types -e \"await import('./index.ts'); console.log('strip-types import ok')\"",
+    "test": "npm run test:unit",
+    "test:unit": "node --experimental-strip-types --test test/unit/*.test.ts",
+    "smoke:pi": "pi install ."
+  },
+  "exports": {
+    "./schema.json": "./schema.json"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-agent-core": "*",
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*"
+  },
+  "dependencies": {
+    "typebox": "^1.1.24"
+  },
+  "devDependencies": {
+    "@mariozechner/pi-agent-core": "^0.65.0",
+    "@mariozechner/pi-ai": "^0.65.0",
+    "@mariozechner/pi-coding-agent": "^0.65.0",
+    "typescript": "^5.9.3"
+  }
+}

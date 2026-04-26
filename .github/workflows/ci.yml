@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Node ${{ matrix.node-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+        node-version:
+          - 22
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: pi-teams/package-lock.json
+      - name: Print platform diagnostics
+        working-directory: pi-teams
+        run: |
+          node -p "JSON.stringify({ platform: process.platform, arch: process.arch, node: process.version, cwd: process.cwd() }, null, 2)"
+          npm --version
+      - name: Install dependencies
+        working-directory: pi-teams
+        run: npm ci
+      - name: Typecheck
+        working-directory: pi-teams
+        run: npm run typecheck
+      - name: Test
+        working-directory: pi-teams
+        run: npm test
+      - name: Pack dry run
+        working-directory: pi-teams
+        run: npm pack --dry-run
