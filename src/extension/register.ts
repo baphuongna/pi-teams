@@ -1,4 +1,6 @@
+import * as fs from "node:fs";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, ToolDefinition } from "@mariozechner/pi-coding-agent";
+import { Type } from "typebox";
 import { loadConfig } from "../config/config.ts";
 import { registerAutonomousPolicy } from "./autonomous-policy.ts";
 import { TeamToolParams, type TeamToolParamsValue } from "../schema/team-tool-schema.ts";
@@ -17,6 +19,7 @@ import { DurableTextViewer, DurableTranscriptViewer } from "../ui/transcript-vie
 import { loadRunManifestById } from "../state/state-store.ts";
 import { readCrewAgents } from "../runtime/crew-agent-records.ts";
 import { terminateActiveChildPiProcesses } from "../runtime/child-pi.ts";
+import { SubagentManager, type SubagentRecord, type SubagentSpawnOptions } from "../runtime/subagent-manager.ts";
 
 function parseRunArgs(args: string): TeamToolParamsValue {
 	const tokens = args.match(/"[^"]*"|'[^']*'|\S+/g)?.map((token) => token.replace(/^['"]|['"]$/g, "")) ?? [];
@@ -100,6 +103,55 @@ function setNestedConfig(config: Record<string, unknown>, key: string, value: un
 	target[parts[parts.length - 1]!] = value;
 }
 
+function sendFollowUp(pi: ExtensionAPI, content: string): void {
+	const sender = (pi as unknown as { sendMessage?: (message: unknown, options?: unknown) => void }).sendMessage;
+	if (typeof sender !== "function") return;
+	sender.call(pi, { customType: "pi-crew-subagent-notification", content, display: true }, { deliverAs: "followUp", triggerTurn: true });
+}
+
+function formatSubagentRecord(record: SubagentRecord): string {
+	const duration = record.completedAt ? `${Math.round((record.completedAt - record.startedAt) / 1000)}s` : "running";
+	return [
+		`Agent: ${record.id}`,
+		`Type: ${record.type}`,
+		`Status: ${record.status}`,
+		record.runId ? `Run: ${record.runId}` : undefined,
+		`Description: ${record.description}`,
+		record.model ? `Model: ${record.model}` : undefined,
+		`Duration: ${duration}`,
+		record.error ? `Error: ${record.error}` : undefined,
+	].filter((line): line is string => Boolean(line)).join("\n");
+}
+
+function readSubagentRunResult(ctx: ExtensionContext | ExtensionCommandContext, record: SubagentRecord): string | undefined {
+	if (!record.runId) return record.result;
+	const loaded = loadRunManifestById(ctx.cwd, record.runId);
+	const task = loaded?.tasks.find((item) => item.resultArtifact) ?? loaded?.tasks[0];
+	const path = task?.resultArtifact?.path;
+	if (!path) return undefined;
+	try {
+		return fs.readFileSync(path, "utf-8").trim();
+	} catch {
+		return undefined;
+	}
+}
+
+function subagentToolResult(text: string, details: Record<string, unknown> = {}, isError = false) {
+	return { content: [{ type: "text" as const, text }], details, isError };
+}
+
+export function __test__subagentSpawnParams(params: Record<string, unknown>, ctx: Pick<ExtensionContext, "cwd">): SubagentSpawnOptions {
+	return {
+		cwd: ctx.cwd,
+		type: typeof params.subagent_type === "string" && params.subagent_type.trim() ? params.subagent_type.trim() : "executor",
+		description: typeof params.description === "string" && params.description.trim() ? params.description.trim() : "pi-crew subagent",
+		prompt: typeof params.prompt === "string" ? params.prompt : "",
+		background: params.run_in_background === true,
+		model: typeof params.model === "string" && params.model.trim() ? params.model.trim() : undefined,
+		maxTurns: typeof params.max_turns === "number" && Number.isFinite(params.max_turns) ? params.max_turns : undefined,
+	};
+}
+
 export function registerPiTeams(pi: ExtensionAPI): void {
 	const globalStore = globalThis as Record<string, unknown>;
 	const runtimeCleanupStoreKey = "__piCrewRuntimeCleanup";
@@ -112,18 +164,37 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	let rpcHandle: PiCrewRpcHandle | undefined;
 	let cleanedUp = false;
 	const widgetState: CrewWidgetState = { frame: 0 };
+	const subagentManager = new SubagentManager(4, (record) => {
+		if (!record.background || record.resultConsumed) return;
+		if (record.status === "completed" || record.status === "failed" || record.status === "cancelled" || record.status === "error") {
+			sendFollowUp(pi, [`pi-crew subagent ${record.id} ${record.status}.`, record.runId ? `Run: ${record.runId}` : undefined, `Use get_subagent_result with agent_id=${record.id} for output.`].filter((line): line is string => Boolean(line)).join("\n"));
+		}
+	});
 	const foregroundControllers = new Set<AbortController>();
 	let liveSidebarRunId: string | undefined;
 	let liveSidebarTimer: ReturnType<typeof setInterval> | undefined;
 	const requestRender = (ctx: ExtensionContext): void => (ctx.ui as { requestRender?: () => void }).requestRender?.();
+	const stopSessionBoundSubagents = (): void => {
+		for (const controller of foregroundControllers) controller.abort();
+		foregroundControllers.clear();
+		subagentManager.abortAll();
+		terminateActiveChildPiProcesses();
+		if (liveSidebarTimer) clearInterval(liveSidebarTimer);
+		liveSidebarTimer = undefined;
+		liveSidebarRunId = undefined;
+		if (currentCtx) stopCrewWidget(currentCtx, widgetState, loadConfig(currentCtx.cwd).config.ui);
+		clearPiCrewPowerbar(pi.events);
+	};
 	const openLiveSidebar = (ctx: ExtensionContext, runId: string): void => {
 		const uiConfig = loadConfig(ctx.cwd).config.ui;
-		const autoOpen = uiConfig?.autoOpenDashboard ?? true;
-		const foregroundAutoOpen = uiConfig?.autoOpenDashboardForForegroundRuns ?? true;
+		const autoOpen = uiConfig?.autoOpenDashboard === true;
+		const foregroundAutoOpen = uiConfig?.autoOpenDashboardForForegroundRuns !== false;
 		if (!ctx.hasUI || !autoOpen || !foregroundAutoOpen || (uiConfig?.dashboardPlacement ?? "right") !== "right") return;
 		if (liveSidebarRunId === runId) return;
 		if (liveSidebarTimer) clearInterval(liveSidebarTimer);
 		liveSidebarRunId = runId;
+		ctx.ui.setWidget("pi-crew", undefined, { placement: uiConfig?.widgetPlacement ?? "aboveEditor" });
+		ctx.ui.setWidget("pi-crew-active", undefined, { placement: uiConfig?.widgetPlacement ?? "aboveEditor" });
 		const width = Math.min(90, Math.max(40, uiConfig?.dashboardWidth ?? 56));
 		liveSidebarTimer = setInterval(() => requestRender(ctx), uiConfig?.dashboardLiveRefreshMs ?? 1000);
 		liveSidebarTimer.unref?.();
@@ -134,9 +205,10 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 			if (liveSidebarRunId === runId) liveSidebarRunId = undefined;
 			if (liveSidebarTimer) clearInterval(liveSidebarTimer);
 			liveSidebarTimer = undefined;
+			updateCrewWidget(ctx, widgetState, loadConfig(ctx.cwd).config.ui);
 		});
 	};
-	const startForegroundRun = (ctx: ExtensionContext, runner: (signal?: AbortSignal) => Promise<void>): void => {
+	const startForegroundRun = (ctx: ExtensionContext, runner: (signal?: AbortSignal) => Promise<void>, runId?: string): void => {
 		const controller = new AbortController();
 		foregroundControllers.add(controller);
 		setImmediate(() => {
@@ -147,6 +219,12 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 				})
 				.finally(() => {
 					foregroundControllers.delete(controller);
+					if (runId) {
+						const loaded = loadRunManifestById(ctx.cwd, runId);
+						const status = loaded?.manifest.status ?? "finished";
+						const level = status === "failed" || status === "blocked" ? "error" : status === "cancelled" ? "warning" : "info";
+						ctx.ui.notify(`pi-crew run ${runId} ${status}. Use /team-summary ${runId} or /team-status ${runId}.`, level as "info" | "warning" | "error");
+					}
 					if (currentCtx) {
 						const config = loadConfig(currentCtx.cwd).config.ui;
 						updateCrewWidget(currentCtx, widgetState, config);
@@ -160,14 +238,9 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	const cleanupRuntime = (): void => {
 		if (cleanedUp) return;
 		cleanedUp = true;
-		for (const controller of foregroundControllers) controller.abort();
-		foregroundControllers.clear();
-		terminateActiveChildPiProcesses();
+		stopSessionBoundSubagents();
 		stopAsyncRunNotifier(notifierState);
 		stopCrewWidget(currentCtx, widgetState, currentCtx ? loadConfig(currentCtx.cwd).config.ui : undefined);
-		if (liveSidebarTimer) clearInterval(liveSidebarTimer);
-		liveSidebarTimer = undefined;
-		liveSidebarRunId = undefined;
 		clearPiCrewPowerbar(pi.events);
 		rpcHandle?.unsubscribe();
 		rpcHandle = undefined;
@@ -179,6 +252,8 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
 		cleanedUp = false;
 		currentCtx = ctx;
+		if (widgetState.interval) clearInterval(widgetState.interval);
+		widgetState.interval = undefined;
 		notifyActiveRuns(ctx);
 		const loadedConfig = loadConfig(ctx.cwd);
 		registerPiCrewPowerbarSegments(pi.events, loadedConfig.config.ui);
@@ -188,10 +263,18 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		widgetState.interval = setInterval(() => {
 			if (!currentCtx) return;
 			const config = loadConfig(currentCtx.cwd).config.ui;
-			updateCrewWidget(currentCtx, widgetState, config);
+			if (liveSidebarRunId) {
+				currentCtx.ui.setWidget("pi-crew", undefined, { placement: config?.widgetPlacement ?? "aboveEditor" });
+				currentCtx.ui.setWidget("pi-crew-active", undefined, { placement: config?.widgetPlacement ?? "aboveEditor" });
+			} else {
+				updateCrewWidget(currentCtx, widgetState, config);
+			}
 			updatePiCrewPowerbar(pi.events, currentCtx.cwd, config);
 		}, 1000);
 		widgetState.interval.unref?.();
+	});
+	pi.on("session_before_switch", () => {
+		stopSessionBoundSubagents();
 	});
 	pi.on("session_shutdown", () => {
 		cleanupRuntime();
@@ -209,7 +292,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 			const abort = (): void => controller.abort();
 			signal?.addEventListener("abort", abort, { once: true });
 			try {
-				const output = await handleTeamTool(params as TeamToolParamsValue, { ...ctx, signal: controller.signal, startForegroundRun: (runner) => startForegroundRun(ctx, runner), onRunStarted: (runId) => openLiveSidebar(ctx, runId) });
+				const output = await handleTeamTool(params as TeamToolParamsValue, { ...ctx, signal: controller.signal, startForegroundRun: (runner, runId) => startForegroundRun(ctx, runner, runId), onRunStarted: (runId) => openLiveSidebar(ctx, runId) });
 				const config = loadConfig(ctx.cwd).config.ui;
 				updateCrewWidget(ctx, widgetState, config);
 				updatePiCrewPowerbar(pi.events, ctx.cwd, config);
@@ -223,6 +306,106 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 
 	pi.registerTool(tool);
 
+	const agentTool: ToolDefinition = {
+		name: "Agent",
+		label: "Agent",
+		description: "Launch a real pi-crew subagent. Uses pi-crew's durable child-process runtime by default; set run_in_background=true for parallel/background work, then use get_subagent_result.",
+		promptSnippet: "Use Agent to delegate focused work to a real pi-crew subagent. Use run_in_background=true for parallel work and get_subagent_result to join results.",
+		promptGuidelines: [
+			"Use Agent for independent exploration, review, verification, or implementation subtasks instead of doing all work in the parent turn.",
+			"For parallel work, launch multiple Agent calls with run_in_background=true, then call get_subagent_result for each result.",
+			"Available pi-crew subagent types include explorer, planner, analyst, executor, reviewer, verifier, writer, security-reviewer, and test-engineer.",
+		],
+		parameters: Type.Object({
+			prompt: Type.String({ description: "The task for the subagent to perform." }),
+			description: Type.String({ description: "Short 3-5 word task description." }),
+			subagent_type: Type.String({ description: "pi-crew agent name, e.g. explorer, planner, executor, reviewer, verifier, writer, security-reviewer, test-engineer." }),
+			model: Type.Optional(Type.String({ description: "Optional model override. If omitted, pi-crew uses Pi-configured model fallback." })),
+			max_turns: Type.Optional(Type.Number({ description: "Reserved for live-session subagents; child-process runtime may ignore this." })),
+			run_in_background: Type.Optional(Type.Boolean({ description: "Run in background and return an agent ID immediately." })),
+		}) as never,
+		async execute(_id, params, signal, _onUpdate, ctx) {
+			const options = __test__subagentSpawnParams(params as Record<string, unknown>, ctx);
+			if (!options.prompt.trim()) return subagentToolResult("Agent requires prompt.", {}, true);
+			const runner = async (spawnOptions: SubagentSpawnOptions, childSignal?: AbortSignal) => handleTeamTool({
+				action: "run",
+				agent: spawnOptions.type,
+				goal: spawnOptions.prompt,
+				model: spawnOptions.model,
+				async: false,
+			}, spawnOptions.background ? { ...ctx, signal: childSignal, startForegroundRun: (run, runId) => startForegroundRun(ctx, run, runId), onRunStarted: (runId) => openLiveSidebar(ctx, runId) } : { ...ctx, signal: childSignal });
+			const record = subagentManager.spawn(options, runner, options.background ? undefined : signal);
+			if (options.background || record.status === "queued") {
+				return subagentToolResult([`Agent ${record.status === "queued" ? "queued" : "started"}.`, `Agent ID: ${record.id}`, `Type: ${record.type}`, `Description: ${record.description}`, "Use get_subagent_result to retrieve output. Do not duplicate this agent's work."].join("\n"), { agentId: record.id, status: record.status });
+			}
+			await record.promise;
+			const output = readSubagentRunResult(ctx, record) ?? record.result ?? "No output.";
+			return subagentToolResult([`Agent ${record.id} ${record.status}.`, "", output].join("\n"), { agentId: record.id, runId: record.runId, status: record.status }, record.status === "failed" || record.status === "error");
+		},
+	};
+
+	const getSubagentResultTool: ToolDefinition = {
+		name: "get_subagent_result",
+		label: "Get Agent Result",
+		description: "Check status and retrieve results from a pi-crew background subagent.",
+		parameters: Type.Object({
+			agent_id: Type.String({ description: "Agent ID returned by Agent." }),
+			wait: Type.Optional(Type.Boolean({ description: "Wait for completion before returning." })),
+			verbose: Type.Optional(Type.Boolean({ description: "Include status metadata before output." })),
+		}) as never,
+		async execute(_id, params, _signal, _onUpdate, ctx) {
+			const p = params as { agent_id?: string; wait?: boolean; verbose?: boolean };
+			if (!p.agent_id) return subagentToolResult("get_subagent_result requires agent_id.", {}, true);
+			const record = subagentManager.getRecord(p.agent_id);
+			if (!record) return subagentToolResult(`Agent not found: ${p.agent_id}`, {}, true);
+			let current = record;
+			if (p.wait && (current.status === "running" || current.status === "queued")) {
+				current.resultConsumed = true;
+				current = await subagentManager.waitForRecord(current.id) ?? current;
+			}
+			const output = readSubagentRunResult(ctx, current);
+			if (current.status !== "running" && current.status !== "queued") current.resultConsumed = true;
+			const text = [p.verbose ? formatSubagentRecord(current) : undefined, output ? `${p.verbose ? "\n" : ""}${output}` : current.status === "running" || current.status === "queued" ? "Agent is still running. Use wait=true or check again later." : current.error ?? "No output."].filter((line): line is string => Boolean(line)).join("\n");
+			return subagentToolResult(text, { agentId: current.id, runId: current.runId, status: current.status }, current.status === "failed" || current.status === "error");
+		},
+	};
+
+	const steerSubagentTool: ToolDefinition = {
+		name: "steer_subagent",
+		label: "Steer Agent",
+		description: "Send a steering note to a running pi-crew subagent. Live-session steering is planned; child-process runs expose durable status and can be cancelled if needed.",
+		parameters: Type.Object({ agent_id: Type.String(), message: Type.String() }) as never,
+		async execute(_id, params) {
+			const p = params as { agent_id?: string; message?: string };
+			const record = p.agent_id ? subagentManager.getRecord(p.agent_id) : undefined;
+			if (!record) return subagentToolResult(`Agent not found: ${p.agent_id ?? ""}`, {}, true);
+			return subagentToolResult([`Steering request noted for ${record.id}.`, "Current default pi-crew backend is child-process, so mid-turn session.steer is not available yet.", record.runId ? `Use team cancel runId=${record.runId} if the agent must be interrupted.` : undefined].filter((line): line is string => Boolean(line)).join("\n"), { agentId: record.id, runId: record.runId, status: record.status });
+		},
+	};
+
+	const crewAgentTool: ToolDefinition = {
+		...agentTool,
+		name: "crew_agent",
+		label: "Crew Agent",
+		description: "Launch a real pi-crew subagent using a conflict-safe pi-crew-specific tool name.",
+		promptSnippet: "Use crew_agent when you need pi-crew subagents and another extension may own the generic Agent tool.",
+	};
+	const crewAgentResultTool: ToolDefinition = {
+		...getSubagentResultTool,
+		name: "crew_agent_result",
+		label: "Get Crew Agent Result",
+		description: "Check status and retrieve results from a pi-crew subagent using the conflict-safe tool name.",
+	};
+	const crewAgentSteerTool: ToolDefinition = {
+		...steerSubagentTool,
+		name: "crew_agent_steer",
+		label: "Steer Crew Agent",
+		description: "Send a steering note to a pi-crew subagent using the conflict-safe tool name.",
+	};
+	for (const extraTool of [agentTool, getSubagentResultTool, steerSubagentTool, crewAgentTool, crewAgentResultTool, crewAgentSteerTool]) {
+		pi.registerTool(extraTool);
+	}
+
 	pi.registerCommand("teams", {
 		description: "List pi-crew teams, workflows, and agents",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
@@ -234,7 +417,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	pi.registerCommand("team-run", {
 		description: "Manually start a pi-crew run (agent may also use the team tool autonomously)",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
-			const result = await handleTeamTool(parseRunArgs(args), { ...ctx, startForegroundRun: (runner) => startForegroundRun(ctx as ExtensionContext, runner), onRunStarted: (runId) => openLiveSidebar(ctx as ExtensionContext, runId) });
+			const result = await handleTeamTool(parseRunArgs(args), { ...ctx, startForegroundRun: (runner, runId) => startForegroundRun(ctx as ExtensionContext, runner, runId), onRunStarted: (runId) => openLiveSidebar(ctx as ExtensionContext, runId) });
 			await notifyCommandResult(ctx, commandText(result));
 		},
 	});

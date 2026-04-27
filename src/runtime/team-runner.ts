@@ -17,6 +17,7 @@ import { saveCrewAgents } from "./crew-agent-records.ts";
 import { recordsForMaterializedTasks } from "./task-display.ts";
 import { deliverGroupJoin, resolveGroupJoinMode } from "./group-join.ts";
 import { runTeamTask } from "./task-runner.ts";
+import { resolveBatchConcurrency } from "./concurrency.ts";
 
 export interface ExecuteTeamRunInput {
 	manifest: TeamRunManifest;
@@ -167,9 +168,10 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 			return { manifest, tasks };
 		}
 
-		const defaultConcurrency = input.workflow.name === "parallel-research" ? 4 : input.workflow.name === "research" ? 2 : input.workflow.name === "implementation" || input.workflow.name === "review" || input.workflow.name === "default" ? 2 : 1;
-		const maxConcurrent = Math.max(1, input.limits?.maxConcurrentWorkers ?? input.team.maxConcurrency ?? defaultConcurrency);
-		const readyBatch = getReadyTasks(tasks, maxConcurrent);
+		const snapshot = taskGraphSnapshot(tasks);
+		const readyRoles = snapshot.ready.map((taskId) => tasks.find((task) => task.id === taskId)?.role).filter((role): role is string => Boolean(role));
+		const concurrency = resolveBatchConcurrency({ workflowName: input.workflow.name, teamMaxConcurrency: input.team.maxConcurrency, limitMaxConcurrentWorkers: input.limits?.maxConcurrentWorkers, readyCount: snapshot.ready.length, workspaceMode: manifest.workspaceMode, readyRoles });
+		const readyBatch = getReadyTasks(tasks, concurrency.selectedCount);
 		if (readyBatch.length === 0) {
 			tasks = markBlocked(tasks, "No ready queued task; dependency graph may be invalid.");
 			saveRunTasks(manifest, tasks);
@@ -178,7 +180,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 			return { manifest, tasks };
 		}
 
-		appendEvent(manifest.eventsPath, { type: "task.progress", runId: manifest.runId, message: `Starting ready batch with ${readyBatch.length} task(s).`, data: { taskIds: readyBatch.map((task) => task.id), maxConcurrent } });
+		appendEvent(manifest.eventsPath, { type: "task.progress", runId: manifest.runId, message: `Starting ready batch with ${readyBatch.length} task(s).`, data: { taskIds: readyBatch.map((task) => task.id), readyCount: snapshot.ready.length, blockedCount: snapshot.blocked.length, runningCount: snapshot.running.length, doneCount: snapshot.done.length, selectedCount: readyBatch.length, maxConcurrent: concurrency.maxConcurrent, defaultConcurrency: concurrency.defaultConcurrency, concurrencyReason: concurrency.reason } });
 		const results = await Promise.all(readyBatch.map((task) => {
 			const step = findStep(input.workflow, task);
 			const agent = findAgent(input.agents, task);

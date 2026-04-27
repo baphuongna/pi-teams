@@ -59,7 +59,7 @@ type TeamContext = Pick<ExtensionContext, "cwd"> & Partial<Pick<ExtensionContext
 	sessionManager?: { getBranch?: () => unknown[] };
 	events?: { emit?: (event: string, data: unknown) => void };
 	signal?: AbortSignal;
-	startForegroundRun?: (runner: (signal?: AbortSignal) => Promise<void>) => void;
+	startForegroundRun?: (runner: (signal?: AbortSignal) => Promise<void>, runId?: string) => void;
 	onRunStarted?: (runId: string) => void;
 };
 
@@ -300,13 +300,29 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 	const teams = allTeams(discoverTeams(ctx.cwd));
 	const workflows = allWorkflows(discoverWorkflows(ctx.cwd));
 	const agents = allAgents(discoverAgents(ctx.cwd));
+	const directAgent = params.agent ? agents.find((item) => item.name === params.agent) : undefined;
+	if (params.agent && !directAgent) return result(`Agent '${params.agent}' not found.`, { action: "run", status: "error" }, true);
 	const teamName = params.team ?? "default";
-	const team = teams.find((item) => item.name === teamName);
+	const team = directAgent ? {
+		name: `direct-${directAgent.name}`,
+		description: `Direct subagent run for ${directAgent.name}`,
+		source: "builtin" as const,
+		filePath: "<generated>",
+		roles: [{ name: params.role ?? "agent", agent: directAgent.name, description: directAgent.description }],
+		defaultWorkflow: "direct-agent",
+		workspaceMode: params.workspaceMode,
+	} : teams.find((item) => item.name === teamName);
 	if (!team) return result(`Team '${teamName}' not found.`, { action: "run", status: "error" }, true);
-	const workflowName = params.workflow ?? team.defaultWorkflow ?? "default";
-	const baseWorkflow = workflows.find((item) => item.name === workflowName);
+	const workflowName = directAgent ? "direct-agent" : params.workflow ?? team.defaultWorkflow ?? "default";
+	const baseWorkflow = directAgent ? {
+		name: "direct-agent",
+		description: `Direct task for ${directAgent.name}`,
+		source: "builtin" as const,
+		filePath: "<generated>",
+		steps: [{ id: "01_agent", role: params.role ?? "agent", task: "{goal}", model: params.model }],
+	} : workflows.find((item) => item.name === workflowName);
 	if (!baseWorkflow) return result(`Workflow '${workflowName}' not found.`, { action: "run", status: "error" }, true);
-	const workflow = expandParallelResearchWorkflow(baseWorkflow, ctx.cwd);
+	const workflow = directAgent ? baseWorkflow : expandParallelResearchWorkflow(baseWorkflow, ctx.cwd);
 
 	const validationErrors = validateWorkflowForTeam(workflow, team);
 	if (validationErrors.length > 0) {
@@ -352,13 +368,13 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 	}
 
 	const runtime = await resolveCrewRuntime(effectiveRunConfig(loadedConfig.config, params.config));
-	const executeWorkers = runtime.kind === "child-process";
+	const executeWorkers = runtime.kind !== "scaffold";
 	const executedConfig = effectiveRunConfig(loadedConfig.config, params.config);
 	if (executeWorkers && ctx.startForegroundRun) {
 		ctx.onRunStarted?.(updatedManifest.runId);
 		ctx.startForegroundRun(async (signal) => {
 			await executeTeamRun({ manifest: updatedManifest, tasks, team, workflow, agents, executeWorkers, limits: executedConfig.limits, runtime, runtimeConfig: executedConfig.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, signal });
-		});
+		}, updatedManifest.runId);
 		const text = [
 			`Started foreground pi-crew run ${updatedManifest.runId}.`,
 			`Team: ${team.name}`,
@@ -507,7 +523,7 @@ export async function handleResume(params: TeamToolParamsValue, ctx: TeamContext
 		appendEvent(loaded.manifest.eventsPath, { type: "run.resume_requested", runId: loaded.manifest.runId });
 		const loadedConfig = loadConfig(ctx.cwd);
 		const runtime = await resolveCrewRuntime(loadedConfig.config);
-		const executeWorkers = runtime.kind === "child-process";
+		const executeWorkers = runtime.kind !== "scaffold";
 		const executed = await executeTeamRun({ manifest: loaded.manifest, tasks: resetTasks, team, workflow, agents: allAgents(discoverAgents(ctx.cwd)), executeWorkers, limits: loadedConfig.config.limits, runtime, runtimeConfig: loadedConfig.config.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, signal: ctx.signal });
 		return result([`Resumed run ${executed.manifest.runId}.`, `Status: ${executed.manifest.status}`, `Tasks: ${executed.tasks.length}`, `Artifacts: ${executed.manifest.artifactsRoot}`].join("\n"), { action: "resume", status: executed.manifest.status === "failed" ? "error" : "ok", runId: executed.manifest.runId, artifactsRoot: executed.manifest.artifactsRoot }, executed.manifest.status === "failed");
 	});

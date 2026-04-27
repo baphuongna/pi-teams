@@ -22,6 +22,7 @@ import { parseSessionUsage } from "./session-usage.ts";
 import type { CrewAgentProgress, CrewRuntimeKind } from "./crew-agent-runtime.ts";
 import { buildMemoryBlock } from "./agent-memory.ts";
 import { runLiveSessionTask } from "./live-session-runtime.ts";
+import { shouldAppendProgressEventUpdate, type ProgressEventSummary } from "./progress-event-coalescer.ts";
 
 export interface TaskRunnerInput {
 	manifest: TeamRunManifest;
@@ -201,7 +202,7 @@ function cleanResultText(text: string | undefined): string | undefined {
 	return trimmed;
 }
 
-function progressEventSummary(task: TeamTaskState, event: unknown): Record<string, unknown> {
+function progressEventSummary(task: TeamTaskState, event: unknown): ProgressEventSummary {
 	const type = asRecord(event)?.type;
 	return {
 		eventType: typeof type === "string" ? type : "event",
@@ -306,14 +307,18 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 		const transcriptPath = `${manifest.artifactsRoot}/transcripts/${task.id}.jsonl`;
 		let lastAgentRecordPersistedAt = 0;
 		let lastRunProgressPersistedAt = 0;
+		let lastRunProgressSummary: ProgressEventSummary | undefined;
 		const persistChildProgress = (event: unknown, force = false): void => {
 			const now = Date.now();
 			if (force || shouldFlushProgressEvent(event) || now - lastAgentRecordPersistedAt >= 500) {
 				upsertCrewAgent(manifest, recordFromTask(manifest, task, "child-process"));
 				lastAgentRecordPersistedAt = now;
 			}
-			if (force || shouldFlushProgressEvent(event) || now - lastRunProgressPersistedAt >= 1000) {
-				appendEvent(manifest.eventsPath, { type: "task.progress", runId: manifest.runId, taskId: task.id, data: progressEventSummary(task, event) });
+			const summary = progressEventSummary(task, event);
+			const decision = shouldAppendProgressEventUpdate({ previous: lastRunProgressSummary, next: summary, nowMs: now, lastAppendMs: lastRunProgressPersistedAt || undefined, minIntervalMs: 1000, force });
+			if (decision.shouldAppend) {
+				appendEvent(manifest.eventsPath, { type: "task.progress", runId: manifest.runId, taskId: task.id, data: { ...summary, coalesceReason: decision.reason } });
+				lastRunProgressSummary = summary;
 				lastRunProgressPersistedAt = now;
 			}
 		};
@@ -389,14 +394,18 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 		const transcriptPath = `${manifest.artifactsRoot}/transcripts/${task.id}.jsonl`;
 		let lastAgentRecordPersistedAt = 0;
 		let lastRunProgressPersistedAt = 0;
+		let lastRunProgressSummary: ProgressEventSummary | undefined;
 		const persistLiveProgress = (event: unknown, force = false): void => {
 			const now = Date.now();
 			if (force || shouldFlushProgressEvent(event) || now - lastAgentRecordPersistedAt >= 500) {
 				upsertCrewAgent(manifest, recordFromTask(manifest, task, "live-session"));
 				lastAgentRecordPersistedAt = now;
 			}
-			if (force || shouldFlushProgressEvent(event) || now - lastRunProgressPersistedAt >= 1000) {
-				appendEvent(manifest.eventsPath, { type: "task.progress", runId: manifest.runId, taskId: task.id, data: progressEventSummary(task, event) });
+			const summary = progressEventSummary(task, event);
+			const decision = shouldAppendProgressEventUpdate({ previous: lastRunProgressSummary, next: summary, nowMs: now, lastAppendMs: lastRunProgressPersistedAt || undefined, minIntervalMs: 1000, force });
+			if (decision.shouldAppend) {
+				appendEvent(manifest.eventsPath, { type: "task.progress", runId: manifest.runId, taskId: task.id, data: { ...summary, coalesceReason: decision.reason } });
+				lastRunProgressSummary = summary;
 				lastRunProgressPersistedAt = now;
 			}
 		};

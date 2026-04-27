@@ -174,7 +174,7 @@ Supported config:
     "dashboardPlacement": "right",
     "dashboardWidth": 56,
     "dashboardLiveRefreshMs": 1000,
-    "autoOpenDashboard": true,
+    "autoOpenDashboard": false,
     "autoOpenDashboardForForegroundRuns": true,
     "showModel": true,
     "showTokens": true,
@@ -190,7 +190,7 @@ Safety notes:
 UI notes:
 
 - `widgetPlacement`/`widgetMaxLines` keep the persistent active-run widget compact.
-- `dashboardPlacement: "right"` is the default; foreground runs auto-open a live top-right sidebar when the terminal is wide enough.
+- `dashboardPlacement: "right"` is the default for `/team-dashboard`; automatic overlay opening is opt-in because Pi custom overlays can be modal/focus-capturing in some terminals.
 - `autoOpenDashboard`/`autoOpenDashboardForForegroundRuns` control whether the live sidebar opens automatically.
 - `dashboardLiveRefreshMs` controls the live sidebar refresh cadence.
 - `showModel`, `showTokens`, and `showTools` show worker model attempts, token usage, and tool activity in dashboard agent rows.

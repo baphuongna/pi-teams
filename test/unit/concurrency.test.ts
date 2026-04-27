@@ -1,0 +1,32 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { defaultWorkflowConcurrency, resolveBatchConcurrency } from "../../src/runtime/concurrency.ts";
+
+test("default workflow concurrency preserves existing workflow defaults", () => {
+	assert.equal(defaultWorkflowConcurrency("parallel-research"), 4);
+	assert.equal(defaultWorkflowConcurrency("research"), 2);
+	assert.equal(defaultWorkflowConcurrency("implementation"), 2);
+	assert.equal(defaultWorkflowConcurrency("review"), 2);
+	assert.equal(defaultWorkflowConcurrency("default"), 2);
+	assert.equal(defaultWorkflowConcurrency("unknown"), 1);
+});
+
+test("limits override team concurrency and ready count caps selected tasks", () => {
+	const decision = resolveBatchConcurrency({ workflowName: "parallel-research", teamMaxConcurrency: 4, limitMaxConcurrentWorkers: 1, readyCount: 3 });
+	assert.equal(decision.maxConcurrent, 1);
+	assert.equal(decision.selectedCount, 1);
+	assert.match(decision.reason, /^limit:1/);
+});
+
+test("team concurrency can raise workflow default when no limit is set", () => {
+	const decision = resolveBatchConcurrency({ workflowName: "implementation", teamMaxConcurrency: 4, readyCount: 10 });
+	assert.equal(decision.defaultConcurrency, 2);
+	assert.equal(decision.maxConcurrent, 4);
+	assert.equal(decision.selectedCount, 4);
+	assert.match(decision.reason, /^team:4/);
+});
+
+test("zero ready tasks selects zero while positive ready tasks select at least one", () => {
+	assert.equal(resolveBatchConcurrency({ workflowName: "unknown", readyCount: 0 }).selectedCount, 0);
+	assert.equal(resolveBatchConcurrency({ workflowName: "unknown", readyCount: 2 }).selectedCount, 1);
+});

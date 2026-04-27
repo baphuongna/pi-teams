@@ -16,7 +16,7 @@ function readTasks(tasksPath: string): TeamTaskState[] {
 	try { const parsed = JSON.parse(fs.readFileSync(tasksPath, "utf-8")); return Array.isArray(parsed) ? parsed as TeamTaskState[] : []; } catch { return []; }
 }
 
-function compactTokens(total: number): string {
+export function compactTokens(total: number): string {
 	return total >= 1000 ? `${Math.round(total / 1000)}k` : `${total}`;
 }
 
@@ -42,23 +42,24 @@ export function updatePiCrewPowerbar(events: EventBus, cwd: string, config?: Cre
 	const tasks = active.flatMap((item) => readTasks(item.run.tasksPath));
 	const running = agents.filter((agent) => agent.status === "running").length;
 	const waiting = tasks.filter((task) => task.status === "queued").length;
-	const completed = agents.filter((agent) => agent.status === "completed").length;
-	const total = Math.max(1, agents.length + waiting);
+	const completed = tasks.filter((task) => task.status === "completed").length;
+	const total = Math.max(1, tasks.length || agents.length);
 	const usage = aggregateUsage(tasks);
 	const tokenTotal = usage ? (usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0) : 0;
-	const model = agents.find((agent) => agent.model)?.model?.split("/").at(-1);
+	const model = config?.showModel === false ? undefined : agents.find((agent) => agent.model)?.model?.split("/").at(-1);
+	const tokenText = config?.showTokens === false || !tokenTotal ? undefined : compactTokens(tokenTotal);
 	safeEmit(events, "powerbar:update", {
 		id: "pi-crew-active",
 		icon: "⚙",
 		text: `crew ${running}a/${waiting}w`,
-		suffix: [model, tokenTotal ? compactTokens(tokenTotal) : undefined].filter(Boolean).join(" · ") || undefined,
+		suffix: [model, tokenText].filter(Boolean).join(" · ") || undefined,
 		color: running ? "accent" : "warning",
 	});
 	safeEmit(events, "powerbar:update", {
 		id: "pi-crew-progress",
 		text: active[0]?.run.team ?? "crew",
 		bar: Math.round((completed / total) * 100),
-		suffix: `${completed}/${total}${tokenTotal ? ` · ${compactTokens(tokenTotal)}` : ""}`,
+		suffix: `${completed}/${total}${tokenText ? ` · ${tokenText}` : ""}`,
 		color: completed === total ? "success" : "accent",
 		barSegments: 8,
 	});

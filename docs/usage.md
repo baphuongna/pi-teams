@@ -36,7 +36,7 @@ Supported fields:
     "dashboardPlacement": "right",
     "dashboardWidth": 56,
     "dashboardLiveRefreshMs": 1000,
-    "autoOpenDashboard": true,
+    "autoOpenDashboard": false,
     "autoOpenDashboardForForegroundRuns": true,
     "showModel": true,
     "showTokens": true,

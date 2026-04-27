@@ -90,7 +90,7 @@
         "dashboardPlacement": { "type": "string", "enum": ["center", "right"], "default": "right", "description": "Place /team-dashboard as a centered overlay or right-side panel." },
         "dashboardWidth": { "type": "integer", "minimum": 32, "maximum": 120, "default": 56 },
         "dashboardLiveRefreshMs": { "type": "integer", "minimum": 250, "maximum": 60000, "default": 1000 },
-        "autoOpenDashboard": { "type": "boolean", "default": true, "description": "Automatically open the live right sidebar for foreground runs when UI is available." },
+        "autoOpenDashboard": { "type": "boolean", "default": false, "description": "Opt in to automatically opening the live right sidebar for foreground runs when UI is available. Disabled by default because Pi overlays are modal in some terminals." },
         "autoOpenDashboardForForegroundRuns": { "type": "boolean", "default": true },
         "showModel": { "type": "boolean", "default": true, "description": "Show worker model attempts in dashboard agent rows." },
         "showTokens": { "type": "boolean", "description": "Show token usage in dashboard agent rows." },
