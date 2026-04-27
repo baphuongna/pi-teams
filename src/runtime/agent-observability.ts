@@ -3,6 +3,16 @@ import type { TeamRunManifest } from "../state/types.ts";
 import { agentOutputPath, readCrewAgents } from "./crew-agent-records.ts";
 import type { CrewAgentRecord } from "./crew-agent-runtime.ts";
 
+const TOOL_LABELS: Record<string, string> = {
+	read: "reading",
+	bash: "running command",
+	edit: "editing",
+	write: "writing",
+	grep: "searching",
+	find: "finding files",
+	ls: "listing",
+};
+
 export interface TextTailResult {
 	path: string;
 	text: string;
@@ -24,14 +34,29 @@ export function readTextTail(filePath: string, maxBytes = 64_000): TextTailResul
 	}
 }
 
+function compactDuration(ms: number | undefined): string | undefined {
+	if (ms === undefined || !Number.isFinite(ms)) return undefined;
+	if (ms < 1000) return `${Math.round(ms)}ms`;
+	if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+	return `${Math.floor(ms / 60_000)}m${Math.floor((ms % 60_000) / 1000)}s`;
+}
+
+function ageBetween(start: string | undefined, end: string | undefined): string | undefined {
+	if (!start) return undefined;
+	const stop = end ? new Date(end).getTime() : Date.now();
+	const ms = Math.max(0, stop - new Date(start).getTime());
+	return compactDuration(ms);
+}
+
 function activityText(agent: CrewAgentRecord): string {
 	const parts: string[] = [];
 	if (agent.progress?.activityState) parts.push(agent.progress.activityState);
-	if (agent.progress?.currentTool) parts.push(`tool=${agent.progress.currentTool}`);
+	if (agent.progress?.currentTool) parts.push(TOOL_LABELS[agent.progress.currentTool] ?? `tool=${agent.progress.currentTool}`);
 	if (agent.toolUses !== undefined) parts.push(`tools=${agent.toolUses}`);
 	if (agent.progress?.tokens !== undefined) parts.push(`tokens=${agent.progress.tokens}`);
 	if (agent.progress?.turns !== undefined) parts.push(`turns=${agent.progress.turns}`);
-	if (agent.progress?.durationMs !== undefined) parts.push(`durationMs=${agent.progress.durationMs}`);
+	const duration = compactDuration(agent.progress?.durationMs) ?? ageBetween(agent.startedAt, agent.completedAt);
+	if (duration) parts.push(duration);
 	if (agent.progress?.failedTool) parts.push(`failedTool=${agent.progress.failedTool}`);
 	if (agent.progress?.recentOutput?.length) parts.push(`last=${agent.progress.recentOutput.at(-1)}`);
 	return parts.join(" ") || "idle";
@@ -56,7 +81,7 @@ function outputWarning(agent: CrewAgentRecord): string {
 }
 
 function agentLine(agent: CrewAgentRecord): string {
-	return `- ${statusGlyph(agent.status)} ${agent.taskId} [${agent.status}] ${agent.role}->${agent.agent} runtime=${agent.runtime} ${activityText(agent)}${outputWarning(agent)}${agent.error ? ` error=${agent.error}` : ""}`;
+	return `- ${statusGlyph(agent.status)} ${agent.taskId} ${agent.role} → ${agent.agent} · ${agent.status} · ${agent.runtime} · ${activityText(agent)}${outputWarning(agent)}${agent.error ? ` · error=${agent.error}` : ""}`;
 }
 
 export function buildAgentDashboard(manifest: TeamRunManifest): { text: string; groups: Record<string, CrewAgentRecord[]> } {
@@ -68,7 +93,7 @@ export function buildAgentDashboard(manifest: TeamRunManifest): { text: string; 
 	};
 	const lines = [
 		`Crew agents for ${manifest.runId}`,
-		`Run status: ${manifest.status}`,
+		`Run: ${manifest.status} · ${manifest.team}/${manifest.workflow ?? "none"} · agents=${agents.length}`,
 		`Counts: running=${groups.running.length}, queued=${groups.queued.length}, recent=${groups.recent.length}`,
 		"",
 		"## Running",

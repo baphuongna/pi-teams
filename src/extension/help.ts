@@ -18,6 +18,8 @@ export function piTeamsHelp(): string {
 		"- /team-worktrees <runId>",
 		"- /team-api <runId> <operation> [taskId=<taskId>] [body=<message>]",
 		"- /team-dashboard",
+		"- /team-transcript <runId> [taskId]",
+		"- /team-result <runId> [taskId]",
 		"- /team-manager",
 		"",
 		"Maintenance:",

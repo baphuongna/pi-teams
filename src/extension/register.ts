@@ -10,6 +10,10 @@ import { handleTeamTool, type TeamToolDetails } from "./team-tool.ts";
 import { listRuns } from "./run-index.ts";
 import { RunDashboard, type RunDashboardSelection } from "../ui/run-dashboard.ts";
 import { registerPiCrewRpc, type PiCrewRpcHandle } from "./cross-extension-rpc.ts";
+import { stopCrewWidget, updateCrewWidget, type CrewWidgetState } from "../ui/crew-widget.ts";
+import { DurableTextViewer, DurableTranscriptViewer } from "../ui/transcript-viewer.ts";
+import { loadRunManifestById } from "../state/state-store.ts";
+import { readCrewAgents } from "../runtime/crew-agent-records.ts";
 
 function parseRunArgs(args: string): TeamToolParamsValue {
 	const tokens = args.match(/"[^"]*"|'[^']*'|\S+/g)?.map((token) => token.replace(/^['"]|['"]$/g, "")) ?? [];
@@ -45,6 +49,36 @@ function parseScalar(raw: string): unknown {
 	return raw;
 }
 
+async function selectAgentTask(ctx: ExtensionCommandContext, runId: string | undefined, taskId?: string): Promise<{ runId: string; taskId?: string } | undefined> {
+	if (!runId) return undefined;
+	if (taskId) return { runId, taskId };
+	const loaded = loadRunManifestById(ctx.cwd, runId);
+	if (!loaded) return { runId };
+	const agents = readCrewAgents(loaded.manifest);
+	if (ctx.hasUI && agents.length > 1) {
+		const choice = await ctx.ui.select("Select pi-crew agent", agents.map((agent) => `${agent.taskId} ${agent.role}→${agent.agent} [${agent.status}]`));
+		return { runId, taskId: choice?.split(" ")[0] };
+	}
+	return { runId, taskId: agents[0]?.taskId };
+}
+
+async function openTranscriptViewer(ctx: ExtensionCommandContext, runId: string | undefined, taskId?: string): Promise<boolean> {
+	const selected = await selectAgentTask(ctx, runId, taskId);
+	if (!selected) return false;
+	// eslint-disable-next-line no-param-reassign
+	runId = selected.runId;
+	// eslint-disable-next-line no-param-reassign
+	taskId = selected.taskId;
+	if (!runId || !ctx.hasUI) return false;
+	const loaded = loadRunManifestById(ctx.cwd, runId);
+	if (!loaded) return false;
+	await ctx.ui.custom<undefined>((_tui, theme, _keybindings, done) => new DurableTranscriptViewer(loaded.manifest, theme, done, taskId), {
+		overlay: true,
+		overlayOptions: { width: "90%", maxHeight: "85%", anchor: "center" },
+	});
+	return true;
+}
+
 function pushUnset(config: Record<string, unknown>, key: string): void {
 	const current = Array.isArray(config.unset) ? config.unset : [];
 	current.push(key);
@@ -67,6 +101,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	const notifierState: AsyncNotifierState = { seenFinishedRunIds: new Set() };
 	let currentCtx: ExtensionContext | undefined;
 	let rpcHandle: PiCrewRpcHandle | undefined;
+	const widgetState: CrewWidgetState = { frame: 0 };
 	registerAutonomousPolicy(pi);
 	rpcHandle = registerPiCrewRpc((pi as unknown as { events?: Parameters<typeof registerPiCrewRpc>[0] }).events, () => currentCtx);
 
@@ -75,9 +110,13 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		notifyActiveRuns(ctx);
 		const loadedConfig = loadConfig(ctx.cwd);
 		startAsyncRunNotifier(ctx, notifierState, loadedConfig.config.notifierIntervalMs ?? 5000);
+		updateCrewWidget(ctx, widgetState);
+		widgetState.interval = setInterval(() => { if (currentCtx) updateCrewWidget(currentCtx, widgetState); }, 1000);
+		widgetState.interval.unref?.();
 	});
 	pi.on("session_shutdown", () => {
 		stopAsyncRunNotifier(notifierState);
+		stopCrewWidget(currentCtx, widgetState);
 		currentCtx = undefined;
 		rpcHandle?.unsubscribe();
 		rpcHandle = undefined;
@@ -90,7 +129,9 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		promptSnippet: "Use the team tool proactively for coordinated multi-agent work. If unsure, call { action: 'recommend', goal } first, then run or plan with the suggested team/workflow.",
 		parameters: TeamToolParams as never,
 		async execute(_id, params, _signal, _onUpdate, ctx) {
-			return await handleTeamTool(params as TeamToolParamsValue, ctx);
+			const output = await handleTeamTool(params as TeamToolParamsValue, ctx);
+			updateCrewWidget(ctx, widgetState);
+			return output;
 		},
 	};
 
@@ -250,6 +291,33 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		handler: handleTeamManagerCommand,
 	});
 
+	pi.registerCommand("team-result", {
+		description: "Open a pi-crew agent result viewer: <runId> [taskId]",
+		handler: async (args: string, ctx: ExtensionCommandContext) => {
+			const [runId, rawTaskId] = args.trim().split(/\s+/).filter(Boolean);
+			const selected = await selectAgentTask(ctx, runId, rawTaskId);
+			const loaded = selected ? loadRunManifestById(ctx.cwd, selected.runId) : undefined;
+			if (ctx.hasUI && loaded) {
+				const agent = readCrewAgents(loaded.manifest).find((item) => item.taskId === selected?.taskId || item.id === selected?.taskId) ?? readCrewAgents(loaded.manifest)[0];
+				const text = agent?.resultArtifactPath ? commandText(await handleTeamTool({ action: "api", runId: selected!.runId, config: { operation: "read-agent-output", agentId: agent.taskId, maxBytes: 64_000 } }, ctx)) : "(no result)";
+				await ctx.ui.custom<undefined>((_tui, theme, _keybindings, done) => new DurableTextViewer("pi-crew result", `${selected!.runId}:${agent?.taskId ?? "unknown"}`, text.split(/\r?\n/), theme, done), { overlay: true, overlayOptions: { width: "90%", maxHeight: "85%", anchor: "center" } });
+				return;
+			}
+			const result = await handleTeamTool({ action: "api", runId, config: { operation: "read-agent-output", agentId: rawTaskId, maxBytes: 64_000 } }, ctx);
+			await notifyCommandResult(ctx, commandText(result));
+		},
+	});
+
+	pi.registerCommand("team-transcript", {
+		description: "Open a pi-crew transcript viewer: <runId> [taskId]",
+		handler: async (args: string, ctx: ExtensionCommandContext) => {
+			const [runId, taskId] = args.trim().split(/\s+/).filter(Boolean);
+			if (await openTranscriptViewer(ctx, runId, taskId)) return;
+			const result = await handleTeamTool({ action: "api", runId, config: { operation: "read-agent-transcript", agentId: taskId } }, ctx);
+			await notifyCommandResult(ctx, commandText(result));
+		},
+	});
+
 	pi.registerCommand("team-dashboard", {
 		description: "Open a pi-crew run dashboard overlay",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
@@ -261,6 +329,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 				});
 				if (!selection) return;
 				if (selection.action === "reload") continue;
+				if (selection.action === "agent-transcript" && await openTranscriptViewer(ctx, selection.runId)) continue;
 				const result = selection.action === "api"
 					? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "read-manifest" } }, ctx)
 					: selection.action === "agents"

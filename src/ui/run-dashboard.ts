@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import type { TeamRunManifest } from "../state/types.ts";
 import { readCrewAgents } from "../runtime/crew-agent-records.ts";
 import type { CrewAgentRecord } from "../runtime/crew-agent-runtime.ts";
+import { isActiveRunStatus } from "../runtime/process-status.ts";
 
 interface DashboardComponent {
 	invalidate(): void;
@@ -68,6 +69,16 @@ function readProgressPreview(run: TeamRunManifest, maxLines = 5): string[] {
 	}
 }
 
+function formatAge(iso: string | undefined): string | undefined {
+	if (!iso) return undefined;
+	const ms = Math.max(0, Date.now() - new Date(iso).getTime());
+	if (!Number.isFinite(ms)) return undefined;
+	if (ms < 1000) return "now";
+	if (ms < 60_000) return `${Math.floor(ms / 1000)}s`;
+	if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m`;
+	return `${Math.floor(ms / 3_600_000)}h`;
+}
+
 function agentPreviewLine(agent: CrewAgentRecord): string {
 	const stats = [
 		agent.progress?.activityState,
@@ -76,6 +87,7 @@ function agentPreviewLine(agent: CrewAgentRecord): string {
 		agent.progress?.tokens !== undefined ? `${agent.progress.tokens} tok` : undefined,
 		agent.progress?.turns !== undefined ? `${agent.progress.turns} turns` : undefined,
 		agent.progress?.failedTool ? `failedTool=${agent.progress.failedTool}` : undefined,
+		agent.startedAt ? `age=${formatAge(agent.completedAt ?? agent.startedAt)}` : undefined,
 	].filter((part): part is string => Boolean(part));
 	const recent = agent.progress?.recentOutput?.at(-1);
 	return `Agent: ${statusIcon(agent.status)} ${agent.taskId} ${agent.role}->${agent.agent}${stats.length ? ` · ${stats.join(" · ")}` : ""}${recent ? ` ⎿ ${recent}` : ""}`;
@@ -90,6 +102,29 @@ function readAgentPreview(run: TeamRunManifest, maxLines = 5): string[] {
 		const message = error instanceof Error ? error.message : String(error);
 		return [`Agents: failed to read (${message})`];
 	}
+}
+
+function runLabel(run: TeamRunManifest, selected: boolean): string {
+	let agents: CrewAgentRecord[] = [];
+	try { agents = readCrewAgents(run); } catch { agents = []; }
+	const running = agents.find((agent) => agent.status === "running");
+	const queued = agents.find((agent) => agent.status === "queued");
+	const step = running ? `step ${running.taskId}` : queued ? `queued ${queued.taskId}` : `agents ${agents.length}`;
+	const marker = selected ? "›" : " ";
+	return `${marker} ${statusIcon(run.status)} ${run.runId.slice(-8)} ${run.status} | ${run.team}/${run.workflow ?? "none"} | ${step} | ${run.goal}`;
+}
+
+function groupedRuns(runs: TeamRunManifest[]): Array<{ label: string; run?: TeamRunManifest }> {
+	const active = runs.filter((run) => isActiveRunStatus(run.status));
+	const recent = runs.filter((run) => !isActiveRunStatus(run.status));
+	const rows: Array<{ label: string; run?: TeamRunManifest }> = [];
+	if (active.length) rows.push({ label: "Active" }, ...active.map((run) => ({ label: run.runId, run })));
+	if (recent.length) rows.push({ label: "Recent" }, ...recent.map((run) => ({ label: run.runId, run })));
+	return rows;
+}
+
+function selectedRunFromGrouped(runs: TeamRunManifest[], selected: number): TeamRunManifest | undefined {
+	return groupedRuns(runs).filter((row) => row.run)[selected]?.run;
 }
 
 function countByStatus(runs: TeamRunManifest[]): string {
@@ -124,13 +159,17 @@ export class RunDashboard implements DashboardComponent {
 		if (this.runs.length === 0) {
 			lines.push(`│ ${padVisible(truncate("No runs found.", innerWidth - 1), innerWidth - 1)}│`);
 		} else {
-			for (let i = 0; i < Math.min(this.runs.length, 10); i++) {
-				const run = this.runs[i]!;
-				const marker = i === this.selected ? "›" : " ";
-				const text = `${marker} ${statusIcon(run.status)} ${run.runId} ${run.status} ${run.team}/${run.workflow ?? "none"} ${run.goal}`;
-				lines.push(`│ ${padVisible(truncate(text, innerWidth - 1), innerWidth - 1)}│`);
+			const rows = groupedRuns(this.runs).slice(0, 16);
+			const runRows = rows.filter((row) => row.run);
+			for (const row of rows) {
+				if (!row.run) {
+					lines.push(`│ ${padVisible(truncate(row.label, innerWidth - 1), innerWidth - 1)}│`);
+					continue;
+				}
+				const index = runRows.findIndex((candidate) => candidate.run?.runId === row.run?.runId);
+				lines.push(`│ ${padVisible(truncate(runLabel(row.run, index === this.selected), innerWidth - 1), innerWidth - 1)}│`);
 			}
-			const selectedRun = this.runs[this.selected];
+			const selectedRun = selectedRunFromGrouped(this.runs, this.selected);
 			if (selectedRun) {
 				lines.push(`├${"─".repeat(borderWidth)}┤`);
 				const details = [
@@ -157,47 +196,47 @@ export class RunDashboard implements DashboardComponent {
 			return;
 		}
 		if (data === "\r" || data === "\n" || data === "s") {
-			const runId = this.runs[this.selected]?.runId;
+			const runId = selectedRunFromGrouped(this.runs, this.selected)?.runId;
 			this.done(runId ? { runId, action: "status" } : undefined);
 			return;
 		}
 		if (data === "u") {
-			const runId = this.runs[this.selected]?.runId;
+			const runId = selectedRunFromGrouped(this.runs, this.selected)?.runId;
 			this.done(runId ? { runId, action: "summary" } : undefined);
 			return;
 		}
 		if (data === "a") {
-			const runId = this.runs[this.selected]?.runId;
+			const runId = selectedRunFromGrouped(this.runs, this.selected)?.runId;
 			this.done(runId ? { runId, action: "artifacts" } : undefined);
 			return;
 		}
 		if (data === "i") {
-			const runId = this.runs[this.selected]?.runId;
+			const runId = selectedRunFromGrouped(this.runs, this.selected)?.runId;
 			this.done(runId ? { runId, action: "api" } : undefined);
 			return;
 		}
 		if (data === "d") {
-			const runId = this.runs[this.selected]?.runId;
+			const runId = selectedRunFromGrouped(this.runs, this.selected)?.runId;
 			this.done(runId ? { runId, action: "agents" } : undefined);
 			return;
 		}
 		if (data === "e") {
-			const runId = this.runs[this.selected]?.runId;
+			const runId = selectedRunFromGrouped(this.runs, this.selected)?.runId;
 			this.done(runId ? { runId, action: "agent-events" } : undefined);
 			return;
 		}
 		if (data === "o") {
-			const runId = this.runs[this.selected]?.runId;
+			const runId = selectedRunFromGrouped(this.runs, this.selected)?.runId;
 			this.done(runId ? { runId, action: "agent-output" } : undefined);
 			return;
 		}
 		if (data === "v") {
-			const runId = this.runs[this.selected]?.runId;
+			const runId = selectedRunFromGrouped(this.runs, this.selected)?.runId;
 			this.done(runId ? { runId, action: "agent-transcript" } : undefined);
 			return;
 		}
 		if (data === "r") {
-			this.done({ runId: this.runs[this.selected]?.runId ?? "", action: "reload" });
+			this.done({ runId: selectedRunFromGrouped(this.runs, this.selected)?.runId ?? "", action: "reload" });
 			return;
 		}
 		if (data === "p") {
@@ -209,7 +248,8 @@ export class RunDashboard implements DashboardComponent {
 			return;
 		}
 		if (data === "j" || data === "\u001b[B") {
-			this.selected = Math.min(Math.max(0, this.runs.length - 1), this.selected + 1);
+			const selectableCount = groupedRuns(this.runs).filter((row) => row.run).length;
+			this.selected = Math.min(Math.max(0, selectableCount - 1), this.selected + 1);
 		}
 	}
 }
