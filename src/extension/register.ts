@@ -100,15 +100,38 @@ function setNestedConfig(config: Record<string, unknown>, key: string, value: un
 }
 
 export function registerPiTeams(pi: ExtensionAPI): void {
+	const globalStore = globalThis as Record<string, unknown>;
+	const runtimeCleanupStoreKey = "__piCrewRuntimeCleanup";
+	const previousRuntimeCleanup = globalStore[runtimeCleanupStoreKey];
+	if (typeof previousRuntimeCleanup === "function") {
+		try { previousRuntimeCleanup(); } catch {}
+	}
 	const notifierState: AsyncNotifierState = { seenFinishedRunIds: new Set() };
 	let currentCtx: ExtensionContext | undefined;
 	let rpcHandle: PiCrewRpcHandle | undefined;
+	let cleanedUp = false;
 	const widgetState: CrewWidgetState = { frame: 0 };
 	const foregroundControllers = new Set<AbortController>();
 	registerAutonomousPolicy(pi);
 	rpcHandle = registerPiCrewRpc((pi as unknown as { events?: Parameters<typeof registerPiCrewRpc>[0] }).events, () => currentCtx);
+	const cleanupRuntime = (): void => {
+		if (cleanedUp) return;
+		cleanedUp = true;
+		for (const controller of foregroundControllers) controller.abort();
+		foregroundControllers.clear();
+		terminateActiveChildPiProcesses();
+		stopAsyncRunNotifier(notifierState);
+		stopCrewWidget(currentCtx, widgetState, currentCtx ? loadConfig(currentCtx.cwd).config.ui : undefined);
+		clearPiCrewPowerbar(pi.events);
+		rpcHandle?.unsubscribe();
+		rpcHandle = undefined;
+		currentCtx = undefined;
+		if (globalStore[runtimeCleanupStoreKey] === cleanupRuntime) delete globalStore[runtimeCleanupStoreKey];
+	};
+	globalStore[runtimeCleanupStoreKey] = cleanupRuntime;
 
 	pi.on("session_start", (_event, ctx) => {
+		cleanedUp = false;
 		currentCtx = ctx;
 		notifyActiveRuns(ctx);
 		const loadedConfig = loadConfig(ctx.cwd);
@@ -125,14 +148,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		widgetState.interval.unref?.();
 	});
 	pi.on("session_shutdown", () => {
-		for (const controller of foregroundControllers) controller.abort();
-		terminateActiveChildPiProcesses();
-		stopAsyncRunNotifier(notifierState);
-		stopCrewWidget(currentCtx, widgetState, currentCtx ? loadConfig(currentCtx.cwd).config.ui : undefined);
-		clearPiCrewPowerbar(pi.events);
-		currentCtx = undefined;
-		rpcHandle?.unsubscribe();
-		rpcHandle = undefined;
+		cleanupRuntime();
 	});
 
 	const tool: ToolDefinition = {

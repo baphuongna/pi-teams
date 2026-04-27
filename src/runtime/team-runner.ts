@@ -160,6 +160,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 		if (failed) {
 			tasks = markBlocked(tasks, `Blocked by failed task '${failed.id}'.`);
 			saveRunTasks(manifest, tasks);
+			saveCrewAgents(manifest, tasks.map((task) => recordFromTask(manifest, task, runtimeKind)));
 			manifest = updateRunStatus(manifest, "failed", `Failed at task '${failed.id}'.`);
 			return { manifest, tasks };
 		}
@@ -169,6 +170,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 		if (readyBatch.length === 0) {
 			tasks = markBlocked(tasks, "No ready queued task; dependency graph may be invalid.");
 			saveRunTasks(manifest, tasks);
+			saveCrewAgents(manifest, tasks.map((task) => recordFromTask(manifest, task, runtimeKind)));
 			manifest = updateRunStatus(manifest, "blocked", "No ready queued task.");
 			return { manifest, tasks };
 		}

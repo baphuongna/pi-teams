@@ -108,9 +108,18 @@ function activeWidgetRuns(cwd: string): WidgetRun[] {
 }
 
 function statusSummary(runs: WidgetRun[]): string {
-	const runningAgents = runs.flatMap((item) => item.agents).filter((agent) => agent.status === "running").length;
-	const queuedAgents = runs.flatMap((item) => item.agents).filter((agent) => agent.status === "queued").length;
-	return `● pi-crew · runs=${runs.length} agents=${runningAgents} running${queuedAgents ? ` · ${queuedAgents} queued` : ""} · /team-dashboard`;
+	const agents = runs.flatMap((item) => item.agents);
+	const runningAgents = agents.filter((agent) => agent.status === "running").length;
+	const queuedAgents = agents.filter((agent) => agent.status === "queued").length;
+	const completedAgents = agents.filter((agent) => agent.status === "completed").length;
+	const parts = [`${runningAgents} running`];
+	if (queuedAgents) parts.push(`${queuedAgents} queued`);
+	if (completedAgents) parts.push(`${completedAgents}/${agents.length} done`);
+	return `⚙ pi-crew · ${parts.join(" · ")} · /team-dashboard`;
+}
+
+function shortRunLabel(run: TeamRunManifest): string {
+	return `${run.team}/${run.workflow ?? "none"}`;
 }
 
 export function buildCrewWidgetLines(cwd: string, frame = 0, maxLines = 8): string[] {
@@ -119,15 +128,12 @@ export function buildCrewWidgetLines(cwd: string, frame = 0, maxLines = 8): stri
 	const runningGlyph = SPINNER[frame % SPINNER.length] ?? "⠋";
 	const lines: string[] = [statusSummary(runs)];
 	for (const { run, agents } of runs) {
-		const running = agents.find((agent) => agent.status === "running");
-		const queued = agents.find((agent) => agent.status === "queued");
-		const step = running?.taskId ?? queued?.taskId ?? run.status;
-		const completed = agents.filter((agent) => agent.status === "completed").length;
-		lines.push(`${glyph(run.status, runningGlyph)} ${run.runId.slice(-8)} ${run.team}/${run.workflow ?? "none"} · ${step} · ${completed}/${agents.length} done`);
 		const activeAgents = agents.filter((item) => item.status === "running" || item.status === "queued");
+		const completed = agents.filter((agent) => agent.status === "completed").length;
+		lines.push(`${glyph(run.status, runningGlyph)} ${shortRunLabel(run)} · ${completed}/${agents.length} done · ${run.runId.slice(-8)}`);
 		for (const agent of activeAgents.slice(0, 3)) {
 			const stats = agentStats(agent);
-			lines.push(`  ${glyph(agent.status, runningGlyph)} ${agent.taskId} ${agent.role}→${agent.agent} · ${agentActivity(agent)}${stats ? ` · ${stats}` : ""}`);
+			lines.push(`  ${glyph(agent.status, runningGlyph)} ${agent.agent} (${agent.role}) · ${agentActivity(agent)}${stats ? ` · ${stats}` : ""}`);
 		}
 		if (activeAgents.length > 3) lines.push(`  … +${activeAgents.length - 3} more agents`);
 		if (lines.length >= maxLines) break;
@@ -153,7 +159,7 @@ class CrewWidgetComponent implements WidgetComponent {
 		const bold = this.theme.bold?.bind(this.theme) ?? ((text: string) => text);
 		return buildCrewWidgetLines(this.cwd, this.frame, this.maxLines).map((line, index) => {
 			const colored = index === 0
-				? line.replace("● pi-crew", `${fg("accent", "●")} ${bold("pi-crew")}`)
+				? line.replace("⚙ pi-crew", `${fg("accent", "⚙")} ${bold("pi-crew")}`)
 				: line.replace(/^\s*([⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏▶◦✓✗■·])/, (match, icon: string) => match.replace(icon, fg(icon === "✓" ? "success" : icon === "✗" ? "error" : icon === "◦" ? "dim" : "accent", icon)));
 			return truncate(colored, width);
 		});
