@@ -9,7 +9,7 @@ import { createTaskClaim } from "../state/task-claims.ts";
 import { createWorkerHeartbeat, touchWorkerHeartbeat } from "./worker-heartbeat.ts";
 import type { WorkflowStep } from "../workflows/workflow-config.ts";
 import { captureWorktreeDiff, captureWorktreeDiffStat, prepareTaskWorkspace } from "../worktree/worktree-manager.ts";
-import { buildModelCandidates, formatModelAttemptNote, isRetryableModelFailure, type ModelAttemptSummary } from "./model-fallback.ts";
+import { buildConfiguredModelCandidates, formatModelAttemptNote, isRetryableModelFailure, type ModelAttemptSummary } from "./model-fallback.ts";
 import { parsePiJsonOutput, type ParsedPiJsonOutput } from "./pi-json-output.ts";
 import { runChildPi } from "./child-pi.ts";
 import { buildTaskPacket, renderTaskPacket } from "./task-packet.ts";
@@ -36,6 +36,7 @@ export interface TaskRunnerInput {
 	parentContext?: string;
 	parentModel?: unknown;
 	modelRegistry?: unknown;
+	modelOverride?: string;
 	limits?: CrewLimitsConfig;
 	dependencyContextText?: string;
 }
@@ -267,8 +268,8 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 		producer: task.id,
 	});
 	if (runtimeKind === "child-process") {
-		const candidates = buildModelCandidates(input.step.model ?? input.agent.model, input.agent.fallbackModels, undefined);
-		const attemptModels = candidates.length > 0 ? candidates : [input.step.model ?? input.agent.model];
+		const candidates = buildConfiguredModelCandidates({ overrideModel: input.modelOverride, stepModel: input.step.model, agentModel: input.agent.model, fallbackModels: input.agent.fallbackModels, parentModel: input.parentModel, modelRegistry: input.modelRegistry, cwd: manifest.cwd });
+		const attemptModels = candidates.length > 0 ? candidates : [undefined];
 		const logs: string[] = [];
 		let finalStdout = "";
 		let finalStderr = "";

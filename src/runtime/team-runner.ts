@@ -30,6 +30,7 @@ export interface ExecuteTeamRunInput {
 	parentContext?: string;
 	parentModel?: unknown;
 	modelRegistry?: unknown;
+	modelOverride?: string;
 	signal?: AbortSignal;
 }
 
@@ -179,7 +180,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 		const results = await Promise.all(readyBatch.map((task) => {
 			const step = findStep(input.workflow, task);
 			const agent = findAgent(input.agents, task);
-			return runTeamTask({ manifest, tasks, task, step, agent, signal: input.signal, executeWorkers: input.executeWorkers, runtimeKind: input.runtime?.kind, runtimeConfig: input.runtimeConfig, parentContext: input.parentContext, parentModel: input.parentModel, modelRegistry: input.modelRegistry, limits: input.limits });
+			return runTeamTask({ manifest, tasks, task, step, agent, signal: input.signal, executeWorkers: input.executeWorkers, runtimeKind: input.runtime?.kind, runtimeConfig: input.runtimeConfig, parentContext: input.parentContext, parentModel: input.parentModel, modelRegistry: input.modelRegistry, modelOverride: input.modelOverride, limits: input.limits });
 		}));
 		manifest = { ...results.at(-1)!.manifest, artifacts: mergeArtifacts([manifest.artifacts, ...results.map((item) => item.manifest.artifacts)].flat()) };
 		tasks = mergeTaskUpdates(tasks, results);

@@ -307,7 +307,7 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 	const runtime = await resolveCrewRuntime(effectiveRunConfig(loadedConfig.config, params.config));
 	const executeWorkers = runtime.kind === "child-process";
 	const executedConfig = effectiveRunConfig(loadedConfig.config, params.config);
-	const executed = await executeTeamRun({ manifest: updatedManifest, tasks, team, workflow, agents, executeWorkers, limits: executedConfig.limits, runtime, runtimeConfig: executedConfig.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, signal: ctx.signal });
+	const executed = await executeTeamRun({ manifest: updatedManifest, tasks, team, workflow, agents, executeWorkers, limits: executedConfig.limits, runtime, runtimeConfig: executedConfig.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, signal: ctx.signal });
 	const text = [
 		`Created pi-crew run ${executed.manifest.runId}.`,
 		`Team: ${team.name}`,
@@ -430,7 +430,7 @@ export async function handleResume(params: TeamToolParamsValue, ctx: TeamContext
 		const loadedConfig = loadConfig(ctx.cwd);
 		const runtime = await resolveCrewRuntime(loadedConfig.config);
 		const executeWorkers = runtime.kind === "child-process";
-		const executed = await executeTeamRun({ manifest: loaded.manifest, tasks: resetTasks, team, workflow, agents: allAgents(discoverAgents(ctx.cwd)), executeWorkers, limits: loadedConfig.config.limits, runtime, runtimeConfig: loadedConfig.config.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, signal: ctx.signal });
+		const executed = await executeTeamRun({ manifest: loaded.manifest, tasks: resetTasks, team, workflow, agents: allAgents(discoverAgents(ctx.cwd)), executeWorkers, limits: loadedConfig.config.limits, runtime, runtimeConfig: loadedConfig.config.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, signal: ctx.signal });
 		return result([`Resumed run ${executed.manifest.runId}.`, `Status: ${executed.manifest.status}`, `Tasks: ${executed.tasks.length}`, `Artifacts: ${executed.manifest.artifactsRoot}`].join("\n"), { action: "resume", status: executed.manifest.status === "failed" ? "error" : "ok", runId: executed.manifest.runId, artifactsRoot: executed.manifest.artifactsRoot }, executed.manifest.status === "failed");
 	});
 }

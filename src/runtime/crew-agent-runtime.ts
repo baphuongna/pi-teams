@@ -48,7 +48,7 @@ export interface CrewAgentRecord {
 export function taskStatusToAgentStatus(status: TeamTaskStatus): CrewAgentStatus {
 	if (status === "completed") return "completed";
 	if (status === "failed") return "failed";
-	if (status === "cancelled") return "cancelled";
+	if (status === "cancelled" || status === "skipped") return "cancelled";
 	if (status === "running") return "running";
 	return "queued";
 }
