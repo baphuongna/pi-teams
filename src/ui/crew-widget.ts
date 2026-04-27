@@ -17,6 +17,9 @@ const TOOL_LABELS: Record<string, string> = {
 	ls: "listing",
 };
 const ANSI_PATTERN = /\u001b\[[0-?]*[ -/]*[@-~]/g;
+const LEGACY_WIDGET_KEY = "pi-crew";
+const WIDGET_KEY = "pi-crew-active";
+const STATUS_KEY = "pi-crew";
 
 type ThemeLike = { fg?: (color: string, text: string) => string; bold?: (text: string) => string };
 type WidgetComponent = { render(width: number): string[]; invalidate(): void };
@@ -115,7 +118,18 @@ function statusSummary(runs: WidgetRun[]): string {
 	const parts = [`${runningAgents} running`];
 	if (queuedAgents) parts.push(`${queuedAgents} queued`);
 	if (completedAgents) parts.push(`${completedAgents}/${agents.length} done`);
-	return `⚙ pi-crew · ${parts.join(" · ")} · /team-dashboard`;
+	return `Crew: ${parts.join(", ")}`;
+}
+
+function widgetHeader(runs: WidgetRun[], runningGlyph: string): string {
+	const agents = runs.flatMap((item) => item.agents);
+	const runningAgents = agents.filter((agent) => agent.status === "running").length;
+	const queuedAgents = agents.filter((agent) => agent.status === "queued").length;
+	const completedAgents = agents.filter((agent) => agent.status === "completed").length;
+	const parts = [`${runningAgents} running`];
+	if (queuedAgents) parts.push(`${queuedAgents} queued`);
+	if (completedAgents) parts.push(`${completedAgents}/${agents.length} done`);
+	return `${runningGlyph} Crew agents · ${parts.join(" · ")} · /team-dashboard`;
 }
 
 function shortRunLabel(run: TeamRunManifest): string {
@@ -126,19 +140,31 @@ export function buildCrewWidgetLines(cwd: string, frame = 0, maxLines = 8): stri
 	const runs = activeWidgetRuns(cwd);
 	if (!runs.length) return [];
 	const runningGlyph = SPINNER[frame % SPINNER.length] ?? "⠋";
-	const lines: string[] = [statusSummary(runs)];
+	const lines: string[] = [widgetHeader(runs, runningGlyph)];
 	for (const { run, agents } of runs) {
 		const activeAgents = agents.filter((item) => item.status === "running" || item.status === "queued");
 		const completed = agents.filter((agent) => agent.status === "completed").length;
-		lines.push(`${glyph(run.status, runningGlyph)} ${shortRunLabel(run)} · ${completed}/${agents.length} done · ${run.runId.slice(-8)}`);
-		for (const agent of activeAgents.slice(0, 3)) {
+		const runGlyph = glyph(run.status, runningGlyph);
+		lines.push(`├─ ${runGlyph} ${shortRunLabel(run)} · ${completed}/${agents.length} done · ${run.runId.slice(-8)}`);
+		const visibleAgents = activeAgents.slice(0, 3);
+		for (const [index, agent] of visibleAgents.entries()) {
+			const last = index === visibleAgents.length - 1 && activeAgents.length <= 3;
+			const branch = last ? "└─" : "├─";
 			const stats = agentStats(agent);
-			lines.push(`  ${glyph(agent.status, runningGlyph)} ${agent.agent} (${agent.role}) · ${agentActivity(agent)}${stats ? ` · ${stats}` : ""}`);
+			lines.push(`│  ${branch} ${glyph(agent.status, runningGlyph)} ${agent.agent} · ${agent.role}`);
+			lines.push(`│     ⎿ ${agentActivity(agent)}${stats ? ` · ${stats}` : ""}`);
 		}
-		if (activeAgents.length > 3) lines.push(`  … +${activeAgents.length - 3} more agents`);
+		if (activeAgents.length > 3) lines.push(`│  └─ … +${activeAgents.length - 3} more agents`);
 		if (lines.length >= maxLines) break;
 	}
 	return lines.slice(0, maxLines);
+}
+
+function colorWidgetLine(line: string, index: number, theme: ThemeLike): string {
+	const fg = theme.fg?.bind(theme) ?? ((_color: string, text: string) => text);
+	const bold = theme.bold?.bind(theme) ?? ((text: string) => text);
+	if (index === 0) return line.replace("Crew agents", bold(fg("accent", "Crew agents")));
+	return line.replace(/([⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏▶◦✓✗■·])/, (icon: string) => fg(icon === "✓" ? "success" : icon === "✗" ? "error" : icon === "◦" ? "dim" : "accent", icon));
 }
 
 class CrewWidgetComponent implements WidgetComponent {
@@ -155,35 +181,39 @@ class CrewWidgetComponent implements WidgetComponent {
 	}
 	invalidate(): void {}
 	render(width: number): string[] {
-		const fg = this.theme.fg?.bind(this.theme) ?? ((_color: string, text: string) => text);
-		const bold = this.theme.bold?.bind(this.theme) ?? ((text: string) => text);
-		return buildCrewWidgetLines(this.cwd, this.frame, this.maxLines).map((line, index) => {
-			const colored = index === 0
-				? line.replace("⚙ pi-crew", `${fg("accent", "⚙")} ${bold("pi-crew")}`)
-				: line.replace(/^\s*([⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏▶◦✓✗■·])/, (match, icon: string) => match.replace(icon, fg(icon === "✓" ? "success" : icon === "✗" ? "error" : icon === "◦" ? "dim" : "accent", icon)));
-			return truncate(colored, width);
-		});
+		return buildCrewWidgetLines(this.cwd, this.frame, this.maxLines).map((line, index) => truncate(colorWidgetLine(line, index, this.theme), width));
 	}
+}
+
+function requestRender(ctx: Pick<ExtensionContext, "ui">): void {
+	(ctx.ui as { requestRender?: () => void }).requestRender?.();
 }
 
 export function updateCrewWidget(ctx: Pick<ExtensionContext, "cwd" | "hasUI" | "ui">, state: CrewWidgetState, config?: CrewUiConfig): void {
 	if (!ctx.hasUI) return;
 	state.frame += 1;
-	const maxLines = config?.widgetMaxLines ?? 8;
+	const maxLines = config?.widgetMaxLines ?? 10;
 	const lines = buildCrewWidgetLines(ctx.cwd, state.frame, maxLines);
-	ctx.ui.setStatus("pi-crew", lines.length ? lines[0] : undefined);
+	const placement = config?.widgetPlacement ?? "aboveEditor";
+	ctx.ui.setStatus(STATUS_KEY, lines.length ? statusSummary(activeWidgetRuns(ctx.cwd)) : undefined);
+	ctx.ui.setWidget(LEGACY_WIDGET_KEY, undefined, { placement });
 	if (!lines.length) {
-		ctx.ui.setWidget("pi-crew", undefined, { placement: config?.widgetPlacement ?? "aboveEditor" });
+		ctx.ui.setWidget(WIDGET_KEY, undefined, { placement });
+		requestRender(ctx);
 		return;
 	}
-	ctx.ui.setWidget("pi-crew", ((_tui: unknown, theme: unknown) => new CrewWidgetComponent(ctx.cwd, state.frame, maxLines, theme as ThemeLike)) as never, { placement: config?.widgetPlacement ?? "aboveEditor" });
+	ctx.ui.setWidget(WIDGET_KEY, ((_tui: unknown, theme: unknown) => new CrewWidgetComponent(ctx.cwd, state.frame, maxLines, theme as ThemeLike)) as never, { placement });
+	requestRender(ctx);
 }
 
 export function stopCrewWidget(ctx: Pick<ExtensionContext, "hasUI" | "ui"> | undefined, state: CrewWidgetState, config?: CrewUiConfig): void {
 	if (state.interval) clearInterval(state.interval);
 	state.interval = undefined;
 	if (ctx?.hasUI) {
-		ctx.ui.setStatus("pi-crew", undefined);
-		ctx.ui.setWidget("pi-crew", undefined, { placement: config?.widgetPlacement ?? "aboveEditor" });
+		const placement = config?.widgetPlacement ?? "aboveEditor";
+		ctx.ui.setStatus(STATUS_KEY, undefined);
+		ctx.ui.setWidget(LEGACY_WIDGET_KEY, undefined, { placement });
+		ctx.ui.setWidget(WIDGET_KEY, undefined, { placement });
+		requestRender(ctx);
 	}
 }

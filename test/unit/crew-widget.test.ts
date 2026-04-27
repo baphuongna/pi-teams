@@ -18,13 +18,13 @@ test("crew widget renders installed-style run and agent summary lines", async ()
 		saveRunManifest({ ...loaded.manifest, status: "running" });
 		saveCrewAgents(loaded.manifest, [{ id: `${loaded.manifest.runId}:01`, runId: loaded.manifest.runId, taskId: "01", agent: "executor", role: "executor", runtime: "child-process", status: "running", startedAt: loaded.manifest.createdAt, progress: { recentTools: [], recentOutput: [], toolCount: 1, currentTool: "bash" } }]);
 		const lines = buildCrewWidgetLines(cwd, 1);
-		assert.match(lines[0]!, /pi-crew/);
+		assert.match(lines[0]!, /Crew agents/);
 		assert.match(lines.join("\n"), /fast-fix\/fast-fix/);
 		assert.match(lines.join("\n"), /running command/);
 		const calls: Array<{ key: string; content: string[] | undefined }> = [];
 		const state: CrewWidgetState = { frame: 0 };
 		updateCrewWidget({ cwd, hasUI: true, ui: { setStatus: () => {}, setWidget: (key: string, content: string[] | undefined) => calls.push({ key, content }) } as never }, state);
-		assert.equal(calls.at(-1)?.key, "pi-crew");
+		assert.equal(calls.at(-1)?.key, "pi-crew-active");
 		assert.ok(calls.at(-1)?.content?.length);
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
