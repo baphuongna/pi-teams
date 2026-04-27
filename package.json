@@ -68,6 +68,7 @@
     "@mariozechner/pi-tui": "*"
   },
   "dependencies": {
+    "jiti": "^2.6.1",
     "typebox": "^1.1.24"
   },
   "devDependencies": {
