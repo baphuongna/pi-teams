@@ -1,5 +1,5 @@
 import type { AgentConfig } from "../agents/agent-config.ts";
-import type { CrewLimitsConfig } from "../config/config.ts";
+import type { CrewLimitsConfig, CrewRuntimeConfig } from "../config/config.ts";
 import type { CrewRuntimeCapabilities } from "./runtime-resolver.ts";
 import { writeArtifact } from "../state/artifact-store.ts";
 import { appendEvent } from "../state/event-log.ts";
@@ -14,6 +14,7 @@ import { getReadyTasks, refreshTaskGraphQueues, taskGraphSnapshot } from "./task
 import { checkBranchFreshness } from "../worktree/branch-freshness.ts";
 import { aggregateTaskOutputs } from "./task-output-context.ts";
 import { recordFromTask, saveCrewAgents } from "./crew-agent-records.ts";
+import { deliverGroupJoin, resolveGroupJoinMode } from "./group-join.ts";
 import { runTeamTask } from "./task-runner.ts";
 
 export interface ExecuteTeamRunInput {
@@ -25,6 +26,7 @@ export interface ExecuteTeamRunInput {
 	executeWorkers: boolean;
 	limits?: CrewLimitsConfig;
 	runtime?: CrewRuntimeCapabilities;
+	runtimeConfig?: CrewRuntimeConfig;
 	signal?: AbortSignal;
 }
 
@@ -178,13 +180,15 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 		tasks = mergeTaskUpdates(tasks, results);
 		saveRunTasks(manifest, tasks);
 		saveCrewAgents(manifest, tasks.map((task) => recordFromTask(manifest, task, runtimeKind)));
+		const completedBatch = readyBatch.map((task) => tasks.find((item) => item.id === task.id) ?? task);
 		const batchArtifact = writeArtifact(manifest.artifactsRoot, {
 			kind: "summary",
 			relativePath: `batches/${readyBatch.map((task) => task.id).join("+")}.md`,
 			producer: "team-runner",
-			content: aggregateTaskOutputs(readyBatch.map((task) => tasks.find((item) => item.id === task.id) ?? task)),
+			content: aggregateTaskOutputs(completedBatch),
 		});
-		manifest = { ...manifest, artifacts: mergeArtifacts([...manifest.artifacts, batchArtifact]) };
+		const groupDelivery = deliverGroupJoin({ manifest, mode: resolveGroupJoinMode(input.runtimeConfig), batch: readyBatch, allTasks: tasks });
+		manifest = { ...manifest, artifacts: mergeArtifacts([...manifest.artifacts, batchArtifact, ...(groupDelivery?.artifact ? [groupDelivery.artifact] : [])]) };
 		manifest = writeProgress(manifest, tasks, "team-runner");
 		saveRunManifest(manifest);
 	}

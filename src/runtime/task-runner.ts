@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import type { AgentConfig } from "../agents/agent-config.ts";
-import type { ArtifactDescriptor, TeamRunManifest, TeamTaskState } from "../state/types.ts";
+import type { ArtifactDescriptor, TeamRunManifest, TeamTaskState, UsageState } from "../state/types.ts";
 import { writeArtifact } from "../state/artifact-store.ts";
 import { appendEvent } from "../state/event-log.ts";
 import { saveRunManifest, saveRunTasks } from "../state/state-store.ts";
@@ -17,6 +17,7 @@ import { createStartupEvidence } from "./worker-startup.ts";
 import { permissionForRole } from "./role-permission.ts";
 import { collectDependencyOutputContext, renderDependencyOutputContext, writeTaskInputsArtifact, writeTaskSharedOutput } from "./task-output-context.ts";
 import { appendCrewAgentEvent, appendCrewAgentOutput, emptyCrewAgentProgress, recordFromTask, upsertCrewAgent } from "./crew-agent-records.ts";
+import { parseSessionUsage } from "./session-usage.ts";
 import type { CrewAgentProgress } from "./crew-agent-runtime.ts";
 
 export interface TaskRunnerInput {
@@ -162,6 +163,16 @@ function previewArgs(args: unknown): string | undefined {
 	}
 }
 
+function applyUsageToProgress(progress: CrewAgentProgress | undefined, usage: UsageState | undefined): CrewAgentProgress | undefined {
+	if (!usage) return progress;
+	const base = progress ?? emptyCrewAgentProgress();
+	return {
+		...base,
+		tokens: (usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0),
+		turns: usage.turns ?? base.turns,
+	};
+}
+
 function applyAgentProgressEvent(progress: CrewAgentProgress, event: unknown, startedAt: string | undefined): CrewAgentProgress {
 	const obj = asRecord(event);
 	const now = new Date().toISOString();
@@ -293,6 +304,14 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 			content: [...logs, `finalExitCode=${exitCode ?? "null"}`, `jsonEvents=${parsedOutput?.jsonEvents ?? 0}`, parsedOutput?.usage ? `usage=${JSON.stringify(parsedOutput.usage)}` : "", "", "STDOUT:", finalStdout, "", "STDERR:", finalStderr].join("\n"),
 			producer: task.id,
 		});
+		const sessionUsage = parseSessionUsage(transcriptPath);
+		const effectiveUsage = parsedOutput?.usage ?? sessionUsage;
+		if (effectiveUsage) {
+			parsedOutput = { ...(parsedOutput ?? { jsonEvents: 0, textEvents: [] }), usage: effectiveUsage };
+			task = { ...task, usage: effectiveUsage, agentProgress: applyUsageToProgress(task.agentProgress, effectiveUsage) };
+			tasks = updateTask(tasks, task);
+			upsertCrewAgent(manifest, recordFromTask(manifest, task, "child-process"));
+		}
 		if (fs.existsSync(transcriptPath)) {
 			transcriptArtifact = writeArtifact(manifest.artifactsRoot, {
 				kind: "log",

@@ -5,6 +5,8 @@ import type { AgentConfig } from "../agents/agent-config.ts";
 import { buildPiWorkerArgs, cleanupTempDir } from "./pi-args.ts";
 import { getPiSpawnCommand } from "./pi-spawn.ts";
 
+const POST_EXIT_STDIO_GUARD_MS = 3000;
+
 export interface ChildPiRunInput {
 	cwd: string;
 	task: string;
@@ -29,17 +31,44 @@ function appendTranscript(input: ChildPiRunInput, line: string): void {
 	fs.appendFileSync(input.transcriptPath, `${line}\n`, "utf-8");
 }
 
-function observeStdoutChunk(input: ChildPiRunInput, text: string): void {
-	for (const line of text.split(/\r?\n/)) {
-		if (!line.trim()) continue;
-		appendTranscript(input, line);
-		input.onStdoutLine?.(line);
+export class ChildPiLineObserver {
+	private buffer = "";
+	private readonly input: ChildPiRunInput;
+
+	constructor(input: ChildPiRunInput) {
+		this.input = input;
+	}
+
+	observe(text: string): void {
+		this.buffer += text;
+		const lines = this.buffer.split(/\r?\n/);
+		this.buffer = lines.pop() ?? "";
+		for (const line of lines) this.emitLine(line);
+	}
+
+	flush(): void {
+		if (!this.buffer) return;
+		const line = this.buffer;
+		this.buffer = "";
+		this.emitLine(line);
+	}
+
+	private emitLine(line: string): void {
+		if (!line.trim()) return;
+		appendTranscript(this.input, line);
+		this.input.onStdoutLine?.(line);
 		try {
-			input.onJsonEvent?.(JSON.parse(line));
+			this.input.onJsonEvent?.(JSON.parse(line));
 		} catch {
 			// Raw stdout is allowed.
 		}
 	}
+}
+
+function observeStdoutChunk(input: ChildPiRunInput, text: string): void {
+	const observer = new ChildPiLineObserver(input);
+	observer.observe(text);
+	observer.flush();
 }
 
 export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResult> {
@@ -70,10 +99,15 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 			let stdout = "";
 			let stderr = "";
 			let settled = false;
+			let postExitGuard: NodeJS.Timeout | undefined;
+			const lineObserver = new ChildPiLineObserver(input);
 
 			const settle = (result: ChildPiRunResult): void => {
 				if (settled) return;
 				settled = true;
+				if (postExitGuard) clearTimeout(postExitGuard);
+				lineObserver.flush();
+				input.signal?.removeEventListener("abort", abort);
 				cleanupTempDir(built.tempDir);
 				resolve(result);
 			};
@@ -90,7 +124,7 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 			child.stdout?.on("data", (chunk: Buffer) => {
 				const text = chunk.toString("utf-8");
 				stdout += text;
-				observeStdoutChunk(input, text);
+				lineObserver.observe(text);
 			});
 			child.stderr?.on("data", (chunk: Buffer) => {
 				stderr += chunk.toString("utf-8");
@@ -98,8 +132,14 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 			child.on("error", (error) => {
 				settle({ exitCode: null, stdout, stderr, error: error.message });
 			});
+			child.on("exit", () => {
+				postExitGuard = setTimeout(() => {
+					child.stdout?.destroy();
+					child.stderr?.destroy();
+				}, POST_EXIT_STDIO_GUARD_MS);
+				postExitGuard.unref?.();
+			});
 			child.on("close", (exitCode) => {
-				input.signal?.removeEventListener("abort", abort);
 				settle({ exitCode, stdout, stderr });
 			});
 		});
