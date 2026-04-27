@@ -9,7 +9,7 @@ test("worker prompts include read-only contract and mailbox coordination bridge"
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-gap-prompt-"));
 	try {
 		fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
-		const run = await handleTeamTool({ action: "run", team: "fast-fix", goal: "inspect prompt contracts" }, { cwd });
+		const run = await handleTeamTool({ action: "run", config: { runtime: { mode: "scaffold" } }, team: "fast-fix", goal: "inspect prompt contracts" }, { cwd });
 		assert.equal(run.isError, false);
 		const runId = run.details.runId!;
 		const artifacts = await handleTeamTool({ action: "artifacts", runId }, { cwd });
@@ -27,7 +27,7 @@ test("nudge-agent records a mailbox message for the target agent", async () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-gap-nudge-"));
 	try {
 		fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
-		const run = await handleTeamTool({ action: "run", team: "fast-fix", goal: "nudge smoke" }, { cwd });
+		const run = await handleTeamTool({ action: "run", config: { runtime: { mode: "scaffold" } }, team: "fast-fix", goal: "nudge smoke" }, { cwd });
 		assert.equal(run.isError, false);
 		const runId = run.details.runId!;
 		const agents = JSON.parse((await handleTeamTool({ action: "api", runId, config: { operation: "list-agents" } }, { cwd })).content[0]!.text);

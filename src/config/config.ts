@@ -47,6 +47,12 @@ export interface CrewWorktreeConfig {
 	linkNodeModules?: boolean;
 }
 
+export interface CrewUiConfig {
+	widgetPlacement?: "aboveEditor" | "belowEditor";
+	widgetMaxLines?: number;
+	powerbar?: boolean;
+}
+
 export interface AgentOverrideConfig {
 	disabled?: boolean;
 	model?: string | false;
@@ -71,6 +77,7 @@ export interface PiTeamsConfig {
 	control?: CrewControlConfig;
 	worktree?: CrewWorktreeConfig;
 	agents?: CrewAgentsConfig;
+	ui?: CrewUiConfig;
 }
 
 export interface LoadedPiTeamsConfig {
@@ -134,6 +141,12 @@ function mergeConfig(base: PiTeamsConfig, override: PiTeamsConfig): PiTeamsConfi
 		merged.worktree = {
 			...(base.worktree ?? {}),
 			...withoutUndefined((override.worktree ?? {}) as Record<string, unknown>),
+		};
+	}
+	if (base.ui || override.ui) {
+		merged.ui = {
+			...(base.ui ?? {}),
+			...withoutUndefined((override.ui ?? {}) as Record<string, unknown>),
 		};
 	}
 	if (base.agents || override.agents) {
@@ -289,6 +302,17 @@ function parseAgentOverride(value: unknown): AgentOverrideConfig | undefined {
 	return Object.values(override).some((entry) => entry !== undefined) ? override : undefined;
 }
 
+function parseUiConfig(value: unknown): CrewUiConfig | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const obj = value as Record<string, unknown>;
+	const ui: CrewUiConfig = {
+		widgetPlacement: obj.widgetPlacement === "aboveEditor" || obj.widgetPlacement === "belowEditor" ? obj.widgetPlacement : undefined,
+		widgetMaxLines: parsePositiveInteger(obj.widgetMaxLines, 50),
+		powerbar: typeof obj.powerbar === "boolean" ? obj.powerbar : undefined,
+	};
+	return Object.values(ui).some((entry) => entry !== undefined) ? ui : undefined;
+}
+
 function parseAgentsConfig(value: unknown): CrewAgentsConfig | undefined {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
 	const obj = value as Record<string, unknown>;
@@ -320,6 +344,7 @@ function parseConfig(raw: unknown): PiTeamsConfig {
 		control: parseControlConfig(obj.control),
 		worktree: parseWorktreeConfig(obj.worktree),
 		agents: parseAgentsConfig(obj.agents),
+		ui: parseUiConfig(obj.ui),
 	};
 }
 

@@ -10,7 +10,7 @@ test("mutating api operations respect run locks", async () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-api-locks-"));
 	fs.mkdirSync(path.join(cwd, ".pi"));
 	try {
-		const run = await handleTeamTool({ action: "run", team: "fast-fix", goal: "api locks" }, { cwd });
+		const run = await handleTeamTool({ action: "run", config: { runtime: { mode: "scaffold" } }, team: "fast-fix", goal: "api locks" }, { cwd });
 		const runId = run.details.runId;
 		assert.ok(runId);
 		const loaded = loadRunManifestById(cwd, runId);

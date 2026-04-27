@@ -39,7 +39,7 @@ test("worktree mode supports setup hook metadata and diff stat artifacts", async
 		fs.writeFileSync(hook, "const fs=require('fs'); fs.writeFileSync('generated.txt','x'); console.log(JSON.stringify({syntheticPaths:['generated.txt']}));\n", "utf-8");
 		fs.mkdirSync(path.join(cwd, ".pi", "teams"), { recursive: true });
 		fs.writeFileSync(path.join(cwd, ".pi", "teams", "config.json"), JSON.stringify({ requireCleanWorktreeLeader: false, worktree: { setupHook: hook, linkNodeModules: true } }), "utf-8");
-		const run = await handleTeamTool({ action: "run", team: "fast-fix", goal: "Worktree hook smoke", workspaceMode: "worktree" }, { cwd });
+		const run = await handleTeamTool({ action: "run", config: { runtime: { mode: "scaffold" } }, team: "fast-fix", goal: "Worktree hook smoke", workspaceMode: "worktree" }, { cwd });
 		assert.equal(run.isError, false);
 		const loaded = loadRunManifestById(cwd, run.details.runId!);
 		const diffStat = loaded?.manifest.artifacts.find((artifact) => artifact.path.endsWith(".diff-stat.json"));
@@ -67,7 +67,7 @@ test("worktree mode creates task worktrees and exposes them", async (t) => {
 		git(cwd, ["add", "README.md", ".gitignore"]);
 		git(cwd, ["commit", "-m", "initial"]);
 
-		const run = await handleTeamTool({ action: "run", team: "fast-fix", goal: "Worktree smoke", workspaceMode: "worktree" }, { cwd });
+		const run = await handleTeamTool({ action: "run", config: { runtime: { mode: "scaffold" } }, team: "fast-fix", goal: "Worktree smoke", workspaceMode: "worktree" }, { cwd });
 		assert.equal(run.isError, false);
 		const runId = run.details.runId;
 		assert.ok(runId);

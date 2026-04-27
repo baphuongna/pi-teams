@@ -9,7 +9,7 @@ test("events and artifacts actions inspect a durable run", async () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-inspect-test-"));
 	fs.mkdirSync(path.join(cwd, ".pi"));
 	try {
-		const run = await handleTeamTool({ action: "run", team: "fast-fix", goal: "Inspect run" }, { cwd });
+		const run = await handleTeamTool({ action: "run", config: { runtime: { mode: "scaffold" } }, team: "fast-fix", goal: "Inspect run" }, { cwd });
 		const runId = run.details.runId;
 		assert.ok(runId);
 		const events = await handleTeamTool({ action: "events", runId }, { cwd });

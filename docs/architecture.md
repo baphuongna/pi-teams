@@ -32,8 +32,8 @@ Implemented now:
 - durable run manifests and task files
 - workflow validation
 - foreground workflow scheduler
-- safe scaffold task execution
-- optional real child Pi execution via `PI_TEAMS_EXECUTE_WORKERS=1`
+- child Pi task execution by default
+- explicit scaffold/dry-run task execution via `runtime.mode=scaffold` or `executeWorkers=false`
 - safety-first create/update/delete for agents, teams, and workflows
 - backups for update/delete mutations
 - dry-run support for management mutations

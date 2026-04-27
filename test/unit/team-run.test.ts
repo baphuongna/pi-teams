@@ -9,7 +9,7 @@ test("team run creates durable artifacts and status", async () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-run-test-"));
 	fs.mkdirSync(path.join(cwd, ".pi"));
 	try {
-		const run = await handleTeamTool({ action: "run", team: "default", goal: "Test durable run" }, { cwd });
+		const run = await handleTeamTool({ action: "run", config: { runtime: { mode: "scaffold" } }, team: "default", goal: "Test durable run" }, { cwd });
 		assert.equal(run.isError, false);
 		const runId = run.details.runId;
 		assert.ok(runId);

@@ -318,10 +318,10 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 		"",
 		`Runtime: ${runtime.kind}${runtime.fallback ? ` (fallback from ${runtime.requestedMode})` : ""}${runtime.reason ? ` - ${runtime.reason}` : ""}`,
 		runtime.kind === "child-process"
-			? "Child Pi worker execution was enabled."
+			? "Child Pi worker execution is enabled by default; each task is launched as a separate Pi process. Set runtime.mode=scaffold or executeWorkers=false only for dry runs."
 			: runtime.kind === "live-session"
 				? "Experimental live-session worker execution was enabled."
-				: "Safe scaffold mode: child Pi workers were not launched. Set PI_CREW_EXECUTE_WORKERS=1, PI_TEAMS_EXECUTE_WORKERS=1, or runtime.mode=child-process to enable real worker execution.",
+				: "Safe scaffold mode: child Pi workers were not launched because runtime.mode=scaffold or executeWorkers=false was configured.",
 	].join("\n");
 	return result(text, { action: "run", status: executed.manifest.status === "failed" ? "error" : "ok", runId: executed.manifest.runId, artifactsRoot: executed.manifest.artifactsRoot }, executed.manifest.status === "failed");
 }
@@ -508,6 +508,7 @@ function configPatchFromConfig(config: unknown): PiTeamsConfig {
 	const runtime = configRecord(cfg.runtime);
 	const limits = configRecord(cfg.limits);
 	const worktree = configRecord(cfg.worktree);
+	const ui = configRecord(cfg.ui);
 	return {
 		asyncByDefault: typeof cfg.asyncByDefault === "boolean" ? cfg.asyncByDefault : undefined,
 		executeWorkers: typeof cfg.executeWorkers === "boolean" ? cfg.executeWorkers : undefined,
@@ -541,6 +542,11 @@ function configPatchFromConfig(config: unknown): PiTeamsConfig {
 		control: Object.keys(control).length > 0 ? {
 			enabled: typeof control.enabled === "boolean" ? control.enabled : undefined,
 			needsAttentionAfterMs: typeof control.needsAttentionAfterMs === "number" && Number.isInteger(control.needsAttentionAfterMs) && control.needsAttentionAfterMs > 0 ? control.needsAttentionAfterMs : undefined,
+		} : undefined,
+		ui: Object.keys(ui).length > 0 ? {
+			widgetPlacement: ui.widgetPlacement === "aboveEditor" || ui.widgetPlacement === "belowEditor" ? ui.widgetPlacement : undefined,
+			widgetMaxLines: typeof ui.widgetMaxLines === "number" && Number.isInteger(ui.widgetMaxLines) && ui.widgetMaxLines > 0 ? ui.widgetMaxLines : undefined,
+			powerbar: typeof ui.powerbar === "boolean" ? ui.powerbar : undefined,
 		} : undefined,
 	};
 }

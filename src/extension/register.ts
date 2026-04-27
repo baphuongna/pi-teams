@@ -11,6 +11,7 @@ import { listRuns } from "./run-index.ts";
 import { RunDashboard, type RunDashboardSelection } from "../ui/run-dashboard.ts";
 import { registerPiCrewRpc, type PiCrewRpcHandle } from "./cross-extension-rpc.ts";
 import { stopCrewWidget, updateCrewWidget, type CrewWidgetState } from "../ui/crew-widget.ts";
+import { clearPiCrewPowerbar, registerPiCrewPowerbarSegments, updatePiCrewPowerbar } from "../ui/powerbar-publisher.ts";
 import { DurableTextViewer, DurableTranscriptViewer } from "../ui/transcript-viewer.ts";
 import { loadRunManifestById } from "../state/state-store.ts";
 import { readCrewAgents } from "../runtime/crew-agent-records.ts";
@@ -109,14 +110,22 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		currentCtx = ctx;
 		notifyActiveRuns(ctx);
 		const loadedConfig = loadConfig(ctx.cwd);
+		registerPiCrewPowerbarSegments(pi.events, loadedConfig.config.ui);
 		startAsyncRunNotifier(ctx, notifierState, loadedConfig.config.notifierIntervalMs ?? 5000);
-		updateCrewWidget(ctx, widgetState);
-		widgetState.interval = setInterval(() => { if (currentCtx) updateCrewWidget(currentCtx, widgetState); }, 1000);
+		updateCrewWidget(ctx, widgetState, loadedConfig.config.ui);
+		updatePiCrewPowerbar(pi.events, ctx.cwd, loadedConfig.config.ui);
+		widgetState.interval = setInterval(() => {
+			if (!currentCtx) return;
+			const config = loadConfig(currentCtx.cwd).config.ui;
+			updateCrewWidget(currentCtx, widgetState, config);
+			updatePiCrewPowerbar(pi.events, currentCtx.cwd, config);
+		}, 1000);
 		widgetState.interval.unref?.();
 	});
 	pi.on("session_shutdown", () => {
 		stopAsyncRunNotifier(notifierState);
-		stopCrewWidget(currentCtx, widgetState);
+		stopCrewWidget(currentCtx, widgetState, currentCtx ? loadConfig(currentCtx.cwd).config.ui : undefined);
+		clearPiCrewPowerbar(pi.events);
 		currentCtx = undefined;
 		rpcHandle?.unsubscribe();
 		rpcHandle = undefined;
@@ -130,7 +139,9 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		parameters: TeamToolParams as never,
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			const output = await handleTeamTool(params as TeamToolParamsValue, ctx);
-			updateCrewWidget(ctx, widgetState);
+			const config = loadConfig(ctx.cwd).config.ui;
+			updateCrewWidget(ctx, widgetState, config);
+			updatePiCrewPowerbar(pi.events, ctx.cwd, config);
 			return output;
 		},
 	};
@@ -323,7 +334,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
 			for (;;) {
 				const runs = listRuns(ctx.cwd).slice(0, 50);
-				const selection = await ctx.ui.custom<RunDashboardSelection | undefined>((_tui, _theme, _keybindings, done) => new RunDashboard(runs, done), {
+				const selection = await ctx.ui.custom<RunDashboardSelection | undefined>((_tui, theme, _keybindings, done) => new RunDashboard(runs, done, theme), {
 					overlay: true,
 					overlayOptions: { width: "90%", maxHeight: "80%", anchor: "center" },
 				});

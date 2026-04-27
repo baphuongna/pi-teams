@@ -11,7 +11,7 @@ test("agent control queues durable live-agent request when agent is in another p
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-live-control-"));
 	try {
 		fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
-		const run = await handleTeamTool({ action: "run", team: "fast-fix", goal: "control bridge smoke" }, { cwd });
+		const run = await handleTeamTool({ action: "run", config: { runtime: { mode: "scaffold" } }, team: "fast-fix", goal: "control bridge smoke" }, { cwd });
 		assert.equal(run.isError, false);
 		const runId = run.details.runId!;
 		const agentsResult = await handleTeamTool({ action: "api", runId, config: { operation: "list-agents" } }, { cwd });

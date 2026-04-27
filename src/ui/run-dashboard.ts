@@ -10,6 +10,8 @@ interface DashboardComponent {
 	handleInput(data: string): void;
 }
 
+type DashboardTheme = { fg?: (color: string, text: string) => string; bold?: (text: string) => string };
+
 export type RunDashboardAction = "status" | "summary" | "artifacts" | "api" | "events" | "agents" | "agent-events" | "agent-output" | "agent-transcript" | "reload";
 export interface RunDashboardSelection {
 	runId: string;
@@ -47,6 +49,14 @@ function truncate(value: string, width: number): string {
 
 function padVisible(value: string, width: number): string {
 	return `${value}${" ".repeat(Math.max(0, width - visibleLength(value)))}`;
+}
+
+function colorForStatus(status: string): string {
+	if (status === "completed") return "success";
+	if (status === "failed" || status === "stale") return "error";
+	if (status === "cancelled" || status === "blocked") return "warning";
+	if (status === "running") return "accent";
+	return "dim";
 }
 
 function statusIcon(status: string): string {
@@ -143,23 +153,28 @@ export class RunDashboard implements DashboardComponent {
 	private showFullProgress = false;
 	private readonly runs: TeamRunManifest[];
 	private readonly done: (selection: RunDashboardSelection | undefined) => void;
+	private readonly theme: DashboardTheme;
 
-	constructor(runs: TeamRunManifest[], done: (selection: RunDashboardSelection | undefined) => void) {
+	constructor(runs: TeamRunManifest[], done: (selection: RunDashboardSelection | undefined) => void, theme: unknown = {}) {
 		this.runs = runs;
 		this.done = done;
+		this.theme = theme as DashboardTheme;
 	}
 
 	invalidate(): void {}
 
 	render(width: number): string[] {
+		const fg = this.theme.fg?.bind(this.theme) ?? ((_color: string, text: string) => text);
+		const bold = this.theme.bold?.bind(this.theme) ?? ((text: string) => text);
 		const innerWidth = Math.max(20, width - 4);
 		const borderWidth = Math.min(innerWidth, Math.max(0, width - 2));
+		const border = (text: string) => fg("border", text);
 		const lines = [
-			`╭${"─".repeat(borderWidth)}╮`,
-			`│ ${padVisible(truncate("pi-crew dashboard", innerWidth - 1), innerWidth - 1)}│`,
-			`│ ${padVisible(truncate("↑/↓/j/k select • r reload • p progress • s/u/a/i actions • d agents • e/v/o viewers • q close", innerWidth - 1), innerWidth - 1)}│`,
+			border(`╭${"─".repeat(borderWidth)}╮`),
+			`│ ${padVisible(truncate(`${fg("accent", "●")} ${bold("pi-crew dashboard")}`, innerWidth - 1), innerWidth - 1)}│`,
+			`│ ${padVisible(truncate(fg("dim", "↑/↓/j/k select • r reload • p progress • s/u/a/i actions • d agents • e/v/o viewers • q close"), innerWidth - 1), innerWidth - 1)}│`,
 			`│ ${padVisible(truncate(`Runs: ${this.runs.length} • ${countByStatus(this.runs)}`, innerWidth - 1), innerWidth - 1)}│`,
-			`├${"─".repeat(borderWidth)}┤`,
+			border(`├${"─".repeat(borderWidth)}┤`),
 		];
 		if (this.runs.length === 0) {
 			lines.push(`│ ${padVisible(truncate("No runs found.", innerWidth - 1), innerWidth - 1)}│`);
@@ -168,15 +183,17 @@ export class RunDashboard implements DashboardComponent {
 			const runRows = rows.filter((row) => row.run);
 			for (const row of rows) {
 				if (!row.run) {
-					lines.push(`│ ${padVisible(truncate(row.label, innerWidth - 1), innerWidth - 1)}│`);
+					lines.push(`│ ${padVisible(truncate(fg("accent", row.label), innerWidth - 1), innerWidth - 1)}│`);
 					continue;
 				}
 				const index = runRows.findIndex((candidate) => candidate.run?.runId === row.run?.runId);
-				lines.push(`│ ${padVisible(truncate(runLabel(row.run, index === this.selected), innerWidth - 1), innerWidth - 1)}│`);
+				const label = runLabel(row.run, index === this.selected);
+				const status = isLikelyOrphanedActiveRun(row.run, agentsFor(row.run)) ? "stale" : row.run.status;
+				lines.push(`│ ${padVisible(truncate(fg(colorForStatus(status), label), innerWidth - 1), innerWidth - 1)}│`);
 			}
 			const selectedRun = selectedRunFromGrouped(this.runs, this.selected);
 			if (selectedRun) {
-				lines.push(`├${"─".repeat(borderWidth)}┤`);
+				lines.push(border(`├${"─".repeat(borderWidth)}┤`));
 				const details = [
 					`Selected: ${selectedRun.runId}`,
 					`Status: ${selectedRun.status} | Team: ${selectedRun.team} | Workflow: ${selectedRun.workflow ?? "none"}`,
@@ -191,7 +208,7 @@ export class RunDashboard implements DashboardComponent {
 				}
 			}
 		}
-		lines.push(`╰${"─".repeat(borderWidth)}╯`);
+		lines.push(border(`╰${"─".repeat(borderWidth)}╯`));
 		return lines.map((line) => truncate(line, width));
 	}
 

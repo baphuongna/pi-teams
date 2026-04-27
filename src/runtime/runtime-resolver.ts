@@ -48,22 +48,21 @@ export async function isLiveSessionRuntimeAvailable(timeoutMs = 1500, env: NodeJ
 
 export async function resolveCrewRuntime(config: PiTeamsConfig, env: NodeJS.ProcessEnv = process.env): Promise<CrewRuntimeCapabilities> {
 	const requestedMode = config.runtime?.mode ?? "auto";
-	const executeWorkers = config.executeWorkers === true || env.PI_CREW_EXECUTE_WORKERS === "1" || env.PI_TEAMS_EXECUTE_WORKERS === "1";
+	const workersDisabled = config.executeWorkers === false || env.PI_CREW_EXECUTE_WORKERS === "0" || env.PI_TEAMS_EXECUTE_WORKERS === "0";
 	if (requestedMode === "scaffold") return scaffoldCaps(requestedMode);
-	if (requestedMode === "child-process") return childCaps(requestedMode, executeWorkers ? undefined : "child-process requested but executeWorkers is not enabled; caller should refuse or fall back explicitly.");
+	if (workersDisabled) return scaffoldCaps(requestedMode, "Child worker execution disabled by config/env. Set runtime.mode=scaffold or executeWorkers=false only for dry runs.");
+	if (requestedMode === "child-process") return childCaps(requestedMode);
 	if (requestedMode === "live-session" || (requestedMode === "auto" && config.runtime?.preferLiveSession === true)) {
 		const live = await isLiveSessionRuntimeAvailable(1500, env);
 		if (live.available) return liveCaps(requestedMode);
 		if (requestedMode === "live-session" && config.runtime?.allowChildProcessFallback === false) return { ...scaffoldCaps(requestedMode), available: false, reason: live.reason };
-		if (executeWorkers) return { ...childCaps(requestedMode), fallback: "child-process", reason: live.reason };
-		return { ...scaffoldCaps(requestedMode), fallback: "scaffold", reason: live.reason };
+		return { ...childCaps(requestedMode), fallback: "child-process", reason: live.reason };
 	}
-	if (executeWorkers) return childCaps(requestedMode);
-	return scaffoldCaps(requestedMode);
+	return childCaps(requestedMode);
 }
 
-function scaffoldCaps(requestedMode: CrewRuntimeMode): CrewRuntimeCapabilities {
-	return { kind: "scaffold", requestedMode, available: true, steer: false, resume: false, liveToolActivity: false, transcript: false };
+function scaffoldCaps(requestedMode: CrewRuntimeMode, reason?: string): CrewRuntimeCapabilities {
+	return { kind: "scaffold", requestedMode, available: true, steer: false, resume: false, liveToolActivity: false, transcript: false, ...(reason ? { reason } : {}) };
 }
 
 function childCaps(requestedMode: CrewRuntimeMode, reason?: string): CrewRuntimeCapabilities {

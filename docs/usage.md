@@ -19,7 +19,7 @@ Supported fields:
 ```json
 {
   "asyncByDefault": false,
-  "executeWorkers": false,
+  "executeWorkers": true,
   "notifierIntervalMs": 5000,
   "requireCleanWorktreeLeader": true,
   "autonomous": {
@@ -28,6 +28,11 @@ Supported fields:
     "injectPolicy": true,
     "preferAsyncForLongTasks": false,
     "allowWorktreeSuggestion": true
+  },
+  "ui": {
+    "widgetPlacement": "aboveEditor",
+    "widgetMaxLines": 8,
+    "powerbar": true
   }
 }
 ```
@@ -47,9 +52,9 @@ Then open Pi and run:
 /team-autonomy status
 ```
 
-## Safe run
+## Default run: real worker execution
 
-By default, `pi-crew` does not launch child workers. It creates a durable run, prompts, placeholder results, events, and artifacts.
+By default, `pi-crew` launches each task as a separate child Pi worker process. The parent Pi session orchestrates; workers execute independently and stream output to durable run state.
 
 ```json
 {
@@ -59,15 +64,20 @@ By default, `pi-crew` does not launch child workers. It creates a durable run, p
 }
 ```
 
-## Real worker execution
+## Scaffold / dry run
 
-Start Pi with:
+Use scaffold mode only when you want durable prompts/artifacts without launching child workers.
 
-```bash
-PI_TEAMS_EXECUTE_WORKERS=1 pi
+```json
+{
+  "action": "run",
+  "team": "default",
+  "goal": "Plan only",
+  "config": {
+    "runtime": { "mode": "scaffold" }
+  }
+}
 ```
-
-Then run normally. Each task can spawn a child Pi worker.
 
 ## Async run
 

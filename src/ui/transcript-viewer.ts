@@ -45,6 +45,10 @@ function textFromContent(content: unknown): string {
 	}).filter(Boolean).join("\n");
 }
 
+function truncateBody(text: string, max = 1000): string {
+	return text.length > max ? `${text.slice(0, max)}… (truncated ${text.length - max} chars)` : text;
+}
+
 export function formatTranscriptEvent(event: unknown): string[] {
 	const obj = asRecord(event);
 	if (!obj) return [String(event)];
@@ -52,13 +56,14 @@ export function formatTranscriptEvent(event: unknown): string[] {
 	const toolName = typeof obj.toolName === "string" ? obj.toolName : typeof obj.name === "string" ? obj.name : undefined;
 	if (type && /tool/i.test(type)) {
 		const text = textFromContent(obj.content) || (typeof obj.text === "string" ? obj.text : typeof obj.result === "string" ? obj.result : "");
-		return [`[tool${toolName ? `:${toolName}` : ""} ${type}]: ${text.trim() || "(no output)"}`];
+		return [`[Tool${toolName ? `: ${toolName}` : ""}] ${type}`, truncateBody(text.trim() || "(no output)")];
 	}
 	const message = asRecord(obj.message);
 	if (message) {
 		const role = typeof message.role === "string" ? message.role : "message";
 		const text = textFromContent(message.content);
-		if (text.trim()) return [`[${role}]: ${text.trim()}`];
+		const label = role === "assistant" ? "Assistant" : role === "user" ? "User" : role;
+		if (text.trim()) return [`[${label}]:`, text.trim()];
 	}
 	if (type) {
 		const text = textFromContent(obj.content) || (typeof obj.text === "string" ? obj.text : "");
@@ -91,6 +96,7 @@ export function readRunTranscript(manifest: TeamRunManifest, taskId?: string): {
 export class DurableTextViewer implements Component {
 	private scroll = 0;
 	private lastHeight = 10;
+	private autoScroll = true;
 	private title: string;
 	private subtitle: string;
 	private lines: string[];
@@ -113,10 +119,12 @@ export class DurableTextViewer implements Component {
 			return;
 		}
 		const maxScroll = Math.max(0, this.lines.length - this.lastHeight);
-		if (data === "k" || data === "\u001b[A") this.scroll = Math.max(0, this.scroll - 1);
-		else if (data === "j" || data === "\u001b[B") this.scroll = Math.min(maxScroll, this.scroll + 1);
-		else if (data === "g") this.scroll = 0;
-		else if (data === "G") this.scroll = maxScroll;
+		if (data === "k" || data === "\u001b[A") { this.scroll = Math.max(0, this.scroll - 1); this.autoScroll = false; }
+		else if (data === "j" || data === "\u001b[B") { this.scroll = Math.min(maxScroll, this.scroll + 1); this.autoScroll = this.scroll >= maxScroll; }
+		else if (data === "\u001b[5~") { this.scroll = Math.max(0, this.scroll - this.lastHeight); this.autoScroll = false; }
+		else if (data === "\u001b[6~") { this.scroll = Math.min(maxScroll, this.scroll + this.lastHeight); this.autoScroll = this.scroll >= maxScroll; }
+		else if (data === "g" || data === "\u001b[H") { this.scroll = 0; this.autoScroll = false; }
+		else if (data === "G" || data === "\u001b[F") { this.scroll = maxScroll; this.autoScroll = true; }
 	}
 
 	render(width: number): string[] {
@@ -127,18 +135,20 @@ export class DurableTextViewer implements Component {
 		this.lastHeight = 16;
 		const body = this.lines.flatMap((line) => wrap(line, inner));
 		const maxScroll = Math.max(0, body.length - this.lastHeight);
+		if (this.autoScroll) this.scroll = maxScroll;
 		this.scroll = Math.min(this.scroll, maxScroll);
 		const visible = body.slice(this.scroll, this.scroll + this.lastHeight);
 		const pad = (text: string) => `${text}${" ".repeat(Math.max(0, inner - visibleWidth(text)))}`;
-		const row = (text: string) => `${fg("border", "│")} ${truncate(pad(text), inner)} ${fg("border", "│")}`;
+		const colorLine = (line: string) => line.startsWith("[User]") ? fg("accent", line) : line.startsWith("[Assistant]") ? bold(line) : line.startsWith("[Tool") ? fg("muted", line) : line.startsWith("[Result]") ? fg("dim", line) : line;
+		const row = (text: string) => `${fg("border", "│")} ${truncate(pad(colorLine(text)), inner)} ${fg("border", "│")}`;
 		return [
 			fg("border", `╭${"─".repeat(inner + 2)}╮`),
 			row(`${bold(this.title)} ${fg("dim", this.subtitle)}`),
-			row(fg("dim", "j/k scroll · g/G top/bottom · q close")),
+			row(fg("dim", "j/k scroll · PgUp/PgDn · g/G top/bottom · q close")),
 			fg("border", `├${"─".repeat(inner + 2)}┤`),
 			...visible.map(row),
 			fg("border", `├${"─".repeat(inner + 2)}┤`),
-			row(fg("dim", `${body.length} lines · ${body.length ? Math.round(((this.scroll + visible.length) / body.length) * 100) : 100}%`)),
+			row(fg("dim", `${body.length} lines · ${body.length ? Math.round(((this.scroll + visible.length) / body.length) * 100) : 100}% · auto-scroll ${this.autoScroll ? "on" : "off"}`)),
 			fg("border", `╰${"─".repeat(inner + 2)}╯`),
 		];
 	}
@@ -147,6 +157,7 @@ export class DurableTextViewer implements Component {
 export class DurableTranscriptViewer implements Component {
 	private scroll = 0;
 	private lastHeight = 10;
+	private autoScroll = true;
 	private manifest: TeamRunManifest;
 	private theme: unknown;
 	private done: (result: undefined) => void;
@@ -168,10 +179,12 @@ export class DurableTranscriptViewer implements Component {
 		}
 		const content = readRunTranscript(this.manifest, this.taskId).lines;
 		const maxScroll = Math.max(0, content.length - this.lastHeight);
-		if (data === "k" || data === "\u001b[A") this.scroll = Math.max(0, this.scroll - 1);
-		else if (data === "j" || data === "\u001b[B") this.scroll = Math.min(maxScroll, this.scroll + 1);
-		else if (data === "g") this.scroll = 0;
-		else if (data === "G") this.scroll = maxScroll;
+		if (data === "k" || data === "\u001b[A") { this.scroll = Math.max(0, this.scroll - 1); this.autoScroll = false; }
+		else if (data === "j" || data === "\u001b[B") { this.scroll = Math.min(maxScroll, this.scroll + 1); this.autoScroll = this.scroll >= maxScroll; }
+		else if (data === "\u001b[5~") { this.scroll = Math.max(0, this.scroll - this.lastHeight); this.autoScroll = false; }
+		else if (data === "\u001b[6~") { this.scroll = Math.min(maxScroll, this.scroll + this.lastHeight); this.autoScroll = this.scroll >= maxScroll; }
+		else if (data === "g" || data === "\u001b[H") { this.scroll = 0; this.autoScroll = false; }
+		else if (data === "G" || data === "\u001b[F") { this.scroll = maxScroll; this.autoScroll = true; }
 	}
 
 	render(width: number): string[] {
@@ -183,19 +196,21 @@ export class DurableTranscriptViewer implements Component {
 		const body = data.lines.flatMap((line) => wrap(line, inner));
 		this.lastHeight = 16;
 		const maxScroll = Math.max(0, body.length - this.lastHeight);
+		if (this.autoScroll) this.scroll = maxScroll;
 		this.scroll = Math.min(this.scroll, maxScroll);
 		const visible = body.slice(this.scroll, this.scroll + this.lastHeight);
 		const pad = (text: string) => `${text}${" ".repeat(Math.max(0, inner - visibleWidth(text)))}`;
-		const row = (text: string) => `${fg("border", "│")} ${truncate(pad(text), inner)} ${fg("border", "│")}`;
+		const colorLine = (line: string) => line.startsWith("[User]") ? fg("accent", line) : line.startsWith("[Assistant]") ? bold(line) : line.startsWith("[Tool") ? fg("muted", line) : line.startsWith("[Result]") ? fg("dim", line) : line;
+		const row = (text: string) => `${fg("border", "│")} ${truncate(pad(colorLine(text)), inner)} ${fg("border", "│")}`;
 		const lines = [
 			fg("border", `╭${"─".repeat(inner + 2)}╮`),
 			row(`${bold("pi-crew transcript")} ${fg("dim", data.title)}`),
 			row(fg("dim", data.path)),
-			row(fg("dim", "j/k scroll · g/G top/bottom · q close")),
+			row(fg("dim", "j/k scroll · PgUp/PgDn · g/G top/bottom · q close")),
 			fg("border", `├${"─".repeat(inner + 2)}┤`),
 			...visible.map(row),
 			fg("border", `├${"─".repeat(inner + 2)}┤`),
-			row(fg("dim", `${body.length} lines · ${body.length ? Math.round(((this.scroll + visible.length) / body.length) * 100) : 100}%`)),
+			row(fg("dim", `${body.length} lines · ${body.length ? Math.round(((this.scroll + visible.length) / body.length) * 100) : 100}% · auto-scroll ${this.autoScroll ? "on" : "off"}`)),
 			fg("border", `╰${"─".repeat(inner + 2)}╯`),
 		];
 		return lines;

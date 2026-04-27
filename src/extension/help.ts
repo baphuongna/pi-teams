@@ -40,6 +40,6 @@ export function piTeamsHelp(): string {
 		"- /team-validate",
 		"- /team-help",
 		"",
-		"Real child workers are disabled by default. Enable with PI_TEAMS_EXECUTE_WORKERS=1 or config executeWorkers=true.",
+		"Real child workers are enabled by default. Use runtime.mode=scaffold or executeWorkers=false only for dry runs.",
 	].join("\n");
 }

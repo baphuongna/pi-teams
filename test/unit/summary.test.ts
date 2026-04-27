@@ -10,7 +10,7 @@ test("summary action and summary artifact are created for runs", async () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-summary-test-"));
 	fs.mkdirSync(path.join(cwd, ".pi"));
 	try {
-		const run = await handleTeamTool({ action: "run", team: "fast-fix", goal: "Summarize me" }, { cwd });
+		const run = await handleTeamTool({ action: "run", config: { runtime: { mode: "scaffold" } }, team: "fast-fix", goal: "Summarize me" }, { cwd });
 		const runId = run.details.runId;
 		assert.ok(runId);
 		const summaryPath = path.join(cwd, ".pi", "teams", "artifacts", runId!, "summary.md");

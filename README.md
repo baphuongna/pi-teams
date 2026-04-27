@@ -32,7 +32,7 @@ Current highlights:
 - detached async/background runner
 - stale async PID detection
 - active run summary and async completion notifications in Pi sessions
-- safe scaffold execution by default; real child Pi workers are opt-in
+- real child Pi worker execution by default, with explicit scaffold/dry-run opt-out
 - child Pi JSON output parsing for final text, usage, and event counts
 - retryable model fallback attempts per task
 - aggregate usage totals in status/summary
@@ -89,19 +89,21 @@ npm run ci
 
 ## Runtime safety model
 
-By default, `run` uses safe scaffold mode. It creates run state, task prompts, events, and placeholder result artifacts without launching child Pi workers.
+By default, `run` launches each crew task as a separate child Pi process. This matches the subagent model from `pi-subagents`: the parent session orchestrates while worker sessions execute independently and stream durable output back to run state.
 
-Real child Pi workers only run when explicitly enabled by either:
-
-```bash
-PI_TEAMS_EXECUTE_WORKERS=1 pi
-```
-
-or config:
+Use scaffold/dry-run mode only when you explicitly want prompts/artifacts without launching workers:
 
 ```json
 {
-  "executeWorkers": true
+  "runtime": { "mode": "scaffold" }
+}
+```
+
+or disable workers globally:
+
+```json
+{
+  "executeWorkers": false
 }
 ```
 
@@ -143,7 +145,7 @@ Supported config:
 ```json
 {
   "asyncByDefault": false,
-  "executeWorkers": false,
+  "executeWorkers": true,
   "notifierIntervalMs": 5000,
   "requireCleanWorktreeLeader": true,
   "autonomous": {
@@ -163,6 +165,11 @@ Supported config:
     "maxRunMinutes": 60,
     "maxRetriesPerTask": 1,
     "heartbeatStaleMs": 60000
+  },
+  "ui": {
+    "widgetPlacement": "aboveEditor",
+    "widgetMaxLines": 8,
+    "powerbar": true
   }
 }
 ```
@@ -619,7 +626,8 @@ Optional child Pi smoke check is explicit only:
 ## Environment variables
 
 ```text
-PI_TEAMS_EXECUTE_WORKERS=1       enable real child Pi worker execution
+PI_CREW_EXECUTE_WORKERS=0       disable child workers and use scaffold/dry-run mode
+PI_TEAMS_EXECUTE_WORKERS=0      legacy disable flag
 PI_TEAMS_MOCK_CHILD_PI=success   test/mock child worker success
 PI_TEAMS_MOCK_CHILD_PI=json-success
 PI_TEAMS_MOCK_CHILD_PI=retryable-failure

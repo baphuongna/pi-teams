@@ -10,7 +10,7 @@ test("forget deletes run state and artifacts when confirmed", async () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-forget-test-"));
 	fs.mkdirSync(path.join(cwd, ".pi"));
 	try {
-		const run = await handleTeamTool({ action: "run", team: "fast-fix", goal: "Forget me" }, { cwd });
+		const run = await handleTeamTool({ action: "run", config: { runtime: { mode: "scaffold" } }, team: "fast-fix", goal: "Forget me" }, { cwd });
 		const runId = run.details.runId;
 		assert.ok(runId);
 		const loaded = loadRunManifestById(cwd, runId!);

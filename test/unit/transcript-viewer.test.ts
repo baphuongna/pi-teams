@@ -29,7 +29,7 @@ function manifest(tmp: string): TeamRunManifest {
 
 test("formatTranscriptText formats message and tool JSONL into conversation lines", () => {
 	const text = `${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "hello" }] } })}\n${JSON.stringify({ type: "tool_result", toolName: "bash", text: "ok" })}\n`;
-	assert.deepEqual(formatTranscriptText(text), ["[assistant]: hello", "[tool:bash tool_result]: ok"]);
+	assert.deepEqual(formatTranscriptText(text), ["[Assistant]:", "hello", "[Tool: bash] tool_result", "ok"]);
 });
 
 test("DurableTranscriptViewer renders transcript overlay and scroll controls", () => {

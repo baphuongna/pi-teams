@@ -9,7 +9,7 @@ test("import action stores exported run bundles", async () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-import-test-"));
 	fs.mkdirSync(path.join(cwd, ".pi"));
 	try {
-		const run = await handleTeamTool({ action: "run", team: "fast-fix", goal: "Import me" }, { cwd });
+		const run = await handleTeamTool({ action: "run", config: { runtime: { mode: "scaffold" } }, team: "fast-fix", goal: "Import me" }, { cwd });
 		const runId = run.details.runId;
 		assert.ok(runId);
 		await handleTeamTool({ action: "export", runId }, { cwd });

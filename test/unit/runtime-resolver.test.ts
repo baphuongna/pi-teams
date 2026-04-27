@@ -3,16 +3,22 @@ import assert from "node:assert/strict";
 import { resolveCrewRuntime } from "../../src/runtime/runtime-resolver.ts";
 import { probeLiveSessionRuntime } from "../../src/runtime/live-session-runtime.ts";
 
-test("runtime resolver defaults to scaffold without executeWorkers", async () => {
+test("runtime resolver defaults to child-process workers", async () => {
 	const runtime = await resolveCrewRuntime({}, {} as NodeJS.ProcessEnv);
+	assert.equal(runtime.kind, "child-process");
+	assert.equal(runtime.transcript, true);
+});
+
+test("runtime resolver supports explicit scaffold dry-run", async () => {
+	const runtime = await resolveCrewRuntime({ runtime: { mode: "scaffold" } }, {} as NodeJS.ProcessEnv);
 	assert.equal(runtime.kind, "scaffold");
 	assert.equal(runtime.steer, false);
 });
 
-test("runtime resolver selects child-process when workers are enabled", async () => {
-	const runtime = await resolveCrewRuntime({}, { PI_TEAMS_EXECUTE_WORKERS: "1" } as NodeJS.ProcessEnv);
-	assert.equal(runtime.kind, "child-process");
-	assert.equal(runtime.transcript, true);
+test("runtime resolver lets config disable workers", async () => {
+	const runtime = await resolveCrewRuntime({ executeWorkers: false }, {} as NodeJS.ProcessEnv);
+	assert.equal(runtime.kind, "scaffold");
+	assert.match(runtime.reason ?? "", /disabled/);
 });
 
 test("runtime resolver accepts canonical PI_CREW_EXECUTE_WORKERS", async () => {

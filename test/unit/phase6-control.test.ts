@@ -65,7 +65,7 @@ test("team api exposes foreground status and interrupt request", async () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-fg-api-"));
 	try {
 		fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
-		const started = await handleTeamTool({ action: "run", team: "fast-fix", goal: "foreground api" }, { cwd });
+		const started = await handleTeamTool({ action: "run", config: { runtime: { mode: "scaffold" } }, team: "fast-fix", goal: "foreground api" }, { cwd });
 		assert.equal(started.isError, false);
 		const runId = started.details.runId!;
 		const status = await handleTeamTool({ action: "api", runId, config: { operation: "foreground-status" } }, { cwd });

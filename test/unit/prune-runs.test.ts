@@ -12,7 +12,7 @@ test("prune removes old finished runs after confirmation", async () => {
 	fs.mkdirSync(path.join(cwd, ".pi"));
 	try {
 		for (let i = 0; i < 3; i++) {
-			const run = await handleTeamTool({ action: "run", team: "fast-fix", goal: `Prune ${i}` }, { cwd });
+			const run = await handleTeamTool({ action: "run", config: { runtime: { mode: "scaffold" } }, team: "fast-fix", goal: `Prune ${i}` }, { cwd });
 			assert.equal(run.isError, false);
 		}
 		const ownRuns = () => listRuns(cwd).filter((run) => run.cwd === cwd);

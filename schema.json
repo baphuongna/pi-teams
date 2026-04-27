@@ -78,6 +78,16 @@
         "enabled": { "type": "boolean" },
         "needsAttentionAfterMs": { "type": "integer", "minimum": 1 }
       }
+    },
+    "ui": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Pi UI settings for the crew widget, dashboard, and optional powerbar segments.",
+      "properties": {
+        "widgetPlacement": { "type": "string", "enum": ["aboveEditor", "belowEditor"] },
+        "widgetMaxLines": { "type": "integer", "minimum": 1, "maximum": 50 },
+        "powerbar": { "type": "boolean" }
+      }
     }
   }
 }

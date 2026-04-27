@@ -9,7 +9,7 @@ test("api supports mailbox inbox/outbox and delivery state", async () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-mailbox-"));
 	fs.mkdirSync(path.join(cwd, ".pi"));
 	try {
-		const run = await handleTeamTool({ action: "run", team: "fast-fix", goal: "mailbox api" }, { cwd });
+		const run = await handleTeamTool({ action: "run", config: { runtime: { mode: "scaffold" } }, team: "fast-fix", goal: "mailbox api" }, { cwd });
 		const runId = run.details.runId;
 		assert.ok(runId);
 		const sent = await handleTeamTool({ action: "api", runId, config: { operation: "send-message", direction: "outbox", from: "leader", to: "worker", body: "hello" } }, { cwd });
