@@ -36,6 +36,11 @@ export interface CrewRuntimeConfig {
 	groupJoin?: "off" | "group" | "smart";
 }
 
+export interface CrewControlConfig {
+	enabled?: boolean;
+	needsAttentionAfterMs?: number;
+}
+
 export interface PiTeamsConfig {
 	asyncByDefault?: boolean;
 	executeWorkers?: boolean;
@@ -44,6 +49,7 @@ export interface PiTeamsConfig {
 	autonomous?: PiTeamsAutonomousConfig;
 	limits?: CrewLimitsConfig;
 	runtime?: CrewRuntimeConfig;
+	control?: CrewControlConfig;
 }
 
 export interface LoadedPiTeamsConfig {
@@ -95,6 +101,12 @@ function mergeConfig(base: PiTeamsConfig, override: PiTeamsConfig): PiTeamsConfi
 		merged.runtime = {
 			...(base.runtime ?? {}),
 			...withoutUndefined((override.runtime ?? {}) as Record<string, unknown>),
+		};
+	}
+	if (base.control || override.control) {
+		merged.control = {
+			...(base.control ?? {}),
+			...withoutUndefined((override.control ?? {}) as Record<string, unknown>),
 		};
 	}
 	return merged;
@@ -186,6 +198,16 @@ function parseRuntimeConfig(value: unknown): CrewRuntimeConfig | undefined {
 	return Object.values(runtime).some((entry) => entry !== undefined) ? runtime : undefined;
 }
 
+function parseControlConfig(value: unknown): CrewControlConfig | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const obj = value as Record<string, unknown>;
+	const control: CrewControlConfig = {
+		enabled: typeof obj.enabled === "boolean" ? obj.enabled : undefined,
+		needsAttentionAfterMs: parsePositiveInteger(obj.needsAttentionAfterMs),
+	};
+	return Object.values(control).some((entry) => entry !== undefined) ? control : undefined;
+}
+
 function parseConfig(raw: unknown): PiTeamsConfig {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
 	const obj = raw as Record<string, unknown>;
@@ -197,6 +219,7 @@ function parseConfig(raw: unknown): PiTeamsConfig {
 		autonomous: parseAutonomousConfig(obj.autonomous),
 		limits: parseLimitsConfig(obj.limits),
 		runtime: parseRuntimeConfig(obj.runtime),
+		control: parseControlConfig(obj.control),
 	};
 }
 

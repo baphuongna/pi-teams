@@ -38,6 +38,7 @@ import { touchWorkerHeartbeat } from "../runtime/worker-heartbeat.ts";
 import { agentEventsPath, agentOutputPath, readCrewAgentEvents, readCrewAgentStatus, readCrewAgents } from "../runtime/crew-agent-records.ts";
 import { resolveCrewRuntime } from "../runtime/runtime-resolver.ts";
 import { probeLiveSessionRuntime } from "../runtime/live-session-runtime.ts";
+import { applyAttentionState, formatActivityAge, resolveCrewControlConfig } from "../runtime/agent-control.ts";
 
 export interface TeamToolDetails {
 	action: string;
@@ -296,7 +297,8 @@ export function handleStatus(params: TeamToolParamsValue, ctx: TeamContext): PiT
 	const counts = new Map<string, number>();
 	for (const task of tasks) counts.set(task.status, (counts.get(task.status) ?? 0) + 1);
 	const events = readEvents(manifest.eventsPath).slice(-8);
-	const crewAgents = readCrewAgents(manifest);
+	const controlConfig = resolveCrewControlConfig(loadConfig(ctx.cwd).config);
+	const crewAgents = readCrewAgents(manifest).map((agent) => applyAttentionState(manifest, agent, controlConfig));
 	const artifactLines = manifest.artifacts.slice(-10).map((artifact) => `- ${artifact.kind}: ${artifact.path}${artifact.sizeBytes !== undefined ? ` (${artifact.sizeBytes} bytes)` : ""}`);
 	const totalUsage = aggregateUsage(tasks);
 	const lines = [
@@ -315,7 +317,7 @@ export function handleStatus(params: TeamToolParamsValue, ctx: TeamContext): PiT
 		...(tasks.length ? tasks.map((task) => `- ${task.id} [${task.status}] ${task.role} -> ${task.agent}${task.taskPacket ? ` scope=${task.taskPacket.scope}` : ""}${task.verification ? ` green=${task.verification.observedGreenLevel}/${task.verification.requiredGreenLevel}` : ""}${task.modelAttempts?.length ? ` attempts=${task.modelAttempts.length}` : ""}${task.jsonEvents !== undefined ? ` jsonEvents=${task.jsonEvents}` : ""}${task.usage ? ` usage=${JSON.stringify(task.usage)}` : ""}${task.worktree ? ` worktree=${task.worktree.path}` : ""}${task.error ? ` error=${task.error}` : ""}`) : ["- (none)"]),
 		`Task counts: ${[...counts.entries()].map(([status, count]) => `${status}=${count}`).join(", ") || "none"}`,
 		"Agents:",
-		...(crewAgents.length ? crewAgents.map((agent) => `- ${agent.id} [${agent.status}] ${agent.role} -> ${agent.agent} runtime=${agent.runtime}${agent.progress?.currentTool ? ` tool=${agent.progress.currentTool}` : ""}${agent.toolUses ? ` tools=${agent.toolUses}` : ""}${agent.progress?.tokens ? ` tokens=${agent.progress.tokens}` : ""}${agent.progress?.turns ? ` turns=${agent.progress.turns}` : ""}${agent.jsonEvents !== undefined ? ` jsonEvents=${agent.jsonEvents}` : ""}${agent.statusPath ? ` status=${agent.statusPath}` : ""}${agent.error ? ` error=${agent.error}` : ""}`) : ["- (none)"]),
+		...(crewAgents.length ? crewAgents.map((agent) => `- ${agent.id} [${agent.status}] ${agent.role} -> ${agent.agent} runtime=${agent.runtime}${agent.progress?.activityState === "needs_attention" ? " needs_attention" : ""}${formatActivityAge(agent) ? ` activity=${formatActivityAge(agent)}` : ""}${agent.progress?.currentTool ? ` tool=${agent.progress.currentTool}` : ""}${agent.toolUses ? ` tools=${agent.toolUses}` : ""}${agent.progress?.tokens ? ` tokens=${agent.progress.tokens}` : ""}${agent.progress?.turns ? ` turns=${agent.progress.turns}` : ""}${agent.jsonEvents !== undefined ? ` jsonEvents=${agent.jsonEvents}` : ""}${agent.statusPath ? ` status=${agent.statusPath}` : ""}${agent.error ? ` error=${agent.error}` : ""}`) : ["- (none)"]),
 		"Policy decisions:",
 		...(manifest.policyDecisions?.length ? manifest.policyDecisions.map((item) => `- ${item.action} (${item.reason})${item.taskId ? ` ${item.taskId}` : ""}: ${item.message}`) : ["- (none)"]),
 		`Total usage: ${formatUsage(totalUsage)}`,
@@ -455,12 +457,17 @@ function autonomousPatchFromConfig(config: unknown): PiTeamsAutonomousConfig {
 
 function configPatchFromConfig(config: unknown): PiTeamsConfig {
 	const cfg = configRecord(config);
+	const control = configRecord(cfg.control);
 	return {
 		asyncByDefault: typeof cfg.asyncByDefault === "boolean" ? cfg.asyncByDefault : undefined,
 		executeWorkers: typeof cfg.executeWorkers === "boolean" ? cfg.executeWorkers : undefined,
 		notifierIntervalMs: typeof cfg.notifierIntervalMs === "number" && Number.isFinite(cfg.notifierIntervalMs) ? cfg.notifierIntervalMs : undefined,
 		requireCleanWorktreeLeader: typeof cfg.requireCleanWorktreeLeader === "boolean" ? cfg.requireCleanWorktreeLeader : undefined,
 		autonomous: typeof cfg.autonomous === "object" && cfg.autonomous !== null && !Array.isArray(cfg.autonomous) ? autonomousPatchFromConfig(cfg.autonomous) : undefined,
+		control: Object.keys(control).length > 0 ? {
+			enabled: typeof control.enabled === "boolean" ? control.enabled : undefined,
+			needsAttentionAfterMs: typeof control.needsAttentionAfterMs === "number" && Number.isInteger(control.needsAttentionAfterMs) && control.needsAttentionAfterMs > 0 ? control.needsAttentionAfterMs : undefined,
+		} : undefined,
 	};
 }
 
@@ -609,10 +616,20 @@ export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): 
 		const text = fs.existsSync(transcriptPath) ? fs.readFileSync(transcriptPath, "utf-8") : "";
 		return result(text || `(no transcript at ${transcriptPath})`, { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
 	}
-	if (operation === "steer-agent" || operation === "stop-agent" || operation === "resume-agent") {
+	if (operation === "nudge-agent") {
+		const agentId = typeof cfg.agentId === "string" ? cfg.agentId : undefined;
+		const agent = readCrewAgents(loaded.manifest).find((item) => item.id === agentId || item.taskId === agentId);
+		if (!agent) return result("API nudge-agent requires config.agentId matching an agent id or task id.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
+		const messageText = typeof cfg.message === "string" && cfg.message.trim() ? cfg.message.trim() : "Please report your current status, blocker, or smallest next step.";
+		const message = appendMailboxMessage(loaded.manifest, { direction: "inbox", from: "leader", to: agent.taskId, taskId: agent.taskId, body: messageText });
+		appendEvent(loaded.manifest.eventsPath, { type: "agent.nudged", runId: loaded.manifest.runId, taskId: agent.taskId, message: messageText, data: { agentId: agent.id, mailboxMessageId: message.id } });
+		return result(JSON.stringify({ agentId: agent.id, mailboxMessage: message }, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+	}
+	if (operation === "steer-agent" || operation === "stop-agent" || operation === "resume-agent" || operation === "interrupt-agent") {
 		const runtime = await resolveCrewRuntime(loadConfig(ctx.cwd).config);
-		if (!runtime.steer && operation === "steer-agent") return result(`Runtime '${runtime.kind}' does not support live steering.`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
+		if (!runtime.steer && operation === "steer-agent") return result(`Runtime '${runtime.kind}' does not support live steering. Use nudge-agent for mailbox-based child-process coordination.`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
 		if (!runtime.resume && operation === "resume-agent") return result(`Runtime '${runtime.kind}' does not support live resume.`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
+		if (operation === "interrupt-agent" && runtime.kind !== "live-session") return result(`Runtime '${runtime.kind}' does not expose per-agent interrupt yet. Use nudge-agent or cancel the run.`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
 		return result(`Operation '${operation}' is reserved for live-session runtime and is not active for this run yet.`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
 	}
 	if (operation === "read-mailbox") {

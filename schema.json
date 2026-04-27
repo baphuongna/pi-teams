@@ -69,6 +69,15 @@
         "promptMode": { "type": "string", "enum": ["replace", "append"] },
         "groupJoin": { "type": "string", "enum": ["off", "group", "smart"] }
       }
+    },
+    "control": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Agent control-plane settings for attention/stale activity detection.",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "needsAttentionAfterMs": { "type": "integer", "minimum": 1 }
+      }
     }
   }
 }

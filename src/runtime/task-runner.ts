@@ -30,6 +30,30 @@ export interface TaskRunnerInput {
 	dependencyContextText?: string;
 }
 
+function readOnlyRoleInstructions(role: string): string {
+	if (permissionForRole(role) !== "read_only") return "";
+	return [
+		"# READ-ONLY ROLE CONTRACT",
+		"You are running in READ-ONLY mode for this task.",
+		"- Do not create, modify, delete, move, or copy files.",
+		"- Do not use shell redirects, heredocs, in-place edits, package installs, git commit/merge/rebase/reset/checkout, or other state-mutating commands.",
+		"- If implementation changes are needed, report exact recommendations instead of applying them.",
+		"- Prefer read/grep/find/listing tools and read-only git inspection commands.",
+	].join("\n");
+}
+
+function coordinationBridgeInstructions(task: TeamTaskState): string {
+	return [
+		"# Crew Coordination Channel",
+		`Mailbox target for this task: ${task.id}`,
+		"Use the run mailbox contract for coordination with the leader/orchestrator:",
+		"- If blocked or uncertain, report the blocker in your final result and, when mailbox tools/API are available, send an inbox/outbox message addressed to the leader.",
+		"- If nudged, answer with current status, blocker, or smallest next step.",
+		"- Treat inherited/dependency context as reference-only; do not continue the parent conversation directly.",
+		"- Completion handoff should include: DONE/FAILED, summary, changed/read files, verification evidence, and remaining risks.",
+	].join("\n");
+}
+
 function renderTaskPrompt(manifest: TeamRunManifest, step: WorkflowStep, task: TeamTaskState): string {
 	return [
 		"# pi-crew Worker Runtime Context",
@@ -53,6 +77,10 @@ function renderTaskPrompt(manifest: TeamRunManifest, step: WorkflowStep, task: T
 		"- Report blockers and verification evidence in the final result.",
 		"- Do not claim completion without evidence.",
 		"- Follow the Task Packet contract below; escalate if any contract field is impossible to satisfy.",
+		"",
+		readOnlyRoleInstructions(task.role),
+		"",
+		coordinationBridgeInstructions(task),
 		"",
 		task.taskPacket ? renderTaskPacket(task.taskPacket) : "",
 		"",
@@ -206,6 +234,12 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 
 	let startupEvidence = createStartupEvidence({ command: input.executeWorkers ? "pi" : "safe-scaffold", startedAt: new Date(task.startedAt ?? new Date().toISOString()), finishedAt: new Date(), promptSentAt: new Date(task.startedAt ?? new Date().toISOString()), promptAccepted: true, exitCode: 0 });
 	const inputsArtifact = writeTaskInputsArtifact(manifest, task, dependencyContext);
+	const coordinationArtifact = writeArtifact(manifest.artifactsRoot, {
+		kind: "metadata",
+		relativePath: `metadata/${task.id}.coordination-bridge.md`,
+		content: `${coordinationBridgeInstructions(task)}\n`,
+		producer: task.id,
+	});
 	if (input.executeWorkers) {
 		const candidates = buildModelCandidates(input.step.model ?? input.agent.model, input.agent.fallbackModels, undefined);
 		const attemptModels = candidates.length > 0 ? candidates : [input.step.model ?? input.agent.model];
@@ -332,7 +366,7 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 		content: `${JSON.stringify({ role: task.role, permissionMode }, null, 2)}\n`,
 		producer: task.id,
 	});
-	manifest = { ...manifest, updatedAt: new Date().toISOString(), artifacts: [...manifest.artifacts, promptArtifact, resultArtifact, inputsArtifact, packetArtifact, verificationArtifact, startupArtifact, permissionArtifact, ...(sharedOutputArtifact ? [sharedOutputArtifact] : []), ...(logArtifact ? [logArtifact] : []), ...(transcriptArtifact ? [transcriptArtifact] : []), ...(diffArtifact ? [diffArtifact] : [])] };
+	manifest = { ...manifest, updatedAt: new Date().toISOString(), artifacts: [...manifest.artifacts, promptArtifact, resultArtifact, inputsArtifact, coordinationArtifact, packetArtifact, verificationArtifact, startupArtifact, permissionArtifact, ...(sharedOutputArtifact ? [sharedOutputArtifact] : []), ...(logArtifact ? [logArtifact] : []), ...(transcriptArtifact ? [transcriptArtifact] : []), ...(diffArtifact ? [diffArtifact] : [])] };
 	saveRunManifest(manifest);
 	saveRunTasks(manifest, tasks);
 	upsertCrewAgent(manifest, recordFromTask(manifest, task, input.executeWorkers ? "child-process" : "scaffold"));

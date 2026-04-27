@@ -80,6 +80,27 @@ export function writeTaskInputsArtifact(manifest: TeamRunManifest, task: TeamTas
 export function aggregateTaskOutputs(tasks: TeamTaskState[]): string {
 	return tasks.map((task, index) => {
 		const body = task.resultArtifact ? readIfSmall(task.resultArtifact.path, 40_000) : undefined;
-		return [`=== Task ${index + 1} (${task.id} / ${task.agent}) ===`, `status=${task.status}`, task.error ? `error=${task.error}` : "", "", body?.trim() || "(no output)"].filter(Boolean).join("\n");
+		const hasBody = Boolean(body?.trim());
+		const expectedMissing = task.resultArtifact && !fs.existsSync(task.resultArtifact.path);
+		const status = task.status === "skipped"
+			? "SKIPPED"
+			: task.status === "failed"
+				? `FAILED${task.exitCode !== undefined ? ` (exit code ${task.exitCode ?? "null"})` : ""}${task.error ? `: ${task.error}` : ""}`
+				: expectedMissing
+					? `EMPTY OUTPUT (expected result artifact missing: ${task.resultArtifact?.path})`
+					: !hasBody
+						? "EMPTY OUTPUT (no textual response returned)"
+						: task.status.toUpperCase();
+		return [
+			`=== Task ${index + 1}: ${task.id} (${task.agent}) ===`,
+			`Status: ${status}`,
+			task.role ? `Role: ${task.role}` : "",
+			task.resultArtifact?.path ? `Result artifact: ${task.resultArtifact.path}` : "",
+			task.logArtifact?.path ? `Log artifact: ${task.logArtifact.path}` : "",
+			task.transcriptArtifact?.path ? `Transcript: ${task.transcriptArtifact.path}` : "",
+			task.usage ? `Usage: ${JSON.stringify(task.usage)}` : "",
+			"",
+			hasBody ? body!.trim() : status,
+		].filter(Boolean).join("\n");
 	}).join("\n\n");
 }
