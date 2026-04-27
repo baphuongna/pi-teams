@@ -41,6 +41,12 @@ export interface CrewControlConfig {
 	needsAttentionAfterMs?: number;
 }
 
+export interface CrewWorktreeConfig {
+	setupHook?: string;
+	setupHookTimeoutMs?: number;
+	linkNodeModules?: boolean;
+}
+
 export interface AgentOverrideConfig {
 	disabled?: boolean;
 	model?: string | false;
@@ -63,6 +69,7 @@ export interface PiTeamsConfig {
 	limits?: CrewLimitsConfig;
 	runtime?: CrewRuntimeConfig;
 	control?: CrewControlConfig;
+	worktree?: CrewWorktreeConfig;
 	agents?: CrewAgentsConfig;
 }
 
@@ -121,6 +128,12 @@ function mergeConfig(base: PiTeamsConfig, override: PiTeamsConfig): PiTeamsConfi
 		merged.control = {
 			...(base.control ?? {}),
 			...withoutUndefined((override.control ?? {}) as Record<string, unknown>),
+		};
+	}
+	if (base.worktree || override.worktree) {
+		merged.worktree = {
+			...(base.worktree ?? {}),
+			...withoutUndefined((override.worktree ?? {}) as Record<string, unknown>),
 		};
 	}
 	if (base.agents || override.agents) {
@@ -245,6 +258,17 @@ function parseControlConfig(value: unknown): CrewControlConfig | undefined {
 	return Object.values(control).some((entry) => entry !== undefined) ? control : undefined;
 }
 
+function parseWorktreeConfig(value: unknown): CrewWorktreeConfig | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const obj = value as Record<string, unknown>;
+	const worktree: CrewWorktreeConfig = {
+		setupHook: typeof obj.setupHook === "string" && obj.setupHook.trim() ? obj.setupHook.trim() : undefined,
+		setupHookTimeoutMs: parsePositiveInteger(obj.setupHookTimeoutMs, 300_000),
+		linkNodeModules: typeof obj.linkNodeModules === "boolean" ? obj.linkNodeModules : undefined,
+	};
+	return Object.values(worktree).some((entry) => entry !== undefined) ? worktree : undefined;
+}
+
 function parseStringArrayOrFalse(value: unknown): string[] | false | undefined {
 	if (value === false) return false;
 	if (typeof value === "string") return value.split(",").map((entry) => entry.trim()).filter(Boolean);
@@ -294,6 +318,7 @@ function parseConfig(raw: unknown): PiTeamsConfig {
 		limits: parseLimitsConfig(obj.limits),
 		runtime: parseRuntimeConfig(obj.runtime),
 		control: parseControlConfig(obj.control),
+		worktree: parseWorktreeConfig(obj.worktree),
 		agents: parseAgentsConfig(obj.agents),
 	};
 }

@@ -41,6 +41,9 @@ import { probeLiveSessionRuntime } from "../runtime/live-session-runtime.ts";
 import { applyAttentionState, formatActivityAge, resolveCrewControlConfig } from "../runtime/agent-control.ts";
 import { buildAgentDashboard, readAgentOutput } from "../runtime/agent-observability.ts";
 import { readForegroundControlStatus, writeForegroundInterruptRequest } from "../runtime/foreground-control.ts";
+import { listLiveAgents, resumeLiveAgent, steerLiveAgent, stopLiveAgent } from "../runtime/live-agent-manager.ts";
+import { appendLiveAgentControlRequest } from "../runtime/live-agent-control.ts";
+import { liveControlRealtimeMessage, publishLiveControlRealtime } from "../runtime/live-control-realtime.ts";
 
 export interface TeamToolDetails {
 	action: string;
@@ -49,7 +52,11 @@ export interface TeamToolDetails {
 	artifactsRoot?: string;
 }
 
-type TeamContext = Pick<ExtensionContext, "cwd"> & Partial<Pick<ExtensionContext, "model">>;
+type TeamContext = Pick<ExtensionContext, "cwd"> & Partial<Pick<ExtensionContext, "model">> & {
+	modelRegistry?: unknown;
+	sessionManager?: { getBranch?: () => unknown[] };
+	events?: { emit?: (event: string, data: unknown) => void };
+};
 
 function result(text: string, details: TeamToolDetails, isError = false): PiTeamsToolResult {
 	return toolResult(text, details, isError);
@@ -57,6 +64,29 @@ function result(text: string, details: TeamToolDetails, isError = false): PiTeam
 
 function formatScoped(name: string, source: string, description: string): string {
 	return `- ${name} (${source}): ${description}`;
+}
+
+function extractTextContent(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content.map((part) => part && typeof part === "object" && !Array.isArray(part) && typeof (part as { text?: unknown }).text === "string" ? (part as { text: string }).text : "").filter(Boolean).join("\n");
+}
+
+function buildParentContext(ctx: TeamContext): string | undefined {
+	const branch = ctx.sessionManager?.getBranch?.();
+	if (!Array.isArray(branch) || branch.length === 0) return undefined;
+	const parts: string[] = [];
+	for (const entry of branch.slice(-20)) {
+		if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+		const record = entry as { type?: unknown; message?: unknown; summary?: unknown };
+		if (record.type === "compaction" && typeof record.summary === "string") parts.push(`[Summary]: ${record.summary}`);
+		const message = record.message && typeof record.message === "object" && !Array.isArray(record.message) ? record.message as { role?: unknown; content?: unknown } : undefined;
+		if (!message || (message.role !== "user" && message.role !== "assistant")) continue;
+		const text = extractTextContent(message.content).trim();
+		if (text) parts.push(`[${message.role === "user" ? "User" : "Assistant"}]: ${text}`);
+	}
+	if (!parts.length) return undefined;
+	return [`# Parent Conversation Context`, "The following context was inherited from the parent Pi session. Treat it as reference-only.", "", parts.join("\n\n")].join("\n");
 }
 
 export function handleList(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
@@ -134,6 +164,18 @@ function commandExists(command: string, args: string[]): { ok: boolean; detail: 
 	const output = spawnSync(command, args, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
 	if (!output.error && output.status === 0) return { ok: true, detail: firstOutputLine(output.stdout, output.stderr) };
 	return { ok: false, detail: output.error?.message ?? firstOutputLine(output.stdout, output.stderr) };
+}
+
+function effectiveRunConfig(base: PiTeamsConfig, rawOverride: unknown): PiTeamsConfig {
+	const patch = configPatchFromConfig(rawOverride);
+	return {
+		...base,
+		...patch,
+		limits: patch.limits ? { ...(base.limits ?? {}), ...patch.limits } : base.limits,
+		runtime: patch.runtime ? { ...(base.runtime ?? {}), ...patch.runtime } : base.runtime,
+		control: patch.control ? { ...(base.control ?? {}), ...patch.control } : base.control,
+		worktree: patch.worktree ? { ...(base.worktree ?? {}), ...patch.worktree } : base.worktree,
+	};
 }
 
 function piCommandExists(): { ok: boolean; detail: string } {
@@ -261,9 +303,10 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 		return result(text, { action: "run", status: "ok", runId: updatedManifest.runId, artifactsRoot: updatedManifest.artifactsRoot });
 	}
 
-	const runtime = await resolveCrewRuntime(loadedConfig.config);
+	const runtime = await resolveCrewRuntime(effectiveRunConfig(loadedConfig.config, params.config));
 	const executeWorkers = runtime.kind === "child-process";
-	const executed = await executeTeamRun({ manifest: updatedManifest, tasks, team, workflow, agents, executeWorkers, limits: loadedConfig.config.limits, runtime, runtimeConfig: loadedConfig.config.runtime });
+	const executedConfig = effectiveRunConfig(loadedConfig.config, params.config);
+	const executed = await executeTeamRun({ manifest: updatedManifest, tasks, team, workflow, agents, executeWorkers, limits: executedConfig.limits, runtime, runtimeConfig: executedConfig.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry });
 	const text = [
 		`Created pi-crew run ${executed.manifest.runId}.`,
 		`Team: ${team.name}`,
@@ -274,9 +317,11 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 		`Artifacts: ${executed.manifest.artifactsRoot}`,
 		"",
 		`Runtime: ${runtime.kind}${runtime.fallback ? ` (fallback from ${runtime.requestedMode})` : ""}${runtime.reason ? ` - ${runtime.reason}` : ""}`,
-		executeWorkers
+		runtime.kind === "child-process"
 			? "Child Pi worker execution was enabled."
-			: "Safe scaffold mode: child Pi workers were not launched. Set PI_TEAMS_EXECUTE_WORKERS=1 or runtime.mode=child-process to enable real worker execution.",
+			: runtime.kind === "live-session"
+				? "Experimental live-session worker execution was enabled."
+				: "Safe scaffold mode: child Pi workers were not launched. Set PI_CREW_EXECUTE_WORKERS=1, PI_TEAMS_EXECUTE_WORKERS=1, or runtime.mode=child-process to enable real worker execution.",
 	].join("\n");
 	return result(text, { action: "run", status: executed.manifest.status === "failed" ? "error" : "ok", runId: executed.manifest.runId, artifactsRoot: executed.manifest.artifactsRoot }, executed.manifest.status === "failed");
 }
@@ -384,7 +429,7 @@ export async function handleResume(params: TeamToolParamsValue, ctx: TeamContext
 		const loadedConfig = loadConfig(ctx.cwd);
 		const runtime = await resolveCrewRuntime(loadedConfig.config);
 		const executeWorkers = runtime.kind === "child-process";
-		const executed = await executeTeamRun({ manifest: loaded.manifest, tasks: resetTasks, team, workflow, agents: allAgents(discoverAgents(ctx.cwd)), executeWorkers, limits: loadedConfig.config.limits, runtime, runtimeConfig: loadedConfig.config.runtime });
+		const executed = await executeTeamRun({ manifest: loaded.manifest, tasks: resetTasks, team, workflow, agents: allAgents(discoverAgents(ctx.cwd)), executeWorkers, limits: loadedConfig.config.limits, runtime, runtimeConfig: loadedConfig.config.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry });
 		return result([`Resumed run ${executed.manifest.runId}.`, `Status: ${executed.manifest.status}`, `Tasks: ${executed.tasks.length}`, `Artifacts: ${executed.manifest.artifactsRoot}`].join("\n"), { action: "resume", status: executed.manifest.status === "failed" ? "error" : "ok", runId: executed.manifest.runId, artifactsRoot: executed.manifest.artifactsRoot }, executed.manifest.status === "failed");
 	});
 }
@@ -460,12 +505,39 @@ function autonomousPatchFromConfig(config: unknown): PiTeamsAutonomousConfig {
 function configPatchFromConfig(config: unknown): PiTeamsConfig {
 	const cfg = configRecord(config);
 	const control = configRecord(cfg.control);
+	const runtime = configRecord(cfg.runtime);
+	const limits = configRecord(cfg.limits);
+	const worktree = configRecord(cfg.worktree);
 	return {
 		asyncByDefault: typeof cfg.asyncByDefault === "boolean" ? cfg.asyncByDefault : undefined,
 		executeWorkers: typeof cfg.executeWorkers === "boolean" ? cfg.executeWorkers : undefined,
 		notifierIntervalMs: typeof cfg.notifierIntervalMs === "number" && Number.isFinite(cfg.notifierIntervalMs) ? cfg.notifierIntervalMs : undefined,
 		requireCleanWorktreeLeader: typeof cfg.requireCleanWorktreeLeader === "boolean" ? cfg.requireCleanWorktreeLeader : undefined,
 		autonomous: typeof cfg.autonomous === "object" && cfg.autonomous !== null && !Array.isArray(cfg.autonomous) ? autonomousPatchFromConfig(cfg.autonomous) : undefined,
+		limits: Object.keys(limits).length > 0 ? {
+			maxConcurrentWorkers: typeof limits.maxConcurrentWorkers === "number" && Number.isInteger(limits.maxConcurrentWorkers) && limits.maxConcurrentWorkers > 0 ? limits.maxConcurrentWorkers : undefined,
+			maxTaskDepth: typeof limits.maxTaskDepth === "number" && Number.isInteger(limits.maxTaskDepth) && limits.maxTaskDepth > 0 ? limits.maxTaskDepth : undefined,
+			maxChildrenPerTask: typeof limits.maxChildrenPerTask === "number" && Number.isInteger(limits.maxChildrenPerTask) && limits.maxChildrenPerTask > 0 ? limits.maxChildrenPerTask : undefined,
+			maxRunMinutes: typeof limits.maxRunMinutes === "number" && Number.isInteger(limits.maxRunMinutes) && limits.maxRunMinutes > 0 ? limits.maxRunMinutes : undefined,
+			maxRetriesPerTask: typeof limits.maxRetriesPerTask === "number" && Number.isInteger(limits.maxRetriesPerTask) && limits.maxRetriesPerTask > 0 ? limits.maxRetriesPerTask : undefined,
+			maxTasksPerRun: typeof limits.maxTasksPerRun === "number" && Number.isInteger(limits.maxTasksPerRun) && limits.maxTasksPerRun > 0 ? limits.maxTasksPerRun : undefined,
+			heartbeatStaleMs: typeof limits.heartbeatStaleMs === "number" && Number.isInteger(limits.heartbeatStaleMs) && limits.heartbeatStaleMs > 0 ? limits.heartbeatStaleMs : undefined,
+		} : undefined,
+		runtime: Object.keys(runtime).length > 0 ? {
+			mode: runtime.mode === "auto" || runtime.mode === "scaffold" || runtime.mode === "child-process" || runtime.mode === "live-session" ? runtime.mode : undefined,
+			preferLiveSession: typeof runtime.preferLiveSession === "boolean" ? runtime.preferLiveSession : undefined,
+			allowChildProcessFallback: typeof runtime.allowChildProcessFallback === "boolean" ? runtime.allowChildProcessFallback : undefined,
+			maxTurns: typeof runtime.maxTurns === "number" && Number.isInteger(runtime.maxTurns) && runtime.maxTurns > 0 ? runtime.maxTurns : undefined,
+			graceTurns: typeof runtime.graceTurns === "number" && Number.isInteger(runtime.graceTurns) && runtime.graceTurns > 0 ? runtime.graceTurns : undefined,
+			inheritContext: typeof runtime.inheritContext === "boolean" ? runtime.inheritContext : undefined,
+			promptMode: runtime.promptMode === "replace" || runtime.promptMode === "append" ? runtime.promptMode : undefined,
+			groupJoin: runtime.groupJoin === "off" || runtime.groupJoin === "group" || runtime.groupJoin === "smart" ? runtime.groupJoin : undefined,
+		} : undefined,
+		worktree: Object.keys(worktree).length > 0 ? {
+			setupHook: typeof worktree.setupHook === "string" && worktree.setupHook.trim() ? worktree.setupHook.trim() : undefined,
+			setupHookTimeoutMs: typeof worktree.setupHookTimeoutMs === "number" && Number.isInteger(worktree.setupHookTimeoutMs) && worktree.setupHookTimeoutMs > 0 ? worktree.setupHookTimeoutMs : undefined,
+			linkNodeModules: typeof worktree.linkNodeModules === "boolean" ? worktree.linkNodeModules : undefined,
+		} : undefined,
 		control: Object.keys(control).length > 0 ? {
 			enabled: typeof control.enabled === "boolean" ? control.enabled : undefined,
 			needsAttentionAfterMs: typeof control.needsAttentionAfterMs === "number" && Number.isInteger(control.needsAttentionAfterMs) && control.needsAttentionAfterMs > 0 ? control.needsAttentionAfterMs : undefined,
@@ -657,12 +729,34 @@ export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): 
 		appendEvent(loaded.manifest.eventsPath, { type: "agent.nudged", runId: loaded.manifest.runId, taskId: agent.taskId, message: messageText, data: { agentId: agent.id, mailboxMessageId: message.id } });
 		return result(JSON.stringify({ agentId: agent.id, mailboxMessage: message }, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
 	}
+	if (operation === "list-live-agents") {
+		return result(JSON.stringify(listLiveAgents().filter((agent) => agent.runId === loaded.manifest.runId), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+	}
 	if (operation === "steer-agent" || operation === "stop-agent" || operation === "resume-agent" || operation === "interrupt-agent") {
-		const runtime = await resolveCrewRuntime(loadConfig(ctx.cwd).config);
-		if (!runtime.steer && operation === "steer-agent") return result(`Runtime '${runtime.kind}' does not support live steering. Use nudge-agent for mailbox-based child-process coordination.`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		if (!runtime.resume && operation === "resume-agent") return result(`Runtime '${runtime.kind}' does not support live resume.`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		if (operation === "interrupt-agent" && runtime.kind !== "live-session") return result(`Runtime '${runtime.kind}' does not expose per-agent interrupt yet. Use nudge-agent or cancel the run.`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		return result(`Operation '${operation}' is reserved for live-session runtime and is not active for this run yet.`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
+		const agentId = typeof cfg.agentId === "string" ? cfg.agentId : undefined;
+		if (!agentId) return result(`API ${operation} requires config.agentId.`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
+		const message = typeof cfg.message === "string" && cfg.message.trim() ? cfg.message.trim() : undefined;
+		const prompt = typeof cfg.prompt === "string" && cfg.prompt.trim() ? cfg.prompt.trim() : message;
+		try {
+			if (operation === "steer-agent") return result(JSON.stringify(await steerLiveAgent(agentId, message ?? "Please report current status and wrap up if possible."), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+			if (operation === "resume-agent") {
+				if (!prompt) return result("API resume-agent requires config.prompt or config.message.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
+				return result(JSON.stringify(await resumeLiveAgent(agentId, prompt), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+			}
+			return result(JSON.stringify(await stopLiveAgent(agentId), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+		} catch (error) {
+			const agent = readCrewAgents(loaded.manifest).find((item) => item.id === agentId || item.taskId === agentId);
+			if (!agent) {
+				const err = error instanceof Error ? error.message : String(error);
+				return result(err, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
+			}
+			if (operation === "resume-agent" && !prompt) return result("API resume-agent requires config.prompt or config.message.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
+			const request = appendLiveAgentControlRequest(loaded.manifest, { taskId: agent.taskId, agentId: agent.id, operation: operation === "resume-agent" ? "resume" : operation === "steer-agent" ? "steer" : "stop", message: operation === "resume-agent" ? prompt : message });
+			publishLiveControlRealtime(request);
+			ctx.events?.emit?.("pi-crew:live-control", liveControlRealtimeMessage(request));
+			appendEvent(loaded.manifest.eventsPath, { type: "agent.control.queued", runId: loaded.manifest.runId, taskId: agent.taskId, message: `Queued ${request.operation} control request for live agent.`, data: { request, realtime: true } });
+			return result(JSON.stringify({ queued: true, request }, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+		}
 	}
 	if (operation === "read-mailbox") {
 		const direction = cfg.direction === "inbox" || cfg.direction === "outbox" ? cfg.direction as MailboxDirection : undefined;

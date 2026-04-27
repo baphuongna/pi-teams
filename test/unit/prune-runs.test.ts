@@ -15,13 +15,14 @@ test("prune removes old finished runs after confirmation", async () => {
 			const run = await handleTeamTool({ action: "run", team: "fast-fix", goal: `Prune ${i}` }, { cwd });
 			assert.equal(run.isError, false);
 		}
-		assert.equal(listRuns(cwd).length, 3);
+		const ownRuns = () => listRuns(cwd).filter((run) => run.cwd === cwd);
+		assert.equal(ownRuns().length, 3);
 		const blocked = await handleTeamTool({ action: "prune", keep: 1 }, { cwd });
 		assert.equal(blocked.isError, true);
-		assert.equal(listRuns(cwd).length, 3);
+		assert.equal(ownRuns().length, 3);
 		const pruned = await handleTeamTool({ action: "prune", keep: 1, confirm: true }, { cwd });
 		assert.equal(pruned.isError, false);
-		assert.equal(listRuns(cwd).length, 1);
+		assert.equal(ownRuns().length, 1);
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}

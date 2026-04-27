@@ -24,6 +24,7 @@ export interface AgentConfig {
 	inheritProjectContext?: boolean;
 	inheritSkills?: boolean;
 	routing?: RoutingMetadata;
+	memory?: "user" | "project" | "local";
 	disabled?: boolean;
 	override?: { source: "config"; path: string };
 }

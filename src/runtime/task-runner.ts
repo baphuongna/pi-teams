@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import type { AgentConfig } from "../agents/agent-config.ts";
-import type { CrewLimitsConfig } from "../config/config.ts";
+import type { CrewLimitsConfig, CrewRuntimeConfig } from "../config/config.ts";
 import type { ArtifactDescriptor, TeamRunManifest, TeamTaskState, UsageState } from "../state/types.ts";
 import { writeArtifact } from "../state/artifact-store.ts";
 import { appendEvent } from "../state/event-log.ts";
@@ -8,7 +8,7 @@ import { saveRunManifest, saveRunTasks } from "../state/state-store.ts";
 import { createTaskClaim } from "../state/task-claims.ts";
 import { createWorkerHeartbeat, touchWorkerHeartbeat } from "./worker-heartbeat.ts";
 import type { WorkflowStep } from "../workflows/workflow-config.ts";
-import { captureWorktreeDiff, prepareTaskWorkspace } from "../worktree/worktree-manager.ts";
+import { captureWorktreeDiff, captureWorktreeDiffStat, prepareTaskWorkspace } from "../worktree/worktree-manager.ts";
 import { buildModelCandidates, formatModelAttemptNote, isRetryableModelFailure, type ModelAttemptSummary } from "./model-fallback.ts";
 import { parsePiJsonOutput, type ParsedPiJsonOutput } from "./pi-json-output.ts";
 import { runChildPi } from "./child-pi.ts";
@@ -19,7 +19,9 @@ import { permissionForRole } from "./role-permission.ts";
 import { collectDependencyOutputContext, renderDependencyOutputContext, writeTaskInputsArtifact, writeTaskSharedOutput } from "./task-output-context.ts";
 import { appendCrewAgentEvent, appendCrewAgentOutput, emptyCrewAgentProgress, recordFromTask, upsertCrewAgent } from "./crew-agent-records.ts";
 import { parseSessionUsage } from "./session-usage.ts";
-import type { CrewAgentProgress } from "./crew-agent-runtime.ts";
+import type { CrewAgentProgress, CrewRuntimeKind } from "./crew-agent-runtime.ts";
+import { buildMemoryBlock } from "./agent-memory.ts";
+import { runLiveSessionTask } from "./live-session-runtime.ts";
 
 export interface TaskRunnerInput {
 	manifest: TeamRunManifest;
@@ -29,6 +31,11 @@ export interface TaskRunnerInput {
 	agent: AgentConfig;
 	signal?: AbortSignal;
 	executeWorkers: boolean;
+	runtimeKind?: CrewRuntimeKind;
+	runtimeConfig?: CrewRuntimeConfig;
+	parentContext?: string;
+	parentModel?: unknown;
+	modelRegistry?: unknown;
 	limits?: CrewLimitsConfig;
 	dependencyContextText?: string;
 }
@@ -57,7 +64,8 @@ function coordinationBridgeInstructions(task: TeamTaskState): string {
 	].join("\n");
 }
 
-function renderTaskPrompt(manifest: TeamRunManifest, step: WorkflowStep, task: TeamTaskState): string {
+function renderTaskPrompt(manifest: TeamRunManifest, step: WorkflowStep, task: TeamTaskState, agent?: AgentConfig): string {
+	const memoryBlock = agent?.memory ? buildMemoryBlock(agent.name, agent.memory, task.cwd, Boolean(agent.tools?.some((tool) => tool === "write" || tool === "edit"))) : "";
 	return [
 		"# pi-crew Worker Runtime Context",
 		`Run ID: ${manifest.runId}`,
@@ -88,6 +96,7 @@ function renderTaskPrompt(manifest: TeamRunManifest, step: WorkflowStep, task: T
 		task.taskPacket ? renderTaskPacket(task.taskPacket) : "",
 		"",
 		(inputDependencyContext(task) || ""),
+		memoryBlock,
 		"Task:",
 		step.task.replaceAll("{goal}", manifest.goal),
 	].join("\n");
@@ -227,12 +236,13 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 		...(dependencyContextText ? { dependencyContextText } : {}),
 	} as TeamTaskState;
 	let tasks = updateTask(input.tasks, task);
+	const runtimeKind = input.runtimeKind ?? (input.executeWorkers ? "child-process" : "scaffold");
 	saveRunTasks(manifest, tasks);
-	upsertCrewAgent(manifest, recordFromTask(manifest, task, input.executeWorkers ? "child-process" : "scaffold"));
-	appendEvent(manifest.eventsPath, { type: "task.started", runId: manifest.runId, taskId: task.id, data: { role: task.role, agent: task.agent, cwd: task.cwd, worktreePath: workspace.worktreePath, worktreeBranch: workspace.branch, worktreeReused: workspace.reused } });
+	upsertCrewAgent(manifest, recordFromTask(manifest, task, runtimeKind));
+	appendEvent(manifest.eventsPath, { type: "task.started", runId: manifest.runId, taskId: task.id, data: { role: task.role, agent: task.agent, runtime: runtimeKind, cwd: task.cwd, worktreePath: workspace.worktreePath, worktreeBranch: workspace.branch, worktreeReused: workspace.reused } });
 	const permissionMode = permissionForRole(task.role);
 
-	const prompt = renderTaskPrompt(manifest, input.step, task);
+	const prompt = renderTaskPrompt(manifest, input.step, task, input.agent);
 	const promptArtifact = writeArtifact(manifest.artifactsRoot, {
 		kind: "prompt",
 		relativePath: `prompts/${task.id}.md`,
@@ -248,7 +258,7 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 	let modelAttempts: ModelAttemptSummary[] | undefined;
 	let parsedOutput: ParsedPiJsonOutput | undefined;
 
-	let startupEvidence = createStartupEvidence({ command: input.executeWorkers ? "pi" : "safe-scaffold", startedAt: new Date(task.startedAt ?? new Date().toISOString()), finishedAt: new Date(), promptSentAt: new Date(task.startedAt ?? new Date().toISOString()), promptAccepted: true, exitCode: 0 });
+	let startupEvidence = createStartupEvidence({ command: runtimeKind === "child-process" ? "pi" : runtimeKind === "live-session" ? "live-session" : "safe-scaffold", startedAt: new Date(task.startedAt ?? new Date().toISOString()), finishedAt: new Date(), promptSentAt: new Date(task.startedAt ?? new Date().toISOString()), promptAccepted: true, exitCode: 0 });
 	const inputsArtifact = writeTaskInputsArtifact(manifest, task, dependencyContext);
 	const coordinationArtifact = writeArtifact(manifest.artifactsRoot, {
 		kind: "metadata",
@@ -256,7 +266,7 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 		content: `${coordinationBridgeInstructions(task)}\n`,
 		producer: task.id,
 	});
-	if (input.executeWorkers) {
+	if (runtimeKind === "child-process") {
 		const candidates = buildModelCandidates(input.step.model ?? input.agent.model, input.agent.fallbackModels, undefined);
 		const attemptModels = candidates.length > 0 ? candidates : [input.step.model ?? input.agent.model];
 		const logs: string[] = [];
@@ -326,6 +336,55 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 				producer: task.id,
 			});
 		}
+	} else if (runtimeKind === "live-session") {
+		const transcriptPath = `${manifest.artifactsRoot}/transcripts/${task.id}.jsonl`;
+		const attemptStartedAt = new Date();
+		const liveResult = await runLiveSessionTask({
+			manifest,
+			task,
+			step: input.step,
+			agent: input.agent,
+			prompt,
+			signal: input.signal,
+			transcriptPath,
+			runtimeConfig: input.runtimeConfig,
+			parentContext: input.parentContext,
+			parentModel: input.parentModel,
+			modelRegistry: input.modelRegistry,
+			onOutput: (text) => appendCrewAgentOutput(manifest, task.id, text),
+			onEvent: (event) => {
+				appendCrewAgentEvent(manifest, task.id, event);
+				task = { ...task, agentProgress: applyAgentProgressEvent(task.agentProgress ?? emptyCrewAgentProgress(), event, task.startedAt) };
+				tasks = updateTask(tasks, task);
+				upsertCrewAgent(manifest, recordFromTask(manifest, task, "live-session"));
+				appendEvent(manifest.eventsPath, { type: "task.progress", runId: manifest.runId, taskId: task.id, data: { event } });
+			},
+		});
+		startupEvidence = createStartupEvidence({ command: "live-session", startedAt: attemptStartedAt, finishedAt: new Date(), promptSentAt: attemptStartedAt, promptAccepted: liveResult.exitCode === 0 && !liveResult.error, stderr: liveResult.stderr, error: liveResult.error, exitCode: liveResult.exitCode });
+		exitCode = liveResult.exitCode;
+		error = liveResult.error || (liveResult.exitCode && liveResult.exitCode !== 0 ? liveResult.stderr || `Live session exited with ${liveResult.exitCode}` : undefined);
+		parsedOutput = { finalText: liveResult.stdout, textEvents: liveResult.stdout ? [liveResult.stdout] : [], jsonEvents: liveResult.jsonEvents, usage: liveResult.usage };
+		if (liveResult.usage) task = { ...task, usage: liveResult.usage, agentProgress: applyUsageToProgress(task.agentProgress, liveResult.usage) };
+		resultArtifact = writeArtifact(manifest.artifactsRoot, {
+			kind: "result",
+			relativePath: `results/${task.id}.txt`,
+			content: liveResult.stdout || liveResult.stderr || "(no output)",
+			producer: task.id,
+		});
+		logArtifact = writeArtifact(manifest.artifactsRoot, {
+			kind: "log",
+			relativePath: `logs/${task.id}.log`,
+			content: [`runtime=live-session`, `finalExitCode=${exitCode ?? "null"}`, `jsonEvents=${liveResult.jsonEvents}`, liveResult.usage ? `usage=${JSON.stringify(liveResult.usage)}` : "", "", "STDOUT:", liveResult.stdout, "", "STDERR:", liveResult.stderr].join("\n"),
+			producer: task.id,
+		});
+		if (fs.existsSync(transcriptPath)) {
+			transcriptArtifact = writeArtifact(manifest.artifactsRoot, {
+				kind: "log",
+				relativePath: `transcripts/${task.id}.jsonl`,
+				content: fs.readFileSync(transcriptPath, "utf-8"),
+				producer: task.id,
+			});
+		}
 	} else {
 		resultArtifact = writeArtifact(manifest.artifactsRoot, {
 			kind: "result",
@@ -346,6 +405,12 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 		content: captureWorktreeDiff(workspace.worktreePath),
 		producer: task.id,
 	}) : undefined;
+	const diffStatArtifact = workspace.worktreePath ? writeArtifact(manifest.artifactsRoot, {
+		kind: "metadata",
+		relativePath: `metadata/${task.id}.diff-stat.json`,
+		content: `${JSON.stringify({ ...captureWorktreeDiffStat(workspace.worktreePath), syntheticPaths: workspace.syntheticPaths ?? [], nodeModulesLinked: workspace.nodeModulesLinked ?? false }, null, 2)}\n`,
+		producer: task.id,
+	}) : undefined;
 
 	task = {
 		...task,
@@ -357,7 +422,7 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 		jsonEvents: parsedOutput?.jsonEvents,
 		agentProgress: error && task.agentProgress?.currentTool ? { ...task.agentProgress, failedTool: task.agentProgress.currentTool } : task.agentProgress,
 		error,
-		verification: createVerificationEvidence(taskPacket.verification, !error, error ? `Task failed: ${error}` : input.executeWorkers ? "Worker finished without reporting a verification failure." : "Safe scaffold mode; verification commands were not executed."),
+		verification: createVerificationEvidence(taskPacket.verification, !error, error ? `Task failed: ${error}` : runtimeKind === "scaffold" ? "Safe scaffold mode; verification commands were not executed." : `${runtimeKind} worker finished without reporting a verification failure.`),
 		promptArtifact,
 		resultArtifact,
 		claim: undefined,
@@ -391,10 +456,10 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 		content: `${JSON.stringify({ role: task.role, permissionMode }, null, 2)}\n`,
 		producer: task.id,
 	});
-	manifest = { ...manifest, updatedAt: new Date().toISOString(), artifacts: [...manifest.artifacts, promptArtifact, resultArtifact, inputsArtifact, coordinationArtifact, packetArtifact, verificationArtifact, startupArtifact, permissionArtifact, ...(sharedOutputArtifact ? [sharedOutputArtifact] : []), ...(logArtifact ? [logArtifact] : []), ...(transcriptArtifact ? [transcriptArtifact] : []), ...(diffArtifact ? [diffArtifact] : [])] };
+	manifest = { ...manifest, updatedAt: new Date().toISOString(), artifacts: [...manifest.artifacts, promptArtifact, resultArtifact, inputsArtifact, coordinationArtifact, packetArtifact, verificationArtifact, startupArtifact, permissionArtifact, ...(sharedOutputArtifact ? [sharedOutputArtifact] : []), ...(logArtifact ? [logArtifact] : []), ...(transcriptArtifact ? [transcriptArtifact] : []), ...(diffArtifact ? [diffArtifact] : []), ...(diffStatArtifact ? [diffStatArtifact] : [])] };
 	saveRunManifest(manifest);
 	saveRunTasks(manifest, tasks);
-	upsertCrewAgent(manifest, recordFromTask(manifest, task, input.executeWorkers ? "child-process" : "scaffold"));
+	upsertCrewAgent(manifest, recordFromTask(manifest, task, runtimeKind));
 	appendEvent(manifest.eventsPath, { type: error ? "task.failed" : "task.completed", runId: manifest.runId, taskId: task.id, message: error });
 	return { manifest, tasks };
 }

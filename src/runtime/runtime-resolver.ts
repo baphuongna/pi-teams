@@ -48,7 +48,7 @@ export async function isLiveSessionRuntimeAvailable(timeoutMs = 1500, env: NodeJ
 
 export async function resolveCrewRuntime(config: PiTeamsConfig, env: NodeJS.ProcessEnv = process.env): Promise<CrewRuntimeCapabilities> {
 	const requestedMode = config.runtime?.mode ?? "auto";
-	const executeWorkers = config.executeWorkers === true || env.PI_TEAMS_EXECUTE_WORKERS === "1";
+	const executeWorkers = config.executeWorkers === true || env.PI_CREW_EXECUTE_WORKERS === "1" || env.PI_TEAMS_EXECUTE_WORKERS === "1";
 	if (requestedMode === "scaffold") return scaffoldCaps(requestedMode);
 	if (requestedMode === "child-process") return childCaps(requestedMode, executeWorkers ? undefined : "child-process requested but executeWorkers is not enabled; caller should refuse or fall back explicitly.");
 	if (requestedMode === "live-session" || (requestedMode === "auto" && config.runtime?.preferLiveSession === true)) {

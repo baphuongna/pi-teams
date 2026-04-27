@@ -13,7 +13,9 @@ function isFinished(status: string): boolean {
 export function startAsyncRunNotifier(ctx: ExtensionContext, state: AsyncNotifierState, intervalMs = 5000): void {
 	if (state.interval) clearInterval(state.interval);
 	for (const run of listRuns(ctx.cwd)) {
-		if (isFinished(run.status)) state.seenFinishedRunIds.add(run.runId);
+		// Treat all pre-existing runs as seen. This avoids noisy error toasts when
+		// an old active/stale run is later inspected and transitions to failed.
+		state.seenFinishedRunIds.add(run.runId);
 	}
 	state.interval = setInterval(() => {
 		try {

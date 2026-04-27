@@ -15,6 +15,12 @@ test("runtime resolver selects child-process when workers are enabled", async ()
 	assert.equal(runtime.transcript, true);
 });
 
+test("runtime resolver accepts canonical PI_CREW_EXECUTE_WORKERS", async () => {
+	const runtime = await resolveCrewRuntime({}, { PI_CREW_EXECUTE_WORKERS: "1" } as NodeJS.ProcessEnv);
+	assert.equal(runtime.kind, "child-process");
+	assert.equal(runtime.transcript, true);
+});
+
 test("runtime resolver can request live-session with safe fallback", async () => {
 	const runtime = await resolveCrewRuntime({ runtime: { mode: "live-session" }, executeWorkers: true }, {} as NodeJS.ProcessEnv);
 	assert.ok(["live-session", "child-process", "scaffold"].includes(runtime.kind));

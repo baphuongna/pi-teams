@@ -15,6 +15,10 @@ function parseCost(value: string | undefined): "free" | "cheap" | "expensive" | 
 	return value === "free" || value === "cheap" || value === "expensive" ? value : undefined;
 }
 
+function parseMemory(value: string | undefined): "user" | "project" | "local" | undefined {
+	return value === "user" || value === "project" || value === "local" ? value : undefined;
+}
+
 function parseAgentFile(filePath: string, source: ResourceSource): AgentConfig | undefined {
 	try {
 		const content = fs.readFileSync(filePath, "utf-8");
@@ -41,6 +45,7 @@ function parseAgentFile(filePath: string, source: ResourceSource): AgentConfig |
 			systemPromptMode: frontmatter.systemPromptMode === "append" ? "append" : "replace",
 			inheritProjectContext: frontmatter.inheritProjectContext === "true",
 			inheritSkills: frontmatter.inheritSkills === "true",
+			memory: parseMemory(frontmatter.memory),
 			disabled: frontmatter.disabled === "true" || frontmatter.enabled === "false",
 			routing: triggers || useWhen || avoidWhen || cost || category ? { triggers, useWhen, avoidWhen, cost, category } : undefined,
 		};

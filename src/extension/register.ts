@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionCommandContext, ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { loadConfig } from "../config/config.ts";
 import { registerAutonomousPolicy } from "./autonomous-policy.ts";
 import { TeamToolParams, type TeamToolParamsValue } from "../schema/team-tool-schema.ts";
@@ -9,6 +9,7 @@ import { handleTeamManagerCommand } from "./team-manager-command.ts";
 import { handleTeamTool, type TeamToolDetails } from "./team-tool.ts";
 import { listRuns } from "./run-index.ts";
 import { RunDashboard, type RunDashboardSelection } from "../ui/run-dashboard.ts";
+import { registerPiCrewRpc, type PiCrewRpcHandle } from "./cross-extension-rpc.ts";
 
 function parseRunArgs(args: string): TeamToolParamsValue {
 	const tokens = args.match(/"[^"]*"|'[^']*'|\S+/g)?.map((token) => token.replace(/^['"]|['"]$/g, "")) ?? [];
@@ -64,15 +65,22 @@ function setNestedConfig(config: Record<string, unknown>, key: string, value: un
 
 export function registerPiTeams(pi: ExtensionAPI): void {
 	const notifierState: AsyncNotifierState = { seenFinishedRunIds: new Set() };
+	let currentCtx: ExtensionContext | undefined;
+	let rpcHandle: PiCrewRpcHandle | undefined;
 	registerAutonomousPolicy(pi);
+	rpcHandle = registerPiCrewRpc((pi as unknown as { events?: Parameters<typeof registerPiCrewRpc>[0] }).events, () => currentCtx);
 
 	pi.on("session_start", (_event, ctx) => {
+		currentCtx = ctx;
 		notifyActiveRuns(ctx);
 		const loadedConfig = loadConfig(ctx.cwd);
 		startAsyncRunNotifier(ctx, notifierState, loadedConfig.config.notifierIntervalMs ?? 5000);
 	});
 	pi.on("session_shutdown", () => {
 		stopAsyncRunNotifier(notifierState);
+		currentCtx = undefined;
+		rpcHandle?.unsubscribe();
+		rpcHandle = undefined;
 	});
 
 	const tool: ToolDefinition = {
