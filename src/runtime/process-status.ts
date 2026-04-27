@@ -38,6 +38,13 @@ export function isLikelyOrphanedActiveRun(run: TeamRunManifest, agents: CrewAgen
 	return agents.every((agent) => agent.status === "queued" && !agent.completedAt && !agent.progress);
 }
 
+function hasDurableActiveAgentEvidence(agent: CrewAgentRecord): boolean {
+	if (agent.status !== "running" && agent.status !== "queued") return false;
+	return Boolean(agent.statusPath || agent.eventsPath || agent.outputPath || agent.progress || agent.toolUses || agent.jsonEvents);
+}
+
 export function isDisplayActiveRun(run: TeamRunManifest, agents: CrewAgentRecord[] = [], now = Date.now()): boolean {
-	return isActiveRunStatus(run.status) && !isLikelyOrphanedActiveRun(run, agents, now);
+	if (!isActiveRunStatus(run.status) || isLikelyOrphanedActiveRun(run, agents, now)) return false;
+	if (agents.length === 0) return true;
+	return agents.some(hasDurableActiveAgentEvidence);
 }

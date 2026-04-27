@@ -10,6 +10,7 @@ import { registerPiCrewPowerbarSegments, updatePiCrewPowerbar } from "../../src/
 test("powerbar publisher registers and updates active crew segments", () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-powerbar-"));
 	try {
+		fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
 		const events: Array<{ event: string; data: unknown }> = [];
 		const bus = { emit: (event: string, data: unknown) => events.push({ event, data }) };
 		registerPiCrewPowerbarSegments(bus);

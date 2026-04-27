@@ -12,7 +12,7 @@ function isFinished(run: TeamRunManifest): boolean {
 }
 
 export function pruneFinishedRuns(cwd: string, keep: number): PruneRunsResult {
-	const finished = listRuns(cwd).filter(isFinished).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+	const finished = listRuns(cwd).filter((run) => run.cwd === cwd && isFinished(run)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 	const kept = finished.slice(0, keep).map((run) => run.runId);
 	const removed: string[] = [];
 	for (const run of finished.slice(keep)) {

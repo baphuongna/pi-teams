@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentConfig } from "../agents/agent-config.ts";
@@ -8,6 +8,29 @@ import { getPiSpawnCommand } from "./pi-spawn.ts";
 const POST_EXIT_STDIO_GUARD_MS = 3000;
 const FINAL_DRAIN_MS = 5000;
 const HARD_KILL_MS = 3000;
+const activeChildProcesses = new Map<number, ChildProcess>();
+
+function killProcessTree(pid: number | undefined): void {
+	if (!pid || !Number.isInteger(pid) || pid <= 0) return;
+	try {
+		if (process.platform === "win32") {
+			spawn("taskkill", ["/pid", String(pid), "/t", "/f"], { stdio: "ignore", windowsHide: true });
+			return;
+		}
+		try { process.kill(-pid, "SIGTERM"); } catch { process.kill(pid, "SIGTERM"); }
+		setTimeout(() => {
+			try { process.kill(-pid, "SIGKILL"); } catch { try { process.kill(pid, "SIGKILL"); } catch {} }
+		}, HARD_KILL_MS).unref?.();
+	} catch {
+		// Ignore shutdown races.
+	}
+}
+
+export function terminateActiveChildPiProcesses(): number {
+	const pids = [...activeChildProcesses.keys()];
+	for (const pid of pids) killProcessTree(pid);
+	return pids.length;
+}
 
 export interface ChildPiRunInput {
 	cwd: string;
@@ -118,7 +141,9 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 				cwd: input.cwd,
 				env: { ...process.env, ...built.env },
 				stdio: ["ignore", "pipe", "pipe"],
+				detached: process.platform !== "win32",
 			});
+			if (child.pid) activeChildProcesses.set(child.pid, child);
 			let stdout = "";
 			let stderr = "";
 			let settled = false;
@@ -167,6 +192,7 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 			};
 
 			const abort = (): void => {
+				killProcessTree(child.pid);
 				try {
 					child.kill(process.platform === "win32" ? undefined : "SIGTERM");
 				} catch {
@@ -187,6 +213,7 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 				settle({ exitCode: null, stdout, stderr, error: error.message });
 			});
 			child.on("exit", () => {
+				if (child.pid) activeChildProcesses.delete(child.pid);
 				childExited = true;
 				clearFinalDrainTimers();
 				postExitGuard = setTimeout(() => {
@@ -196,6 +223,7 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 				postExitGuard.unref?.();
 			});
 			child.on("close", (exitCode) => {
+				if (child.pid) activeChildProcesses.delete(child.pid);
 				settle({ exitCode, stdout, stderr, ...(forcedFinalDrain && !stderr.trim() ? { error: `Child Pi did not exit within ${finalDrainMs}ms after final assistant message; termination was requested.` } : {}) });
 			});
 		});

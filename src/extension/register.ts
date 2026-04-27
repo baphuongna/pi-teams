@@ -15,6 +15,7 @@ import { clearPiCrewPowerbar, registerPiCrewPowerbarSegments, updatePiCrewPowerb
 import { DurableTextViewer, DurableTranscriptViewer } from "../ui/transcript-viewer.ts";
 import { loadRunManifestById } from "../state/state-store.ts";
 import { readCrewAgents } from "../runtime/crew-agent-records.ts";
+import { terminateActiveChildPiProcesses } from "../runtime/child-pi.ts";
 
 function parseRunArgs(args: string): TeamToolParamsValue {
 	const tokens = args.match(/"[^"]*"|'[^']*'|\S+/g)?.map((token) => token.replace(/^['"]|['"]$/g, "")) ?? [];
@@ -103,6 +104,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	let currentCtx: ExtensionContext | undefined;
 	let rpcHandle: PiCrewRpcHandle | undefined;
 	const widgetState: CrewWidgetState = { frame: 0 };
+	const foregroundControllers = new Set<AbortController>();
 	registerAutonomousPolicy(pi);
 	rpcHandle = registerPiCrewRpc((pi as unknown as { events?: Parameters<typeof registerPiCrewRpc>[0] }).events, () => currentCtx);
 
@@ -123,6 +125,8 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		widgetState.interval.unref?.();
 	});
 	pi.on("session_shutdown", () => {
+		for (const controller of foregroundControllers) controller.abort();
+		terminateActiveChildPiProcesses();
 		stopAsyncRunNotifier(notifierState);
 		stopCrewWidget(currentCtx, widgetState, currentCtx ? loadConfig(currentCtx.cwd).config.ui : undefined);
 		clearPiCrewPowerbar(pi.events);
@@ -137,12 +141,21 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		description: "Coordinate Pi teams. Use proactively for complex multi-file work, planning, implementation, tests, reviews, security audits, research, async/background runs, and worktree-isolated execution. Use action='recommend' when unsure which team/workflow to choose. Destructive actions require explicit user confirmation.",
 		promptSnippet: "Use the team tool proactively for coordinated multi-agent work. If unsure, call { action: 'recommend', goal } first, then run or plan with the suggested team/workflow.",
 		parameters: TeamToolParams as never,
-		async execute(_id, params, _signal, _onUpdate, ctx) {
-			const output = await handleTeamTool(params as TeamToolParamsValue, ctx);
-			const config = loadConfig(ctx.cwd).config.ui;
-			updateCrewWidget(ctx, widgetState, config);
-			updatePiCrewPowerbar(pi.events, ctx.cwd, config);
-			return output;
+		async execute(_id, params, signal, _onUpdate, ctx) {
+			const controller = new AbortController();
+			foregroundControllers.add(controller);
+			const abort = (): void => controller.abort();
+			signal?.addEventListener("abort", abort, { once: true });
+			try {
+				const output = await handleTeamTool(params as TeamToolParamsValue, { ...ctx, signal: controller.signal });
+				const config = loadConfig(ctx.cwd).config.ui;
+				updateCrewWidget(ctx, widgetState, config);
+				updatePiCrewPowerbar(pi.events, ctx.cwd, config);
+				return output;
+			} finally {
+				signal?.removeEventListener("abort", abort);
+				foregroundControllers.delete(controller);
+			}
 		},
 	};
 
