@@ -54,6 +54,21 @@
         "maxTasksPerRun": { "type": "integer", "minimum": 1 },
         "heartbeatStaleMs": { "type": "integer", "minimum": 1 }
       }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Crew runtime selection and live-agent behavior knobs.",
+      "properties": {
+        "mode": { "type": "string", "enum": ["auto", "scaffold", "child-process", "live-session"] },
+        "preferLiveSession": { "type": "boolean" },
+        "allowChildProcessFallback": { "type": "boolean" },
+        "maxTurns": { "type": "integer", "minimum": 1 },
+        "graceTurns": { "type": "integer", "minimum": 1 },
+        "inheritContext": { "type": "boolean" },
+        "promptMode": { "type": "string", "enum": ["replace", "append"] },
+        "groupJoin": { "type": "string", "enum": ["off", "group", "smart"] }
+      }
     }
   }
 }

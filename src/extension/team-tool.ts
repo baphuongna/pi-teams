@@ -36,6 +36,8 @@ import { formatRecommendation, recommendTeam } from "./team-recommendation.ts";
 import { toolResult, type PiTeamsToolResult } from "./tool-result.ts";
 import { touchWorkerHeartbeat } from "../runtime/worker-heartbeat.ts";
 import { readCrewAgents } from "../runtime/crew-agent-records.ts";
+import { resolveCrewRuntime } from "../runtime/runtime-resolver.ts";
+import { probeLiveSessionRuntime } from "../runtime/live-session-runtime.ts";
 
 export interface TeamToolDetails {
 	action: string;
@@ -256,8 +258,9 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 		return result(text, { action: "run", status: "ok", runId: updatedManifest.runId, artifactsRoot: updatedManifest.artifactsRoot });
 	}
 
-	const executeWorkers = loadedConfig.config.executeWorkers === true || process.env.PI_TEAMS_EXECUTE_WORKERS === "1";
-	const executed = await executeTeamRun({ manifest: updatedManifest, tasks, team, workflow, agents, executeWorkers, limits: loadedConfig.config.limits });
+	const runtime = await resolveCrewRuntime(loadedConfig.config);
+	const executeWorkers = runtime.kind === "child-process";
+	const executed = await executeTeamRun({ manifest: updatedManifest, tasks, team, workflow, agents, executeWorkers, limits: loadedConfig.config.limits, runtime });
 	const text = [
 		`Created pi-crew run ${executed.manifest.runId}.`,
 		`Team: ${team.name}`,
@@ -267,9 +270,10 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 		`State: ${executed.manifest.stateRoot}`,
 		`Artifacts: ${executed.manifest.artifactsRoot}`,
 		"",
+		`Runtime: ${runtime.kind}${runtime.fallback ? ` (fallback from ${runtime.requestedMode})` : ""}${runtime.reason ? ` - ${runtime.reason}` : ""}`,
 		executeWorkers
-			? "Child Pi worker execution was enabled with PI_TEAMS_EXECUTE_WORKERS=1."
-			: "Safe scaffold mode: child Pi workers were not launched. Set PI_TEAMS_EXECUTE_WORKERS=1 to enable real worker execution.",
+			? "Child Pi worker execution was enabled."
+			: "Safe scaffold mode: child Pi workers were not launched. Set PI_TEAMS_EXECUTE_WORKERS=1 or runtime.mode=child-process to enable real worker execution.",
 	].join("\n");
 	return result(text, { action: "run", status: executed.manifest.status === "failed" ? "error" : "ok", runId: executed.manifest.runId, artifactsRoot: executed.manifest.artifactsRoot }, executed.manifest.status === "failed");
 }
@@ -374,8 +378,9 @@ export async function handleResume(params: TeamToolParamsValue, ctx: TeamContext
 		saveRunTasks(loaded.manifest, resetTasks);
 		appendEvent(loaded.manifest.eventsPath, { type: "run.resume_requested", runId: loaded.manifest.runId });
 		const loadedConfig = loadConfig(ctx.cwd);
-		const executeWorkers = loadedConfig.config.executeWorkers === true || process.env.PI_TEAMS_EXECUTE_WORKERS === "1";
-		const executed = await executeTeamRun({ manifest: loaded.manifest, tasks: resetTasks, team, workflow, agents: allAgents(discoverAgents(ctx.cwd)), executeWorkers, limits: loadedConfig.config.limits });
+		const runtime = await resolveCrewRuntime(loadedConfig.config);
+		const executeWorkers = runtime.kind === "child-process";
+		const executed = await executeTeamRun({ manifest: loaded.manifest, tasks: resetTasks, team, workflow, agents: allAgents(discoverAgents(ctx.cwd)), executeWorkers, limits: loadedConfig.config.limits, runtime });
 		return result([`Resumed run ${executed.manifest.runId}.`, `Status: ${executed.manifest.status}`, `Tasks: ${executed.tasks.length}`, `Artifacts: ${executed.manifest.artifactsRoot}`].join("\n"), { action: "resume", status: executed.manifest.status === "failed" ? "error" : "ok", runId: executed.manifest.runId, artifactsRoot: executed.manifest.artifactsRoot }, executed.manifest.status === "failed");
 	});
 }
@@ -544,7 +549,7 @@ export function handleCleanup(params: TeamToolParamsValue, ctx: TeamContext): Pi
 	return result(lines.join("\n"), { action: "cleanup", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
 }
 
-export function handleApi(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
+export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): Promise<PiTeamsToolResult> {
 	if (!params.runId) return result("API requires runId.", { action: "api", status: "error" }, true);
 	const loaded = loadRunManifestById(ctx.cwd, params.runId);
 	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "api", status: "error" }, true);
@@ -565,6 +570,13 @@ export function handleApi(params: TeamToolParamsValue, ctx: TeamContext): PiTeam
 	if (operation === "read-events") {
 		return result(JSON.stringify(readEvents(loaded.manifest.eventsPath), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
 	}
+	if (operation === "runtime-capabilities") {
+		const loadedConfig = loadConfig(ctx.cwd);
+		return result(JSON.stringify(await resolveCrewRuntime(loadedConfig.config), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+	}
+	if (operation === "probe-live-session") {
+		return result(JSON.stringify(await probeLiveSessionRuntime(), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+	}
 	if (operation === "list-agents") {
 		return result(JSON.stringify(readCrewAgents(loaded.manifest), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
 	}
@@ -575,6 +587,12 @@ export function handleApi(params: TeamToolParamsValue, ctx: TeamContext): PiTeam
 		const task = loaded.tasks.find((item) => item.id === agent.taskId);
 		const text = task?.resultArtifact && fs.existsSync(task.resultArtifact.path) ? fs.readFileSync(task.resultArtifact.path, "utf-8") : JSON.stringify(agent, null, 2);
 		return result(text, { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+	}
+	if (operation === "steer-agent" || operation === "stop-agent" || operation === "resume-agent") {
+		const runtime = await resolveCrewRuntime(loadConfig(ctx.cwd).config);
+		if (!runtime.steer && operation === "steer-agent") return result(`Runtime '${runtime.kind}' does not support live steering.`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
+		if (!runtime.resume && operation === "resume-agent") return result(`Runtime '${runtime.kind}' does not support live resume.`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
+		return result(`Operation '${operation}' is reserved for live-session runtime and is not active for this run yet.`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
 	}
 	if (operation === "read-mailbox") {
 		const direction = cfg.direction === "inbox" || cfg.direction === "outbox" ? cfg.direction as MailboxDirection : undefined;
@@ -777,7 +795,7 @@ export async function handleTeamTool(params: TeamToolParamsValue, ctx: TeamConte
 		}
 		case "doctor": return handleDoctor(ctx, params);
 		case "cleanup": return handleCleanup(params, ctx);
-		case "api": return handleApi(params, ctx);
+		case "api": return await handleApi(params, ctx);
 		case "events": return handleEvents(params, ctx);
 		case "artifacts": return handleArtifacts(params, ctx);
 		case "worktrees": return handleWorktrees(params, ctx);

@@ -23,6 +23,19 @@ export interface CrewLimitsConfig {
 	heartbeatStaleMs?: number;
 }
 
+export type CrewRuntimeMode = "auto" | "scaffold" | "child-process" | "live-session";
+
+export interface CrewRuntimeConfig {
+	mode?: CrewRuntimeMode;
+	preferLiveSession?: boolean;
+	allowChildProcessFallback?: boolean;
+	maxTurns?: number;
+	graceTurns?: number;
+	inheritContext?: boolean;
+	promptMode?: "replace" | "append";
+	groupJoin?: "off" | "group" | "smart";
+}
+
 export interface PiTeamsConfig {
 	asyncByDefault?: boolean;
 	executeWorkers?: boolean;
@@ -30,6 +43,7 @@ export interface PiTeamsConfig {
 	requireCleanWorktreeLeader?: boolean;
 	autonomous?: PiTeamsAutonomousConfig;
 	limits?: CrewLimitsConfig;
+	runtime?: CrewRuntimeConfig;
 }
 
 export interface LoadedPiTeamsConfig {
@@ -75,6 +89,12 @@ function mergeConfig(base: PiTeamsConfig, override: PiTeamsConfig): PiTeamsConfi
 		merged.limits = {
 			...(base.limits ?? {}),
 			...withoutUndefined((override.limits ?? {}) as Record<string, unknown>),
+		};
+	}
+	if (base.runtime || override.runtime) {
+		merged.runtime = {
+			...(base.runtime ?? {}),
+			...withoutUndefined((override.runtime ?? {}) as Record<string, unknown>),
 		};
 	}
 	return merged;
@@ -146,6 +166,26 @@ function parseLimitsConfig(value: unknown): CrewLimitsConfig | undefined {
 	return Object.values(limits).some((entry) => entry !== undefined) ? limits : undefined;
 }
 
+function parseRuntimeMode(value: unknown): CrewRuntimeMode | undefined {
+	return value === "auto" || value === "scaffold" || value === "child-process" || value === "live-session" ? value : undefined;
+}
+
+function parseRuntimeConfig(value: unknown): CrewRuntimeConfig | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const obj = value as Record<string, unknown>;
+	const runtime: CrewRuntimeConfig = {
+		mode: parseRuntimeMode(obj.mode),
+		preferLiveSession: typeof obj.preferLiveSession === "boolean" ? obj.preferLiveSession : undefined,
+		allowChildProcessFallback: typeof obj.allowChildProcessFallback === "boolean" ? obj.allowChildProcessFallback : undefined,
+		maxTurns: parsePositiveInteger(obj.maxTurns),
+		graceTurns: parsePositiveInteger(obj.graceTurns),
+		inheritContext: typeof obj.inheritContext === "boolean" ? obj.inheritContext : undefined,
+		promptMode: obj.promptMode === "replace" || obj.promptMode === "append" ? obj.promptMode : undefined,
+		groupJoin: obj.groupJoin === "off" || obj.groupJoin === "group" || obj.groupJoin === "smart" ? obj.groupJoin : undefined,
+	};
+	return Object.values(runtime).some((entry) => entry !== undefined) ? runtime : undefined;
+}
+
 function parseConfig(raw: unknown): PiTeamsConfig {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
 	const obj = raw as Record<string, unknown>;
@@ -156,6 +196,7 @@ function parseConfig(raw: unknown): PiTeamsConfig {
 		requireCleanWorktreeLeader: typeof obj.requireCleanWorktreeLeader === "boolean" ? obj.requireCleanWorktreeLeader : undefined,
 		autonomous: parseAutonomousConfig(obj.autonomous),
 		limits: parseLimitsConfig(obj.limits),
+		runtime: parseRuntimeConfig(obj.runtime),
 	};
 }
 

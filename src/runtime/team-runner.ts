@@ -1,5 +1,6 @@
 import type { AgentConfig } from "../agents/agent-config.ts";
 import type { CrewLimitsConfig } from "../config/config.ts";
+import type { CrewRuntimeCapabilities } from "./runtime-resolver.ts";
 import { writeArtifact } from "../state/artifact-store.ts";
 import { appendEvent } from "../state/event-log.ts";
 import type { TeamConfig } from "../teams/team-config.ts";
@@ -23,6 +24,7 @@ export interface ExecuteTeamRunInput {
 	agents: AgentConfig[];
 	executeWorkers: boolean;
 	limits?: CrewLimitsConfig;
+	runtime?: CrewRuntimeCapabilities;
 	signal?: AbortSignal;
 }
 
@@ -138,7 +140,8 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 	let tasks = refreshTaskGraphQueues(input.tasks);
 	manifest = writeProgress(manifest, tasks, "team-runner");
 	saveRunManifest(manifest);
-	saveCrewAgents(manifest, tasks.map((task) => recordFromTask(manifest, task, input.executeWorkers ? "child-process" : "scaffold")));
+	const runtimeKind = input.runtime?.kind ?? (input.executeWorkers ? "child-process" : "scaffold");
+	saveCrewAgents(manifest, tasks.map((task) => recordFromTask(manifest, task, runtimeKind)));
 
 	while (tasks.some((task) => task.status === "queued")) {
 		if (input.signal?.aborted) {
@@ -174,7 +177,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 		manifest = { ...results.at(-1)!.manifest, artifacts: mergeArtifacts([manifest.artifacts, ...results.map((item) => item.manifest.artifacts)].flat()) };
 		tasks = mergeTaskUpdates(tasks, results);
 		saveRunTasks(manifest, tasks);
-		saveCrewAgents(manifest, tasks.map((task) => recordFromTask(manifest, task, input.executeWorkers ? "child-process" : "scaffold")));
+		saveCrewAgents(manifest, tasks.map((task) => recordFromTask(manifest, task, runtimeKind)));
 		const batchArtifact = writeArtifact(manifest.artifactsRoot, {
 			kind: "summary",
 			relativePath: `batches/${readyBatch.map((task) => task.id).join("+")}.md`,
