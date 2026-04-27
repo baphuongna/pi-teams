@@ -52,6 +52,7 @@ Current highlights:
 - run-level and task-level mailbox files with validation/repair support
 - `/team-manager` interactive helper
 - `/team-dashboard` custom TUI overlay with progress preview, action shortcuts, and reload
+- `parallel-research` team/workflow for dynamic `Source/pi-*` fanout and parallel shard exploration
 - package polish: `schema.json`, TypeScript semantic check, strip-types import smoke, cross-platform CI workflow, dry-run package verification
 
 ## Install
@@ -171,7 +172,10 @@ Supported config:
     "widgetMaxLines": 8,
     "powerbar": true,
     "dashboardPlacement": "right",
-    "dashboardWidth": 52,
+    "dashboardWidth": 56,
+    "dashboardLiveRefreshMs": 1000,
+    "autoOpenDashboard": true,
+    "autoOpenDashboardForForegroundRuns": true,
     "showModel": true,
     "showTokens": true,
     "showTools": true
@@ -186,7 +190,9 @@ Safety notes:
 UI notes:
 
 - `widgetPlacement`/`widgetMaxLines` keep the persistent active-run widget compact.
-- `dashboardPlacement: "right"` opens `/team-dashboard` as a right-side overlay panel instead of a centered modal.
+- `dashboardPlacement: "right"` is the default; foreground runs auto-open a live top-right sidebar when the terminal is wide enough.
+- `autoOpenDashboard`/`autoOpenDashboardForForegroundRuns` control whether the live sidebar opens automatically.
+- `dashboardLiveRefreshMs` controls the live sidebar refresh cadence.
 - `showModel`, `showTokens`, and `showTools` show worker model attempts, token usage, and tool activity in dashboard agent rows.
 
 Show config:

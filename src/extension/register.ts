@@ -9,6 +9,7 @@ import { handleTeamManagerCommand } from "./team-manager-command.ts";
 import { handleTeamTool, type TeamToolDetails } from "./team-tool.ts";
 import { listRecentRuns } from "./run-index.ts";
 import { RunDashboard, type RunDashboardSelection } from "../ui/run-dashboard.ts";
+import { LiveRunSidebar } from "../ui/live-run-sidebar.ts";
 import { registerPiCrewRpc, type PiCrewRpcHandle } from "./cross-extension-rpc.ts";
 import { stopCrewWidget, updateCrewWidget, type CrewWidgetState } from "../ui/crew-widget.ts";
 import { clearPiCrewPowerbar, registerPiCrewPowerbarSegments, updatePiCrewPowerbar } from "../ui/powerbar-publisher.ts";
@@ -112,6 +113,29 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	let cleanedUp = false;
 	const widgetState: CrewWidgetState = { frame: 0 };
 	const foregroundControllers = new Set<AbortController>();
+	let liveSidebarRunId: string | undefined;
+	let liveSidebarTimer: ReturnType<typeof setInterval> | undefined;
+	const requestRender = (ctx: ExtensionContext): void => (ctx.ui as { requestRender?: () => void }).requestRender?.();
+	const openLiveSidebar = (ctx: ExtensionContext, runId: string): void => {
+		const uiConfig = loadConfig(ctx.cwd).config.ui;
+		const autoOpen = uiConfig?.autoOpenDashboard ?? true;
+		const foregroundAutoOpen = uiConfig?.autoOpenDashboardForForegroundRuns ?? true;
+		if (!ctx.hasUI || !autoOpen || !foregroundAutoOpen || (uiConfig?.dashboardPlacement ?? "right") !== "right") return;
+		if (liveSidebarRunId === runId) return;
+		if (liveSidebarTimer) clearInterval(liveSidebarTimer);
+		liveSidebarRunId = runId;
+		const width = Math.min(90, Math.max(40, uiConfig?.dashboardWidth ?? 56));
+		liveSidebarTimer = setInterval(() => requestRender(ctx), uiConfig?.dashboardLiveRefreshMs ?? 1000);
+		liveSidebarTimer.unref?.();
+		void ctx.ui.custom<undefined>((_tui, theme, _keybindings, done) => new LiveRunSidebar({ cwd: ctx.cwd, runId, done, theme, config: uiConfig }), {
+			overlay: true,
+			overlayOptions: { width, minWidth: 40, maxHeight: "100%", anchor: "top-right", offsetX: 0, offsetY: 0, margin: { top: 0, right: 0, bottom: 0, left: 0 }, visible: (termWidth: number) => termWidth >= 100 },
+		}).finally(() => {
+			if (liveSidebarRunId === runId) liveSidebarRunId = undefined;
+			if (liveSidebarTimer) clearInterval(liveSidebarTimer);
+			liveSidebarTimer = undefined;
+		});
+	};
 	const startForegroundRun = (ctx: ExtensionContext, runner: (signal?: AbortSignal) => Promise<void>): void => {
 		const controller = new AbortController();
 		foregroundControllers.add(controller);
@@ -141,6 +165,9 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		terminateActiveChildPiProcesses();
 		stopAsyncRunNotifier(notifierState);
 		stopCrewWidget(currentCtx, widgetState, currentCtx ? loadConfig(currentCtx.cwd).config.ui : undefined);
+		if (liveSidebarTimer) clearInterval(liveSidebarTimer);
+		liveSidebarTimer = undefined;
+		liveSidebarRunId = undefined;
 		clearPiCrewPowerbar(pi.events);
 		rpcHandle?.unsubscribe();
 		rpcHandle = undefined;
@@ -182,7 +209,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 			const abort = (): void => controller.abort();
 			signal?.addEventListener("abort", abort, { once: true });
 			try {
-				const output = await handleTeamTool(params as TeamToolParamsValue, { ...ctx, signal: controller.signal, startForegroundRun: (runner) => startForegroundRun(ctx, runner) });
+				const output = await handleTeamTool(params as TeamToolParamsValue, { ...ctx, signal: controller.signal, startForegroundRun: (runner) => startForegroundRun(ctx, runner), onRunStarted: (runId) => openLiveSidebar(ctx, runId) });
 				const config = loadConfig(ctx.cwd).config.ui;
 				updateCrewWidget(ctx, widgetState, config);
 				updatePiCrewPowerbar(pi.events, ctx.cwd, config);
@@ -207,7 +234,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	pi.registerCommand("team-run", {
 		description: "Manually start a pi-crew run (agent may also use the team tool autonomously)",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
-			const result = await handleTeamTool(parseRunArgs(args), { ...ctx, startForegroundRun: (runner) => startForegroundRun(ctx as ExtensionContext, runner) });
+			const result = await handleTeamTool(parseRunArgs(args), { ...ctx, startForegroundRun: (runner) => startForegroundRun(ctx as ExtensionContext, runner), onRunStarted: (runId) => openLiveSidebar(ctx as ExtensionContext, runId) });
 			await notifyCommandResult(ctx, commandText(result));
 		},
 	});

@@ -12,8 +12,8 @@ export interface RecommendedSubtask {
 }
 
 export interface TeamRecommendation {
-	team: "default" | "implementation" | "review" | "fast-fix" | "research";
-	workflow: "default" | "implementation" | "review" | "fast-fix" | "research";
+	team: string;
+	workflow: string;
 	action: "plan" | "run";
 	async: boolean;
 	workspaceMode: "single" | "worktree";
@@ -23,7 +23,8 @@ export interface TeamRecommendation {
 }
 
 const REVIEW_TERMS = ["review", "audit", "security", "vulnerability", "diff", "pr", "pull request"];
-const RESEARCH_TERMS = ["research", "investigate", "compare", "analyze", "document", "docs", "explain", "architecture"];
+const RESEARCH_TERMS = ["research", "investigate", "compare", "analyze", "document", "docs", "explain", "architecture", "đọc sâu", "source", "projects"];
+const PARALLEL_RESEARCH_RE = /(?:đọc sâu|deep read|deep research|source audit|multiple projects|các project|pi-\*|source\/|@source)/i;
 const FAST_FIX_TERMS = ["quick fix", "fast-fix", "small bug", "typo", "one-line", "minor", "lint"];
 const IMPLEMENTATION_TERMS = ["implement", "refactor", "migrate", "feature", "tests", "test", "integration", "upgrade", "build", "create", "add"];
 const RISKY_TERMS = ["migration", "refactor", "large", "multiple", "parallel", "concurrent", "risky", "critical"];
@@ -122,6 +123,11 @@ export function recommendTeam(goal: string, config: PiTeamsAutonomousConfig = {}
 		workflow = "review";
 		confidence = "high";
 		reasons.push(`Review/audit terms detected: ${reviewMatches.join(", ") || "explicit review intent"}.`);
+	} else if (PARALLEL_RESEARCH_RE.test(goal) || (researchMatches.length >= 2 && (normalized.includes("multiple") || normalized.includes("source") || normalized.includes("project") || normalized.includes("pi-")))) {
+		team = "parallel-research";
+		workflow = "parallel-research";
+		confidence = "high";
+		reasons.push("Deep/multi-source research detected; use parallel shard exploration.");
 	} else if (intents.includes("research") || (researchMatches.length > 0 && implementationMatches.length === 0)) {
 		team = "research";
 		workflow = "research";

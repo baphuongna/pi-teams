@@ -53,6 +53,9 @@ export interface CrewUiConfig {
 	powerbar?: boolean;
 	dashboardPlacement?: "center" | "right";
 	dashboardWidth?: number;
+	dashboardLiveRefreshMs?: number;
+	autoOpenDashboard?: boolean;
+	autoOpenDashboardForForegroundRuns?: boolean;
 	showModel?: boolean;
 	showTokens?: boolean;
 	showTools?: boolean;
@@ -316,6 +319,9 @@ function parseUiConfig(value: unknown): CrewUiConfig | undefined {
 		powerbar: typeof obj.powerbar === "boolean" ? obj.powerbar : undefined,
 		dashboardPlacement: obj.dashboardPlacement === "center" || obj.dashboardPlacement === "right" ? obj.dashboardPlacement : undefined,
 		dashboardWidth: parsePositiveInteger(obj.dashboardWidth, 120),
+		dashboardLiveRefreshMs: parsePositiveInteger(obj.dashboardLiveRefreshMs, 60_000),
+		autoOpenDashboard: typeof obj.autoOpenDashboard === "boolean" ? obj.autoOpenDashboard : undefined,
+		autoOpenDashboardForForegroundRuns: typeof obj.autoOpenDashboardForForegroundRuns === "boolean" ? obj.autoOpenDashboardForForegroundRuns : undefined,
 		showModel: typeof obj.showModel === "boolean" ? obj.showModel : undefined,
 		showTokens: typeof obj.showTokens === "boolean" ? obj.showTokens : undefined,
 		showTools: typeof obj.showTools === "boolean" ? obj.showTools : undefined,

@@ -10,8 +10,8 @@ import { allWorkflows, discoverWorkflows } from "../../src/workflows/discover-wo
 test("builtin resources are discoverable", () => {
 	const cwd = process.cwd();
 	assert.equal(allAgents(discoverAgents(cwd)).length, 10);
-	assert.equal(allTeams(discoverTeams(cwd)).length, 5);
-	assert.equal(allWorkflows(discoverWorkflows(cwd)).length, 5);
+	assert.equal(allTeams(discoverTeams(cwd)).length, 6);
+	assert.equal(allWorkflows(discoverWorkflows(cwd)).length, 6);
 });
 
 test("agent config overrides builtin agents case-insensitively and can disable them", () => {

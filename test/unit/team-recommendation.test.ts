@@ -7,6 +7,7 @@ test("recommendTeam maps goals to teams", () => {
 	assert.equal(recommendTeam("security review this diff").team, "review");
 	assert.equal(recommendTeam("quick fix a small typo").team, "fast-fix");
 	assert.equal(recommendTeam("research and compare auth approaches").team, "research");
+	assert.equal(recommendTeam("Đọc sâu các source pi-* trong Source/").team, "parallel-research");
 	assert.equal(recommendTeam("implement feature with tests").team, "implementation");
 });
 

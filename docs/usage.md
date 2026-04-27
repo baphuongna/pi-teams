@@ -34,7 +34,10 @@ Supported fields:
     "widgetMaxLines": 8,
     "powerbar": true,
     "dashboardPlacement": "right",
-    "dashboardWidth": 52,
+    "dashboardWidth": 56,
+    "dashboardLiveRefreshMs": 1000,
+    "autoOpenDashboard": true,
+    "autoOpenDashboardForForegroundRuns": true,
     "showModel": true,
     "showTokens": true,
     "showTools": true

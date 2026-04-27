@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.18
+
+- Added a built-in `parallel-research` team/workflow for map-reduce style source audits with dynamic `Source/pi-*` fanout and parallel explorer shards.
+- Made the live right sidebar the default foreground UI: active foreground runs auto-open a top-right live sidebar when the terminal is wide enough.
+- Added live sidebar sections for active agents, waiting tasks, completed agents, task graph, model, tool, and token/usage details.
+- Stopped materializing queued dependency tasks as child-process agents; status now separates active agents, waiting tasks, and completed agents.
+- Added workflow-aware default concurrency so research/parallel-research can use ready parallel work instead of always running one worker.
+- Dropped user/system prompt messages from child event persistence to avoid prompt/context leakage in agent event logs.
+- Tightened child event compaction with separate assistant/tool input/tool result caps and improved powerbar active/waiting/model/token summaries.
+
 ## 0.1.17
 
 - Fixed terminal/completed workers being incorrectly escalated as stale heartbeat blockers after all tasks completed.

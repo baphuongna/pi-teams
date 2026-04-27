@@ -1,12 +1,23 @@
 import type { CrewUiConfig } from "../config/config.ts";
 import { listRecentRuns } from "../extension/run-index.ts";
+import * as fs from "node:fs";
 import { readCrewAgents } from "../runtime/crew-agent-records.ts";
+import type { TeamTaskState } from "../state/types.ts";
+import { aggregateUsage } from "../state/usage.ts";
 import { isDisplayActiveRun } from "../runtime/process-status.ts";
 
 type EventBus = { emit?: (event: string, data: unknown) => void } | undefined;
 
 function safeEmit(events: EventBus, event: string, data: unknown): void {
 	try { events?.emit?.(event, data); } catch {}
+}
+
+function readTasks(tasksPath: string): TeamTaskState[] {
+	try { const parsed = JSON.parse(fs.readFileSync(tasksPath, "utf-8")); return Array.isArray(parsed) ? parsed as TeamTaskState[] : []; } catch { return []; }
+}
+
+function compactTokens(total: number): string {
+	return total >= 1000 ? `${Math.round(total / 1000)}k` : `${total}`;
 }
 
 export function registerPiCrewPowerbarSegments(events: EventBus, config?: CrewUiConfig): void {
@@ -28,22 +39,26 @@ export function updatePiCrewPowerbar(events: EventBus, cwd: string, config?: Cre
 		return;
 	}
 	const agents = active.flatMap((item) => item.agents);
+	const tasks = active.flatMap((item) => readTasks(item.run.tasksPath));
 	const running = agents.filter((agent) => agent.status === "running").length;
-	const queued = agents.filter((agent) => agent.status === "queued").length;
+	const waiting = tasks.filter((task) => task.status === "queued").length;
 	const completed = agents.filter((agent) => agent.status === "completed").length;
-	const total = Math.max(1, agents.length);
+	const total = Math.max(1, agents.length + waiting);
+	const usage = aggregateUsage(tasks);
+	const tokenTotal = usage ? (usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0) : 0;
+	const model = agents.find((agent) => agent.model)?.model?.split("/").at(-1);
 	safeEmit(events, "powerbar:update", {
 		id: "pi-crew-active",
 		icon: "⚙",
-		text: `crew ${running || active.length}`,
-		suffix: queued ? `${queued}q` : undefined,
+		text: `crew ${running}a/${waiting}w`,
+		suffix: [model, tokenTotal ? compactTokens(tokenTotal) : undefined].filter(Boolean).join(" · ") || undefined,
 		color: running ? "accent" : "warning",
 	});
 	safeEmit(events, "powerbar:update", {
 		id: "pi-crew-progress",
 		text: active[0]?.run.team ?? "crew",
 		bar: Math.round((completed / total) * 100),
-		suffix: `${completed}/${total}`,
+		suffix: `${completed}/${total}${tokenTotal ? ` · ${compactTokens(tokenTotal)}` : ""}`,
 		color: completed === total ? "success" : "accent",
 		barSegments: 8,
 	});

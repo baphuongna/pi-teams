@@ -9,6 +9,9 @@ const POST_EXIT_STDIO_GUARD_MS = 3000;
 const FINAL_DRAIN_MS = 5000;
 const HARD_KILL_MS = 3000;
 const MAX_CAPTURE_BYTES = 256 * 1024;
+const MAX_ASSISTANT_TEXT_CHARS = 8192;
+const MAX_TOOL_RESULT_CHARS = 1024;
+const MAX_TOOL_INPUT_CHARS = 2048;
 const MAX_COMPACT_CONTENT_CHARS = 4096;
 const activeChildProcesses = new Map<number, ChildProcess>();
 
@@ -87,9 +90,9 @@ function compactValue(value: unknown): unknown {
 function compactContentPart(part: unknown): unknown | undefined {
 	const record = asRecord(part);
 	if (!record) return undefined;
-	if (record.type === "text") return { type: "text", text: typeof record.text === "string" ? compactString(record.text) : "" };
-	if (record.type === "toolCall") return { type: "toolCall", name: record.name, input: compactValue(record.input) };
-	if (record.type === "toolResult") return { type: "toolResult", name: record.name, content: compactValue(record.content) };
+	if (record.type === "text") return { type: "text", text: typeof record.text === "string" ? compactString(record.text, MAX_ASSISTANT_TEXT_CHARS) : "" };
+	if (record.type === "toolCall") return { type: "toolCall", name: record.name, input: compactValue(typeof record.input === "string" ? compactString(record.input, MAX_TOOL_INPUT_CHARS) : record.input) };
+	if (record.type === "toolResult") return { type: "toolResult", name: record.name, content: compactValue(typeof record.content === "string" ? compactString(record.content, MAX_TOOL_RESULT_CHARS) : record.content) };
 	return undefined;
 }
 
@@ -102,6 +105,7 @@ function compactChildPiEvent(event: unknown): unknown | undefined {
 	}
 	if (record.type === "tool_result_end" || record.type === "message_end" || record.type === "message") {
 		const message = asRecord(record.message);
+		if (message?.role === "user" || message?.role === "system") return undefined;
 		const content = Array.isArray(message?.content) ? message.content.map(compactContentPart).filter((part) => part !== undefined) : undefined;
 		return {
 			type: record.type,

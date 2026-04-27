@@ -13,7 +13,8 @@ import { buildRecoveryLedger } from "./recovery-recipes.ts";
 import { getReadyTasks, refreshTaskGraphQueues, taskGraphSnapshot } from "./task-graph-scheduler.ts";
 import { checkBranchFreshness } from "../worktree/branch-freshness.ts";
 import { aggregateTaskOutputs } from "./task-output-context.ts";
-import { recordFromTask, saveCrewAgents } from "./crew-agent-records.ts";
+import { saveCrewAgents } from "./crew-agent-records.ts";
+import { recordsForMaterializedTasks } from "./task-display.ts";
 import { deliverGroupJoin, resolveGroupJoinMode } from "./group-join.ts";
 import { runTeamTask } from "./task-runner.ts";
 
@@ -147,7 +148,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 	manifest = writeProgress(manifest, tasks, "team-runner");
 	saveRunManifest(manifest);
 	const runtimeKind = input.runtime?.kind ?? (input.executeWorkers ? "child-process" : "scaffold");
-	saveCrewAgents(manifest, tasks.map((task) => recordFromTask(manifest, task, runtimeKind)));
+	saveCrewAgents(manifest, recordsForMaterializedTasks(manifest, tasks, runtimeKind));
 
 	while (tasks.some((task) => task.status === "queued")) {
 		if (input.signal?.aborted) {
@@ -161,17 +162,18 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 		if (failed) {
 			tasks = markBlocked(tasks, `Blocked by failed task '${failed.id}'.`);
 			saveRunTasks(manifest, tasks);
-			saveCrewAgents(manifest, tasks.map((task) => recordFromTask(manifest, task, runtimeKind)));
+			saveCrewAgents(manifest, recordsForMaterializedTasks(manifest, tasks, runtimeKind));
 			manifest = updateRunStatus(manifest, "failed", `Failed at task '${failed.id}'.`);
 			return { manifest, tasks };
 		}
 
-		const maxConcurrent = Math.max(1, input.limits?.maxConcurrentWorkers ?? 1);
+		const defaultConcurrency = input.workflow.name === "parallel-research" ? 4 : input.workflow.name === "research" ? 2 : input.workflow.name === "implementation" || input.workflow.name === "review" || input.workflow.name === "default" ? 2 : 1;
+		const maxConcurrent = Math.max(1, input.limits?.maxConcurrentWorkers ?? input.team.maxConcurrency ?? defaultConcurrency);
 		const readyBatch = getReadyTasks(tasks, maxConcurrent);
 		if (readyBatch.length === 0) {
 			tasks = markBlocked(tasks, "No ready queued task; dependency graph may be invalid.");
 			saveRunTasks(manifest, tasks);
-			saveCrewAgents(manifest, tasks.map((task) => recordFromTask(manifest, task, runtimeKind)));
+			saveCrewAgents(manifest, recordsForMaterializedTasks(manifest, tasks, runtimeKind));
 			manifest = updateRunStatus(manifest, "blocked", "No ready queued task.");
 			return { manifest, tasks };
 		}
@@ -185,7 +187,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 		manifest = { ...results.at(-1)!.manifest, artifacts: mergeArtifacts([manifest.artifacts, ...results.map((item) => item.manifest.artifacts)].flat()) };
 		tasks = mergeTaskUpdates(tasks, results);
 		saveRunTasks(manifest, tasks);
-		saveCrewAgents(manifest, tasks.map((task) => recordFromTask(manifest, task, runtimeKind)));
+		saveCrewAgents(manifest, recordsForMaterializedTasks(manifest, tasks, runtimeKind));
 		const completedBatch = readyBatch.map((task) => tasks.find((item) => item.id === task.id) ?? task);
 		const batchArtifact = writeArtifact(manifest.artifactsRoot, {
 			kind: "summary",

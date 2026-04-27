@@ -58,17 +58,23 @@ test("child Pi line observer preserves JSON events split across chunks", () => {
 test("child Pi line observer does not mirror user prompts into output log", () => {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-line-observer-user-"));
 	try {
+		const transcriptPath = path.join(dir, "transcript.jsonl");
 		const lines: string[] = [];
+		const events: unknown[] = [];
 		const observer = new ChildPiLineObserver({
 			cwd: dir,
 			task: "task",
 			agent: { name: "mock", description: "mock", source: "builtin", filePath: "mock.md", systemPrompt: "mock" },
+			transcriptPath,
 			onStdoutLine: (line) => lines.push(line),
+			onJsonEvent: (event) => events.push(event),
 		});
 		observer.observe(`${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "task prompt" }] } })}\n`);
 		observer.observe(`${JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "answer" }] } })}\n`);
 		observer.flush();
 		assert.deepEqual(lines, ["answer"]);
+		assert.equal(events.length, 1);
+		assert.doesNotMatch(fs.readFileSync(transcriptPath, "utf-8"), /task prompt/);
 	} finally {
 		fs.rmSync(dir, { recursive: true, force: true });
 	}

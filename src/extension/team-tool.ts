@@ -5,6 +5,7 @@ import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { allAgents, discoverAgents } from "../agents/discover-agents.ts";
 import { allTeams, discoverTeams } from "../teams/discover-teams.ts";
 import { allWorkflows, discoverWorkflows } from "../workflows/discover-workflows.ts";
+import type { WorkflowConfig, WorkflowStep } from "../workflows/workflow-config.ts";
 import { effectiveAutonomousConfig, loadConfig, updateAutonomousConfig, updateConfig, type PiTeamsAutonomousConfig, type PiTeamsConfig } from "../config/config.ts";
 import { projectPiRoot, userPiRoot } from "../utils/paths.ts";
 import type { TeamToolParamsValue } from "../schema/team-tool-schema.ts";
@@ -44,6 +45,7 @@ import { readForegroundControlStatus, writeForegroundInterruptRequest } from "..
 import { listLiveAgents, resumeLiveAgent, steerLiveAgent, stopLiveAgent } from "../runtime/live-agent-manager.ts";
 import { appendLiveAgentControlRequest } from "../runtime/live-agent-control.ts";
 import { liveControlRealtimeMessage, publishLiveControlRealtime } from "../runtime/live-control-realtime.ts";
+import { formatTaskGraphLines, waitingReason } from "../runtime/task-display.ts";
 
 export interface TeamToolDetails {
 	action: string;
@@ -58,6 +60,7 @@ type TeamContext = Pick<ExtensionContext, "cwd"> & Partial<Pick<ExtensionContext
 	events?: { emit?: (event: string, data: unknown) => void };
 	signal?: AbortSignal;
 	startForegroundRun?: (runner: (signal?: AbortSignal) => Promise<void>) => void;
+	onRunStarted?: (runId: string) => void;
 };
 
 function result(text: string, details: TeamToolDetails, isError = false): PiTeamsToolResult {
@@ -168,6 +171,48 @@ function commandExists(command: string, args: string[]): { ok: boolean; detail: 
 	return { ok: false, detail: output.error?.message ?? firstOutputLine(output.stdout, output.stderr) };
 }
 
+function sourcePiProjects(cwd: string): string[] {
+	const sourceDir = path.join(cwd, "Source");
+	try {
+		return fs.readdirSync(sourceDir, { withFileTypes: true })
+			.filter((entry) => entry.isDirectory() && entry.name.startsWith("pi-"))
+			.map((entry) => `Source/${entry.name}`)
+			.sort();
+	} catch {
+		return [];
+	}
+}
+
+function chunkProjects(projects: string[], target = 4): string[][] {
+	const chunks = Array.from({ length: Math.min(Math.max(1, target), Math.max(1, projects.length)) }, () => [] as string[]);
+	projects.forEach((project, index) => chunks[index % chunks.length]!.push(project));
+	return chunks.filter((chunk) => chunk.length > 0);
+}
+
+function expandParallelResearchWorkflow(workflow: WorkflowConfig, cwd: string): WorkflowConfig {
+	if (workflow.name !== "parallel-research") return workflow;
+	const projects = sourcePiProjects(cwd);
+	if (projects.length === 0) return workflow;
+	const chunks = chunkProjects(projects, Math.min(6, Math.max(4, Math.ceil(projects.length / 4))));
+	const exploreSteps: WorkflowStep[] = chunks.map((paths, index) => ({
+		id: `explore-shard-${index + 1}`,
+		role: "explorer",
+		dependsOn: ["discover"],
+		parallelGroup: "explore",
+		reads: paths,
+		task: [`Explore this dynamic shard for: {goal}`, "", "Paths:", ...paths.map((item) => `- ${item}`), "", "Focus on purpose, architecture, runtime/UI patterns, package config, docs, and lessons for pi-crew."].join("\n"),
+	}));
+	return {
+		...workflow,
+		steps: [
+			{ id: "discover", role: "explorer", task: `Discover and validate ${projects.length} pi-* projects for: {goal}\n\nProjects:\n${projects.map((item) => `- ${item}`).join("\n")}` },
+			...exploreSteps,
+			{ id: "synthesize", role: "analyst", dependsOn: exploreSteps.map((step) => step.id), task: "Synthesize all dynamic shard findings. Identify common patterns, gaps, and concrete recommendations." },
+			{ id: "write", role: "writer", dependsOn: ["synthesize"], output: "research-summary.md", task: "Write a concise final summary with evidence, risks, and actionable next steps." },
+		],
+	};
+}
+
 function effectiveRunConfig(base: PiTeamsConfig, rawOverride: unknown): PiTeamsConfig {
 	const patch = configPatchFromConfig(rawOverride);
 	return {
@@ -259,8 +304,9 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 	const team = teams.find((item) => item.name === teamName);
 	if (!team) return result(`Team '${teamName}' not found.`, { action: "run", status: "error" }, true);
 	const workflowName = params.workflow ?? team.defaultWorkflow ?? "default";
-	const workflow = workflows.find((item) => item.name === workflowName);
-	if (!workflow) return result(`Workflow '${workflowName}' not found.`, { action: "run", status: "error" }, true);
+	const baseWorkflow = workflows.find((item) => item.name === workflowName);
+	if (!baseWorkflow) return result(`Workflow '${workflowName}' not found.`, { action: "run", status: "error" }, true);
+	const workflow = expandParallelResearchWorkflow(baseWorkflow, ctx.cwd);
 
 	const validationErrors = validateWorkflowForTeam(workflow, team);
 	if (validationErrors.length > 0) {
@@ -309,6 +355,7 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 	const executeWorkers = runtime.kind === "child-process";
 	const executedConfig = effectiveRunConfig(loadedConfig.config, params.config);
 	if (executeWorkers && ctx.startForegroundRun) {
+		ctx.onRunStarted?.(updatedManifest.runId);
 		ctx.startForegroundRun(async (signal) => {
 			await executeTeamRun({ manifest: updatedManifest, tasks, team, workflow, agents, executeWorkers, limits: executedConfig.limits, runtime, runtimeConfig: executedConfig.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, signal });
 		});
@@ -368,6 +415,10 @@ export function handleStatus(params: TeamToolParamsValue, ctx: TeamContext): PiT
 	const crewAgents = readCrewAgents(manifest).map((agent) => applyAttentionState(manifest, agent, controlConfig));
 	const artifactLines = manifest.artifacts.slice(-10).map((artifact) => `- ${artifact.kind}: ${artifact.path}${artifact.sizeBytes !== undefined ? ` (${artifact.sizeBytes} bytes)` : ""}`);
 	const totalUsage = aggregateUsage(tasks);
+	const activeAgents = crewAgents.filter((agent) => agent.status === "running");
+	const completedAgents = crewAgents.filter((agent) => agent.status !== "running");
+	const waitingTasks = tasks.filter((task) => task.status === "queued");
+	const agentLine = (agent: typeof crewAgents[number]): string => `- ${agent.id} [${agent.status}] ${agent.role} -> ${agent.agent} runtime=${agent.runtime}${agent.model ? ` model=${agent.model}` : ""}${agent.usage ? ` usage=${formatUsage(agent.usage)}` : ""}${agent.progress?.activityState === "needs_attention" ? " needs_attention" : ""}${formatActivityAge(agent) ? ` activity=${formatActivityAge(agent)}` : ""}${agent.progress?.currentTool ? ` tool=${agent.progress.currentTool}` : ""}${agent.toolUses ? ` tools=${agent.toolUses}` : ""}${!agent.usage && agent.progress?.tokens ? ` tokens=${agent.progress.tokens}` : ""}${agent.progress?.turns ? ` turns=${agent.progress.turns}` : ""}${agent.jsonEvents !== undefined ? ` jsonEvents=${agent.jsonEvents}` : ""}${agent.statusPath ? ` status=${agent.statusPath}` : ""}${agent.error ? ` error=${agent.error}` : ""}`;
 	const lines = [
 		`Run: ${manifest.runId}`,
 		`Team: ${manifest.team}`,
@@ -380,11 +431,17 @@ export function handleStatus(params: TeamToolParamsValue, ctx: TeamContext): PiT
 		`State: ${manifest.stateRoot}`,
 		`Artifacts: ${manifest.artifactsRoot}`,
 		...(asyncLivenessLine ? [asyncLivenessLine] : []),
+		"Task graph:",
+		...formatTaskGraphLines(tasks),
 		"Tasks:",
 		...(tasks.length ? tasks.map((task) => `- ${task.id} [${task.status}] ${task.role} -> ${task.agent}${task.taskPacket ? ` scope=${task.taskPacket.scope}` : ""}${task.verification ? ` green=${task.verification.observedGreenLevel}/${task.verification.requiredGreenLevel}` : ""}${task.modelAttempts?.length ? ` attempts=${task.modelAttempts.length}` : ""}${task.jsonEvents !== undefined ? ` jsonEvents=${task.jsonEvents}` : ""}${task.usage ? ` usage=${JSON.stringify(task.usage)}` : ""}${task.worktree ? ` worktree=${task.worktree.path}` : ""}${task.error ? ` error=${task.error}` : ""}`) : ["- (none)"]),
 		`Task counts: ${[...counts.entries()].map(([status, count]) => `${status}=${count}`).join(", ") || "none"}`,
-		"Agents:",
-		...(crewAgents.length ? crewAgents.map((agent) => `- ${agent.id} [${agent.status}] ${agent.role} -> ${agent.agent} runtime=${agent.runtime}${agent.model ? ` model=${agent.model}` : ""}${agent.usage ? ` usage=${formatUsage(agent.usage)}` : ""}${agent.progress?.activityState === "needs_attention" ? " needs_attention" : ""}${formatActivityAge(agent) ? ` activity=${formatActivityAge(agent)}` : ""}${agent.progress?.currentTool ? ` tool=${agent.progress.currentTool}` : ""}${agent.toolUses ? ` tools=${agent.toolUses}` : ""}${!agent.usage && agent.progress?.tokens ? ` tokens=${agent.progress.tokens}` : ""}${agent.progress?.turns ? ` turns=${agent.progress.turns}` : ""}${agent.jsonEvents !== undefined ? ` jsonEvents=${agent.jsonEvents}` : ""}${agent.statusPath ? ` status=${agent.statusPath}` : ""}${agent.error ? ` error=${agent.error}` : ""}`) : ["- (none)"]),
+		"Active agents:",
+		...(activeAgents.length ? activeAgents.map(agentLine) : ["- (none)"]),
+		"Waiting tasks:",
+		...(waitingTasks.length ? waitingTasks.map((task) => `- ${task.id} [queued] ${task.role} -> ${task.agent} ${waitingReason(task, tasks) ?? "waiting"}`) : ["- (none)"]),
+		"Completed agents:",
+		...(completedAgents.length ? completedAgents.map(agentLine) : ["- (none)"]),
 		"Policy decisions:",
 		...(manifest.policyDecisions?.length ? manifest.policyDecisions.map((item) => `- ${item.action} (${item.reason})${item.taskId ? ` ${item.taskId}` : ""}: ${item.message}`) : ["- (none)"]),
 		`Total usage: ${formatUsage(totalUsage)}`,
