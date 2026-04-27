@@ -97,7 +97,18 @@ export function createRunManifest(params: {
 	fs.mkdirSync(paths.artifactsRoot, { recursive: true });
 	atomicWriteJson(paths.manifestPath, manifest);
 	atomicWriteJson(paths.tasksPath, tasks);
-	appendEvent(paths.eventsPath, { type: "run.created", runId: paths.runId, data: { team: params.team.name, workflow: params.workflow?.name } });
+	appendEvent(paths.eventsPath, {
+		type: "run.created",
+		runId: paths.runId,
+		data: { team: params.team.name, workflow: params.workflow?.name },
+		metadata: {
+			seq: 1,
+			provenance: "team_runner",
+			sessionIdentity: { title: params.team.name, workspace: params.cwd, purpose: params.goal },
+			ownership: { owner: params.team.name, workflowScope: params.workflow?.name ?? "manual", watcherAction: "act" },
+			confidence: "high",
+		},
+	});
 	return { manifest, tasks, paths };
 }
 
@@ -115,7 +126,17 @@ export function updateRunStatus(manifest: TeamRunManifest, status: TeamRunManife
 	}
 	const updated: TeamRunManifest = { ...manifest, status, updatedAt: new Date().toISOString(), summary: summary ?? manifest.summary };
 	saveRunManifest(updated);
-	appendEvent(updated.eventsPath, { type: `run.${status}`, runId: updated.runId, message: summary });
+	appendEvent(updated.eventsPath, {
+		type: `run.${status}`,
+		runId: updated.runId,
+		message: summary,
+		metadata: {
+			provenance: "team_runner",
+			sessionIdentity: { title: updated.team, workspace: updated.cwd, purpose: updated.goal },
+			ownership: { owner: updated.team, workflowScope: updated.workflow ?? "manual", watcherAction: "act" },
+			confidence: "high",
+		},
+	});
 	return updated;
 }
 

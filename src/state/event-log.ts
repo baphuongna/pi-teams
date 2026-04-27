@@ -1,5 +1,32 @@
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+
+export type TeamEventProvenance = "live_worker" | "test" | "healthcheck" | "replay" | "api" | "background" | "team_runner";
+export type TeamWatcherAction = "act" | "observe" | "ignore";
+
+export interface TeamEventSessionIdentity {
+	title: string;
+	workspace: string;
+	purpose: string;
+	placeholderReason?: string;
+}
+
+export interface TeamEventOwnership {
+	owner: string;
+	workflowScope: string;
+	watcherAction: TeamWatcherAction;
+}
+
+export interface TeamEventMetadata {
+	seq: number;
+	provenance: TeamEventProvenance;
+	sessionIdentity?: TeamEventSessionIdentity;
+	ownership?: TeamEventOwnership;
+	nudgeId?: string;
+	fingerprint?: string;
+	confidence?: "low" | "medium" | "high";
+}
 
 export interface TeamEvent {
 	time: string;
@@ -8,11 +35,52 @@ export interface TeamEvent {
 	taskId?: string;
 	message?: string;
 	data?: Record<string, unknown>;
+	metadata?: TeamEventMetadata;
 }
 
-export function appendEvent(eventsPath: string, event: Omit<TeamEvent, "time">): TeamEvent {
+export type AppendTeamEvent = Omit<TeamEvent, "time" | "metadata"> & { metadata?: Partial<TeamEventMetadata> };
+
+const TERMINAL_EVENT_TYPES = new Set(["run.blocked", "run.completed", "run.failed", "run.cancelled", "task.completed", "task.failed", "task.cancelled", "task.skipped"]);
+
+function nextSequence(eventsPath: string): number {
+	if (!fs.existsSync(eventsPath)) return 1;
+	let max = 0;
+	for (const line of fs.readFileSync(eventsPath, "utf-8").split("\n")) {
+		if (!line.trim()) continue;
+		try {
+			const event = JSON.parse(line) as TeamEvent;
+			max = Math.max(max, event.metadata?.seq ?? 0);
+		} catch {
+			max += 1;
+		}
+	}
+	return max + 1;
+}
+
+export function computeEventFingerprint(event: Pick<TeamEvent, "type" | "runId" | "taskId" | "data">): string {
+	return createHash("sha256").update(JSON.stringify({ type: event.type, runId: event.runId, taskId: event.taskId, data: event.data ?? null })).digest("hex").slice(0, 16);
+}
+
+export function appendEvent(eventsPath: string, event: AppendTeamEvent): TeamEvent {
 	fs.mkdirSync(path.dirname(eventsPath), { recursive: true });
-	const fullEvent: TeamEvent = { time: new Date().toISOString(), ...event };
+	const baseMetadata = event.metadata;
+	let metadata: TeamEventMetadata = {
+		seq: baseMetadata?.seq ?? nextSequence(eventsPath),
+		provenance: baseMetadata?.provenance ?? "team_runner",
+		...(baseMetadata?.sessionIdentity ? { sessionIdentity: baseMetadata.sessionIdentity } : {}),
+		...(baseMetadata?.ownership ? { ownership: baseMetadata.ownership } : {}),
+		...(baseMetadata?.nudgeId ? { nudgeId: baseMetadata.nudgeId } : {}),
+		...(baseMetadata?.confidence ? { confidence: baseMetadata.confidence } : {}),
+	};
+	const fullEvent: TeamEvent = {
+		time: new Date().toISOString(),
+		...event,
+		metadata,
+	};
+	if (baseMetadata?.fingerprint || TERMINAL_EVENT_TYPES.has(fullEvent.type)) {
+		metadata = { ...metadata, fingerprint: baseMetadata?.fingerprint ?? computeEventFingerprint(fullEvent) };
+		fullEvent.metadata = metadata;
+	}
 	fs.appendFileSync(eventsPath, `${JSON.stringify(fullEvent)}\n`, "utf-8");
 	return fullEvent;
 }
@@ -24,4 +92,18 @@ export function readEvents(eventsPath: string): TeamEvent[] {
 		.map((line) => line.trim())
 		.filter(Boolean)
 		.map((line) => JSON.parse(line) as TeamEvent);
+}
+
+export function dedupeTerminalEvents(events: TeamEvent[]): TeamEvent[] {
+	const seen = new Set<string>();
+	const output: TeamEvent[] = [];
+	for (const event of events) {
+		const fingerprint = event.metadata?.fingerprint;
+		if (fingerprint && TERMINAL_EVENT_TYPES.has(event.type)) {
+			if (seen.has(fingerprint)) continue;
+			seen.add(fingerprint);
+		}
+		output.push(event);
+	}
+	return output;
 }

@@ -8,6 +8,7 @@ import { saveRunManifest, saveRunTasks, updateRunStatus } from "../state/state-s
 import { aggregateUsage, formatUsage } from "../state/usage.ts";
 import type { WorkflowConfig, WorkflowStep } from "../workflows/workflow-config.ts";
 import { evaluateCrewPolicy, summarizePolicyDecisions } from "./policy-engine.ts";
+import { getReadyTasks, refreshTaskGraphQueues, taskGraphSnapshot } from "./task-graph-scheduler.ts";
 import { runTeamTask } from "./task-runner.ts";
 
 export interface ExecuteTeamRunInput {
@@ -22,8 +23,7 @@ export interface ExecuteTeamRunInput {
 }
 
 function findReadyTask(tasks: TeamTaskState[]): TeamTaskState | undefined {
-	const completedStepIds = new Set(tasks.filter((task) => task.status === "completed").map((task) => task.stepId).filter((id): id is string => id !== undefined));
-	return tasks.find((task) => task.status === "queued" && task.dependsOn.every((dep) => completedStepIds.has(dep)));
+	return getReadyTasks(tasks, 1)[0];
 }
 
 function findStep(workflow: WorkflowConfig, task: TeamTaskState): WorkflowStep {
@@ -49,6 +49,7 @@ function formatTaskProgress(task: TeamTaskState): string {
 function writeProgress(manifest: TeamRunManifest, tasks: TeamTaskState[], producer: string): TeamRunManifest {
 	const counts = new Map<string, number>();
 	for (const task of tasks) counts.set(task.status, (counts.get(task.status) ?? 0) + 1);
+	const queue = taskGraphSnapshot(tasks);
 	const progress = writeArtifact(manifest.artifactsRoot, {
 		kind: "progress",
 		relativePath: "progress.md",
@@ -61,6 +62,7 @@ function writeProgress(manifest: TeamRunManifest, tasks: TeamTaskState[], produc
 			`Workflow: ${manifest.workflow ?? "(none)"}`,
 			`Updated: ${new Date().toISOString()}`,
 			`Task counts: ${[...counts.entries()].map(([status, count]) => `${status}=${count}`).join(", ") || "none"}`,
+			`Queue: ready=${queue.ready.length}, blocked=${queue.blocked.length}, running=${queue.running.length}, done=${queue.done.length}, failed=${queue.failed.length}, cancelled=${queue.cancelled.length}`,
 			"",
 			"## Tasks",
 			...tasks.map(formatTaskProgress),
@@ -84,7 +86,7 @@ function applyPolicy(manifest: TeamRunManifest, tasks: TeamTaskState[], limits?:
 
 export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ manifest: TeamRunManifest; tasks: TeamTaskState[] }> {
 	let manifest = updateRunStatus(input.manifest, "running", input.executeWorkers ? "Executing team workflow." : "Creating workflow prompts and placeholder results.");
-	let tasks = input.tasks;
+	let tasks = refreshTaskGraphQueues(input.tasks);
 	manifest = writeProgress(manifest, tasks, "team-runner");
 	saveRunManifest(manifest);
 
