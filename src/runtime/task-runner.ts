@@ -4,7 +4,7 @@ import type { CrewLimitsConfig, CrewRuntimeConfig } from "../config/config.ts";
 import type { ArtifactDescriptor, TeamRunManifest, TeamTaskState, UsageState } from "../state/types.ts";
 import { writeArtifact } from "../state/artifact-store.ts";
 import { appendEvent } from "../state/event-log.ts";
-import { saveRunManifest, saveRunTasks } from "../state/state-store.ts";
+import { loadRunManifestById, saveRunManifest, saveRunTasks } from "../state/state-store.ts";
 import { createTaskClaim } from "../state/task-claims.ts";
 import { createWorkerHeartbeat, touchWorkerHeartbeat } from "./worker-heartbeat.ts";
 import type { WorkflowStep } from "../workflows/workflow-config.ts";
@@ -110,6 +110,13 @@ function inputDependencyContext(task: TeamTaskState): string {
 
 function updateTask(tasks: TeamTaskState[], updated: TeamTaskState): TeamTaskState[] {
 	return tasks.map((task) => task.id === updated.id ? updated : task);
+}
+
+function persistSingleTaskUpdate(manifest: TeamRunManifest, fallbackTasks: TeamTaskState[], updated: TeamTaskState): TeamTaskState[] {
+	const latest = loadRunManifestById(manifest.cwd, manifest.runId)?.tasks ?? fallbackTasks;
+	const merged = updateTask(latest, updated);
+	saveRunTasks(manifest, merged);
+	return merged;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -268,7 +275,7 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 	} as TeamTaskState;
 	let tasks = updateTask(input.tasks, task);
 	const runtimeKind = input.runtimeKind ?? (input.executeWorkers ? "child-process" : "scaffold");
-	saveRunTasks(manifest, tasks);
+	tasks = persistSingleTaskUpdate(manifest, tasks, task);
 	upsertCrewAgent(manifest, recordFromTask(manifest, task, runtimeKind));
 	appendEvent(manifest.eventsPath, { type: "task.started", runId: manifest.runId, taskId: task.id, data: { role: task.role, agent: task.agent, runtime: runtimeKind, cwd: task.cwd, worktreePath: workspace.worktreePath, worktreeBranch: workspace.branch, worktreeReused: workspace.reused } });
 	const permissionMode = permissionForRole(task.role);
@@ -529,7 +536,7 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 	});
 	manifest = { ...manifest, updatedAt: new Date().toISOString(), artifacts: [...manifest.artifacts, promptArtifact, resultArtifact, inputsArtifact, coordinationArtifact, packetArtifact, verificationArtifact, startupArtifact, permissionArtifact, ...(sharedOutputArtifact ? [sharedOutputArtifact] : []), ...(logArtifact ? [logArtifact] : []), ...(transcriptArtifact ? [transcriptArtifact] : []), ...(diffArtifact ? [diffArtifact] : []), ...(diffStatArtifact ? [diffStatArtifact] : [])] };
 	saveRunManifest(manifest);
-	saveRunTasks(manifest, tasks);
+	tasks = persistSingleTaskUpdate(manifest, tasks, task);
 	upsertCrewAgent(manifest, recordFromTask(manifest, task, runtimeKind));
 	appendEvent(manifest.eventsPath, { type: error ? "task.failed" : "task.completed", runId: manifest.runId, taskId: task.id, message: error });
 	return { manifest, tasks };

@@ -15,7 +15,7 @@ export interface BatchConcurrencyDecision {
 }
 
 export function defaultWorkflowConcurrency(workflowName: string): number {
-	if (workflowName === "parallel-research") return 6;
+	if (workflowName === "parallel-research") return 4;
 	if (workflowName === "research") return 2;
 	if (workflowName === "implementation" || workflowName === "review" || workflowName === "default") return 2;
 	return 1;

@@ -54,6 +54,27 @@ test("child Pi runtime writes JSONL transcript callbacks", async () => {
 	}
 });
 
+test("child Pi runtime ignores observer callback failures", async () => {
+	const previous = process.env.PI_TEAMS_MOCK_CHILD_PI;
+	process.env.PI_TEAMS_MOCK_CHILD_PI = "json-success";
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-child-callback-failure-"));
+	try {
+		const result = await runChildPi({
+			cwd: dir,
+			task: "hello",
+			agent: { name: "mock", description: "mock", source: "builtin", filePath: "mock.md", systemPrompt: "mock" },
+			onJsonEvent: () => { throw new Error("observer write failed"); },
+			onStdoutLine: () => { throw new Error("output write failed"); },
+		});
+		assert.equal(result.exitCode, 0);
+		assert.match(result.stdout, /Mock JSON success/);
+	} finally {
+		if (previous === undefined) delete process.env.PI_TEAMS_MOCK_CHILD_PI;
+		else process.env.PI_TEAMS_MOCK_CHILD_PI = previous;
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test("dependency output context injects prior task output and shared reads", () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-output-context-"));
 	try {

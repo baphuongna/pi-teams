@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { defaultWorkflowConcurrency, resolveBatchConcurrency } from "../../src/runtime/concurrency.ts";
 
 test("default workflow concurrency preserves existing workflow defaults", () => {
-	assert.equal(defaultWorkflowConcurrency("parallel-research"), 6);
+	assert.equal(defaultWorkflowConcurrency("parallel-research"), 4);
 	assert.equal(defaultWorkflowConcurrency("research"), 2);
 	assert.equal(defaultWorkflowConcurrency("implementation"), 2);
 	assert.equal(defaultWorkflowConcurrency("review"), 2);

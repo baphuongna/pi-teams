@@ -182,9 +182,13 @@ export class ChildPiLineObserver {
 	private emitLine(line: string): void {
 		if (!line.trim()) return;
 		const compact = compactChildPiLine(line);
-		if (compact.event !== undefined) this.input.onJsonEvent?.(compact.event);
+		if (compact.event !== undefined) {
+			try { this.input.onJsonEvent?.(compact.event); } catch {}
+		}
 		if (compact.persistedLine) appendTranscript(this.input, compact.persistedLine);
-		if (compact.displayLine?.trim()) this.input.onStdoutLine?.(compact.displayLine);
+		if (compact.displayLine?.trim()) {
+			try { this.input.onStdoutLine?.(compact.displayLine); } catch {}
+		}
 	}
 }
 
