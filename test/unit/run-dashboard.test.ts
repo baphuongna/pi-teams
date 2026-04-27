@@ -4,6 +4,7 @@ import * as path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { RunDashboard, type RunDashboardSelection } from "../../src/ui/run-dashboard.ts";
+import { saveCrewAgents } from "../../src/runtime/crew-agent-records.ts";
 import type { TeamRunManifest } from "../../src/state/types.ts";
 
 function run(id: string, status: TeamRunManifest["status"]): TeamRunManifest {
@@ -54,6 +55,32 @@ test("RunDashboard supports phase 5 observability hotkeys", () => {
 	assert.deepEqual(selected, { runId: "team_obs", action: "agent-output" });
 	dashboard.handleInput("v");
 	assert.deepEqual(selected, { runId: "team_obs", action: "agent-transcript" });
+});
+
+test("RunDashboard renders compact agent preview", () => {
+	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-dashboard-agents-"));
+	try {
+		const manifest = run("team_agents", "running");
+		manifest.stateRoot = tmp;
+		saveCrewAgents(manifest, [{
+			id: "team_agents:01",
+			runId: "team_agents",
+			taskId: "01",
+			agent: "executor",
+			role: "executor",
+			runtime: "child-process",
+			status: "running",
+			startedAt: "2026-04-26T00:00:00.000Z",
+			progress: { recentTools: [], recentOutput: ["npm test"], toolCount: 1, currentTool: "bash", tokens: 42, turns: 2, activityState: "active" },
+		}]);
+		const dashboard = new RunDashboard([manifest], () => {});
+		const lines = dashboard.render(120);
+		assert.ok(lines.some((line) => line.includes("Agents:")));
+		assert.ok(lines.some((line) => line.includes("executor->executor")));
+		assert.ok(lines.some((line) => line.includes("tool=bash")));
+	} finally {
+		fs.rmSync(tmp, { recursive: true, force: true });
+	}
 });
 
 test("RunDashboard renders progress preview", () => {

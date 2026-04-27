@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentConfig, ResourceSource } from "./agent-config.ts";
+import { loadConfig } from "../config/config.ts";
 import { parseCsv, parseFrontmatter } from "../utils/frontmatter.ts";
 import { packageRoot, projectPiRoot, userPiRoot } from "../utils/paths.ts";
 
@@ -40,6 +41,7 @@ function parseAgentFile(filePath: string, source: ResourceSource): AgentConfig |
 			systemPromptMode: frontmatter.systemPromptMode === "append" ? "append" : "replace",
 			inheritProjectContext: frontmatter.inheritProjectContext === "true",
 			inheritSkills: frontmatter.inheritSkills === "true",
+			disabled: frontmatter.disabled === "true" || frontmatter.enabled === "false",
 			routing: triggers || useWhen || avoidWhen || cost || category ? { triggers, useWhen, avoidWhen, cost, category } : undefined,
 		};
 	} catch {
@@ -56,18 +58,40 @@ function readAgentDir(dir: string, source: ResourceSource): AgentConfig[] {
 		.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function applyAgentOverrides(agents: AgentConfig[], cwd: string): AgentConfig[] {
+	const loaded = loadConfig(cwd);
+	const config = loaded.config.agents;
+	const overrides = config?.overrides ?? {};
+	return agents
+		.filter((agent) => !(config?.disableBuiltins && agent.source === "builtin"))
+		.map((agent) => {
+			const overrideEntry = Object.entries(overrides).find(([name]) => name.toLowerCase() === agent.name.toLowerCase());
+			if (!overrideEntry) return agent;
+			const [, override] = overrideEntry;
+			return {
+				...agent,
+				disabled: override.disabled ?? agent.disabled,
+				model: override.model === false ? undefined : override.model ?? agent.model,
+				fallbackModels: override.fallbackModels === false ? undefined : override.fallbackModels ?? agent.fallbackModels,
+				thinking: override.thinking === false ? undefined : override.thinking ?? agent.thinking,
+				tools: override.tools === false ? undefined : override.tools ?? agent.tools,
+				override: { source: "config", path: loaded.path },
+			};
+		});
+}
+
 export function discoverAgents(cwd: string): AgentDiscoveryResult {
 	return {
-		builtin: readAgentDir(path.join(packageRoot(), "agents"), "builtin"),
-		user: readAgentDir(path.join(userPiRoot(), "agents"), "user"),
-		project: readAgentDir(path.join(projectPiRoot(cwd), "agents"), "project"),
+		builtin: applyAgentOverrides(readAgentDir(path.join(packageRoot(), "agents"), "builtin"), cwd),
+		user: applyAgentOverrides(readAgentDir(path.join(userPiRoot(), "agents"), "user"), cwd),
+		project: applyAgentOverrides(readAgentDir(path.join(projectPiRoot(cwd), "agents"), "project"), cwd),
 	};
 }
 
 export function allAgents(discovery: AgentDiscoveryResult): AgentConfig[] {
 	const byName = new Map<string, AgentConfig>();
 	for (const agent of [...discovery.builtin, ...discovery.user, ...discovery.project]) {
-		byName.set(agent.name, agent);
+		byName.set(agent.name.toLowerCase(), agent);
 	}
-	return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+	return [...byName.values()].filter((agent) => !agent.disabled).sort((a, b) => a.name.localeCompare(b.name));
 }

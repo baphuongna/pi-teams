@@ -41,6 +41,19 @@ export interface CrewControlConfig {
 	needsAttentionAfterMs?: number;
 }
 
+export interface AgentOverrideConfig {
+	disabled?: boolean;
+	model?: string | false;
+	fallbackModels?: string[] | false;
+	thinking?: string | false;
+	tools?: string[] | false;
+}
+
+export interface CrewAgentsConfig {
+	disableBuiltins?: boolean;
+	overrides?: Record<string, AgentOverrideConfig>;
+}
+
 export interface PiTeamsConfig {
 	asyncByDefault?: boolean;
 	executeWorkers?: boolean;
@@ -50,6 +63,7 @@ export interface PiTeamsConfig {
 	limits?: CrewLimitsConfig;
 	runtime?: CrewRuntimeConfig;
 	control?: CrewControlConfig;
+	agents?: CrewAgentsConfig;
 }
 
 export interface LoadedPiTeamsConfig {
@@ -109,6 +123,17 @@ function mergeConfig(base: PiTeamsConfig, override: PiTeamsConfig): PiTeamsConfi
 			...withoutUndefined((override.control ?? {}) as Record<string, unknown>),
 		};
 	}
+	if (base.agents || override.agents) {
+		merged.agents = {
+			...(base.agents ?? {}),
+			...withoutUndefined((override.agents ?? {}) as Record<string, unknown>),
+			overrides: {
+				...(base.agents?.overrides ?? {}),
+				...(override.agents?.overrides ?? {}),
+			},
+		};
+	}
+	if (merged.agents?.overrides && Object.keys(merged.agents.overrides).length === 0) delete merged.agents.overrides;
 	return merged;
 }
 
@@ -220,6 +245,43 @@ function parseControlConfig(value: unknown): CrewControlConfig | undefined {
 	return Object.values(control).some((entry) => entry !== undefined) ? control : undefined;
 }
 
+function parseStringArrayOrFalse(value: unknown): string[] | false | undefined {
+	if (value === false) return false;
+	if (typeof value === "string") return value.split(",").map((entry) => entry.trim()).filter(Boolean);
+	if (Array.isArray(value)) return value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).map((entry) => entry.trim());
+	return undefined;
+}
+
+function parseAgentOverride(value: unknown): AgentOverrideConfig | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const obj = value as Record<string, unknown>;
+	const override: AgentOverrideConfig = {
+		disabled: typeof obj.disabled === "boolean" ? obj.disabled : undefined,
+		model: typeof obj.model === "string" || obj.model === false ? obj.model : undefined,
+		fallbackModels: parseStringArrayOrFalse(obj.fallbackModels),
+		thinking: typeof obj.thinking === "string" || obj.thinking === false ? obj.thinking : undefined,
+		tools: parseStringArrayOrFalse(obj.tools),
+	};
+	return Object.values(override).some((entry) => entry !== undefined) ? override : undefined;
+}
+
+function parseAgentsConfig(value: unknown): CrewAgentsConfig | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const obj = value as Record<string, unknown>;
+	const overrides: Record<string, AgentOverrideConfig> = {};
+	if (obj.overrides && typeof obj.overrides === "object" && !Array.isArray(obj.overrides)) {
+		for (const [name, rawOverride] of Object.entries(obj.overrides)) {
+			const parsed = parseAgentOverride(rawOverride);
+			if (parsed) overrides[name] = parsed;
+		}
+	}
+	const agents: CrewAgentsConfig = {
+		disableBuiltins: typeof obj.disableBuiltins === "boolean" ? obj.disableBuiltins : undefined,
+		overrides: Object.keys(overrides).length > 0 ? overrides : undefined,
+	};
+	return Object.values(agents).some((entry) => entry !== undefined) ? agents : undefined;
+}
+
 function parseConfig(raw: unknown): PiTeamsConfig {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
 	const obj = raw as Record<string, unknown>;
@@ -232,6 +294,7 @@ function parseConfig(raw: unknown): PiTeamsConfig {
 		limits: parseLimitsConfig(obj.limits),
 		runtime: parseRuntimeConfig(obj.runtime),
 		control: parseControlConfig(obj.control),
+		agents: parseAgentsConfig(obj.agents),
 	};
 }
 

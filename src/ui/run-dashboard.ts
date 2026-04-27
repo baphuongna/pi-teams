@@ -1,5 +1,7 @@
 import * as fs from "node:fs";
 import type { TeamRunManifest } from "../state/types.ts";
+import { readCrewAgents } from "../runtime/crew-agent-records.ts";
+import type { CrewAgentRecord } from "../runtime/crew-agent-runtime.ts";
 
 interface DashboardComponent {
 	invalidate(): void;
@@ -13,11 +15,37 @@ export interface RunDashboardSelection {
 	action: RunDashboardAction;
 }
 
+const ANSI_PATTERN = /\u001b\[[0-?]*[ -/]*[@-~]/g;
+
+function visibleLength(value: string): number {
+	return value.replace(ANSI_PATTERN, "").length;
+}
+
 function truncate(value: string, width: number): string {
 	if (width <= 0) return "";
-	if (value.length <= width) return value;
+	if (visibleLength(value) <= width) return value;
 	if (width <= 1) return "…";
-	return `${value.slice(0, width - 1)}…`;
+	let output = "";
+	let visible = 0;
+	for (let index = 0; index < value.length;) {
+		const slice = value.slice(index);
+		const ansi = slice.match(/^\u001b\[[0-?]*[ -/]*[@-~]/);
+		if (ansi?.[0]) {
+			output += ansi[0];
+			index += ansi[0].length;
+			continue;
+		}
+		const char = value[index]!;
+		if (visible >= width - 1) break;
+		output += char;
+		visible += 1;
+		index += char.length;
+	}
+	return `${output}\u001b[0m…`;
+}
+
+function padVisible(value: string, width: number): string {
+	return `${value}${" ".repeat(Math.max(0, width - visibleLength(value)))}`;
 }
 
 function statusIcon(status: string): string {
@@ -37,6 +65,30 @@ function readProgressPreview(run: TeamRunManifest, maxLines = 5): string[] {
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return [`Progress: failed to read (${message})`];
+	}
+}
+
+function agentPreviewLine(agent: CrewAgentRecord): string {
+	const stats = [
+		agent.progress?.activityState,
+		agent.progress?.currentTool ? `tool=${agent.progress.currentTool}` : undefined,
+		agent.toolUses !== undefined ? `${agent.toolUses} tools` : undefined,
+		agent.progress?.tokens !== undefined ? `${agent.progress.tokens} tok` : undefined,
+		agent.progress?.turns !== undefined ? `${agent.progress.turns} turns` : undefined,
+		agent.progress?.failedTool ? `failedTool=${agent.progress.failedTool}` : undefined,
+	].filter((part): part is string => Boolean(part));
+	const recent = agent.progress?.recentOutput?.at(-1);
+	return `Agent: ${statusIcon(agent.status)} ${agent.taskId} ${agent.role}->${agent.agent}${stats.length ? ` · ${stats.join(" · ")}` : ""}${recent ? ` ⎿ ${recent}` : ""}`;
+}
+
+function readAgentPreview(run: TeamRunManifest, maxLines = 5): string[] {
+	try {
+		const agents = readCrewAgents(run);
+		if (!agents.length) return ["Agents: (none)"];
+		return ["Agents:", ...agents.slice(0, maxLines).map(agentPreviewLine), ...(agents.length > maxLines ? [`Agents: +${agents.length - maxLines} more`] : [])];
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return [`Agents: failed to read (${message})`];
 	}
 }
 
@@ -64,19 +116,19 @@ export class RunDashboard implements DashboardComponent {
 		const borderWidth = Math.min(innerWidth, Math.max(0, width - 2));
 		const lines = [
 			`╭${"─".repeat(borderWidth)}╮`,
-			`│ ${truncate("pi-crew dashboard", innerWidth - 1).padEnd(innerWidth - 1)}│`,
-			`│ ${truncate("↑/↓/j/k select • r reload • p progress • s/u/a/i actions • d agents • e/v/o viewers • q close", innerWidth - 1).padEnd(innerWidth - 1)}│`,
-			`│ ${truncate(`Runs: ${this.runs.length} • ${countByStatus(this.runs)}`, innerWidth - 1).padEnd(innerWidth - 1)}│`,
+			`│ ${padVisible(truncate("pi-crew dashboard", innerWidth - 1), innerWidth - 1)}│`,
+			`│ ${padVisible(truncate("↑/↓/j/k select • r reload • p progress • s/u/a/i actions • d agents • e/v/o viewers • q close", innerWidth - 1), innerWidth - 1)}│`,
+			`│ ${padVisible(truncate(`Runs: ${this.runs.length} • ${countByStatus(this.runs)}`, innerWidth - 1), innerWidth - 1)}│`,
 			`├${"─".repeat(borderWidth)}┤`,
 		];
 		if (this.runs.length === 0) {
-			lines.push(`│ ${truncate("No runs found.", innerWidth - 1).padEnd(innerWidth - 1)}│`);
+			lines.push(`│ ${padVisible(truncate("No runs found.", innerWidth - 1), innerWidth - 1)}│`);
 		} else {
 			for (let i = 0; i < Math.min(this.runs.length, 10); i++) {
 				const run = this.runs[i]!;
 				const marker = i === this.selected ? "›" : " ";
 				const text = `${marker} ${statusIcon(run.status)} ${run.runId} ${run.status} ${run.team}/${run.workflow ?? "none"} ${run.goal}`;
-				lines.push(`│ ${truncate(text, innerWidth - 1).padEnd(innerWidth - 1)}│`);
+				lines.push(`│ ${padVisible(truncate(text, innerWidth - 1), innerWidth - 1)}│`);
 			}
 			const selectedRun = this.runs[this.selected];
 			if (selectedRun) {
@@ -90,8 +142,8 @@ export class RunDashboard implements DashboardComponent {
 					selectedRun.async ? `Async: pid=${selectedRun.async.pid ?? "unknown"} log=${selectedRun.async.logPath}` : "Async: no",
 					`Goal: ${selectedRun.goal}`,
 				];
-				for (const detail of [...details, ...readProgressPreview(selectedRun, this.showFullProgress ? 20 : 5)]) {
-					lines.push(`│ ${truncate(detail, innerWidth - 1).padEnd(innerWidth - 1)}│`);
+				for (const detail of [...details, ...readAgentPreview(selectedRun), ...readProgressPreview(selectedRun, this.showFullProgress ? 20 : 5)]) {
+					lines.push(`│ ${padVisible(truncate(detail, innerWidth - 1), innerWidth - 1)}│`);
 				}
 			}
 		}

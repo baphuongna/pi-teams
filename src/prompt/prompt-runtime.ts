@@ -2,6 +2,8 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 export const PI_TEAMS_INHERIT_PROJECT_CONTEXT_ENV = "PI_TEAMS_INHERIT_PROJECT_CONTEXT";
 export const PI_TEAMS_INHERIT_SKILLS_ENV = "PI_TEAMS_INHERIT_SKILLS";
+export const PI_CREW_INHERIT_PROJECT_CONTEXT_ENV = "PI_CREW_INHERIT_PROJECT_CONTEXT";
+export const PI_CREW_INHERIT_SKILLS_ENV = "PI_CREW_INHERIT_SKILLS";
 
 const PROJECT_CONTEXT_HEADER = "\n\n# Project Context\n\nProject-specific instructions and guidelines:\n\n";
 const SKILLS_HEADER = "\n\nThe following skills provide specialized instructions for specific tasks.";
@@ -11,6 +13,14 @@ function readBooleanEnv(name: string): boolean | undefined {
 	const value = process.env[name];
 	if (value === undefined) return undefined;
 	return value !== "0";
+}
+
+function readBooleanEnvAny(...names: string[]): boolean | undefined {
+	for (const name of names) {
+		const value = readBooleanEnv(name);
+		if (value !== undefined) return value;
+	}
+	return undefined;
 }
 
 function findSectionEnd(prompt: string, startIndex: number, nextHeaders: string[]): number {
@@ -45,8 +55,8 @@ export function rewriteTeamWorkerPrompt(prompt: string, options: { inheritProjec
 
 export default function registerPiTeamsPromptRuntime(pi: ExtensionAPI): void {
 	pi.on("before_agent_start", (event) => {
-		const inheritProjectContext = readBooleanEnv(PI_TEAMS_INHERIT_PROJECT_CONTEXT_ENV);
-		const inheritSkills = readBooleanEnv(PI_TEAMS_INHERIT_SKILLS_ENV);
+		const inheritProjectContext = readBooleanEnvAny(PI_CREW_INHERIT_PROJECT_CONTEXT_ENV, PI_TEAMS_INHERIT_PROJECT_CONTEXT_ENV);
+		const inheritSkills = readBooleanEnvAny(PI_CREW_INHERIT_SKILLS_ENV, PI_TEAMS_INHERIT_SKILLS_ENV);
 		if (inheritProjectContext === undefined && inheritSkills === undefined) return;
 		const rewritten = rewriteTeamWorkerPrompt(event.systemPrompt, {
 			inheritProjectContext: inheritProjectContext ?? true,

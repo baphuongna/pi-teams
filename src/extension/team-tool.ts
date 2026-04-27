@@ -40,6 +40,7 @@ import { resolveCrewRuntime } from "../runtime/runtime-resolver.ts";
 import { probeLiveSessionRuntime } from "../runtime/live-session-runtime.ts";
 import { applyAttentionState, formatActivityAge, resolveCrewControlConfig } from "../runtime/agent-control.ts";
 import { buildAgentDashboard, readAgentOutput } from "../runtime/agent-observability.ts";
+import { readForegroundControlStatus, writeForegroundInterruptRequest } from "../runtime/foreground-control.ts";
 
 export interface TeamToolDetails {
 	action: string;
@@ -639,6 +640,13 @@ export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): 
 	}
 	if (operation === "agent-dashboard") {
 		return result(buildAgentDashboard(loaded.manifest).text, { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+	}
+	if (operation === "foreground-status") {
+		return result(JSON.stringify(readForegroundControlStatus(loaded.manifest, loaded.tasks), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+	}
+	if (operation === "foreground-interrupt") {
+		const reason = typeof cfg.reason === "string" && cfg.reason.trim() ? cfg.reason.trim() : undefined;
+		return result(JSON.stringify(writeForegroundInterruptRequest(loaded.manifest, reason), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
 	}
 	if (operation === "nudge-agent") {
 		const agentId = typeof cfg.agentId === "string" ? cfg.agentId : undefined;

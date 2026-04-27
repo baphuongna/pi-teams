@@ -24,4 +24,6 @@ export interface AgentConfig {
 	inheritProjectContext?: boolean;
 	inheritSkills?: boolean;
 	routing?: RoutingMetadata;
+	disabled?: boolean;
+	override?: { source: "config"; path: string };
 }

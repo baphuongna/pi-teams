@@ -174,7 +174,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 		const results = await Promise.all(readyBatch.map((task) => {
 			const step = findStep(input.workflow, task);
 			const agent = findAgent(input.agents, task);
-			return runTeamTask({ manifest, tasks, task, step, agent, signal: input.signal, executeWorkers: input.executeWorkers });
+			return runTeamTask({ manifest, tasks, task, step, agent, signal: input.signal, executeWorkers: input.executeWorkers, limits: input.limits });
 		}));
 		manifest = { ...results.at(-1)!.manifest, artifacts: mergeArtifacts([manifest.artifacts, ...results.map((item) => item.manifest.artifacts)].flat()) };
 		tasks = mergeTaskUpdates(tasks, results);

@@ -21,6 +21,7 @@ export interface CrewAgentProgress {
 	durationMs?: number;
 	lastActivityAt?: string;
 	activityState?: "active" | "needs_attention" | "stale";
+	failedTool?: string;
 }
 
 export interface CrewAgentRecord {

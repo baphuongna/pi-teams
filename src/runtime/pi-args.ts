@@ -7,12 +7,14 @@ import type { AgentConfig } from "../agents/agent-config.ts";
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"];
 const PROMPT_RUNTIME_EXTENSION_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "prompt", "prompt-runtime.ts");
 const TASK_ARG_LIMIT = 8000;
+const DEFAULT_MAX_CREW_DEPTH = 2;
 
 export interface BuildPiWorkerArgsInput {
 	task: string;
 	agent: AgentConfig;
 	model?: string;
 	sessionEnabled?: boolean;
+	maxDepth?: number;
 }
 
 export interface BuildPiWorkerArgsResult {
@@ -26,6 +28,25 @@ export function applyThinkingSuffix(model: string | undefined, thinking: string 
 	const colonIdx = model.lastIndexOf(":");
 	if (colonIdx !== -1 && THINKING_LEVELS.includes(model.substring(colonIdx + 1))) return model;
 	return `${model}:${thinking}`;
+}
+
+export function currentCrewDepth(env: NodeJS.ProcessEnv = process.env): number {
+	const raw = env.PI_CREW_DEPTH ?? env.PI_TEAMS_DEPTH ?? "0";
+	const parsed = Number(raw);
+	return Number.isInteger(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+export function resolveCrewMaxDepth(inputMaxDepth?: number, env: NodeJS.ProcessEnv = process.env): number {
+	const raw = env.PI_CREW_MAX_DEPTH ?? env.PI_TEAMS_MAX_DEPTH;
+	const envDepth = raw !== undefined ? Number(raw) : NaN;
+	if (Number.isInteger(envDepth) && envDepth >= 0) return envDepth;
+	return Number.isInteger(inputMaxDepth) && inputMaxDepth !== undefined && inputMaxDepth >= 0 ? inputMaxDepth : DEFAULT_MAX_CREW_DEPTH;
+}
+
+export function checkCrewDepth(inputMaxDepth?: number, env: NodeJS.ProcessEnv = process.env): { blocked: boolean; depth: number; maxDepth: number } {
+	const depth = currentCrewDepth(env);
+	const maxDepth = resolveCrewMaxDepth(inputMaxDepth, env);
+	return { depth, maxDepth, blocked: depth >= maxDepth };
 }
 
 export function buildPiWorkerArgs(input: BuildPiWorkerArgsInput): BuildPiWorkerArgsResult {
@@ -61,11 +82,19 @@ export function buildPiWorkerArgs(input: BuildPiWorkerArgsInput): BuildPiWorkerA
 		args.push(`Task: ${input.task}`);
 	}
 
+	const parentDepth = currentCrewDepth();
+	const maxDepth = resolveCrewMaxDepth(input.maxDepth);
 	return {
 		args,
 		env: {
+			PI_CREW_INHERIT_PROJECT_CONTEXT: input.agent.inheritProjectContext ? "1" : "0",
+			PI_CREW_INHERIT_SKILLS: input.agent.inheritSkills ? "1" : "0",
+			PI_CREW_DEPTH: String(parentDepth + 1),
+			PI_CREW_MAX_DEPTH: String(maxDepth),
 			PI_TEAMS_INHERIT_PROJECT_CONTEXT: input.agent.inheritProjectContext ? "1" : "0",
 			PI_TEAMS_INHERIT_SKILLS: input.agent.inheritSkills ? "1" : "0",
+			PI_TEAMS_DEPTH: String(parentDepth + 1),
+			PI_TEAMS_MAX_DEPTH: String(maxDepth),
 		},
 		tempDir,
 	};

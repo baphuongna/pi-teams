@@ -31,12 +31,32 @@ function activityText(agent: CrewAgentRecord): string {
 	if (agent.toolUses !== undefined) parts.push(`tools=${agent.toolUses}`);
 	if (agent.progress?.tokens !== undefined) parts.push(`tokens=${agent.progress.tokens}`);
 	if (agent.progress?.turns !== undefined) parts.push(`turns=${agent.progress.turns}`);
+	if (agent.progress?.durationMs !== undefined) parts.push(`durationMs=${agent.progress.durationMs}`);
+	if (agent.progress?.failedTool) parts.push(`failedTool=${agent.progress.failedTool}`);
 	if (agent.progress?.recentOutput?.length) parts.push(`last=${agent.progress.recentOutput.at(-1)}`);
 	return parts.join(" ") || "idle";
 }
 
+function statusGlyph(status: CrewAgentRecord["status"]): string {
+	if (status === "completed") return "✓";
+	if (status === "failed") return "✗";
+	if (status === "running") return "▶";
+	if (status === "cancelled" || status === "stopped") return "■";
+	return "·";
+}
+
+function outputWarning(agent: CrewAgentRecord): string {
+	if (agent.status !== "completed") return "";
+	if (!agent.outputPath || !fs.existsSync(agent.outputPath)) return " no-output";
+	try {
+		return fs.statSync(agent.outputPath).size === 0 ? " no-output" : "";
+	} catch {
+		return " no-output";
+	}
+}
+
 function agentLine(agent: CrewAgentRecord): string {
-	return `- ${agent.taskId} [${agent.status}] ${agent.role}->${agent.agent} runtime=${agent.runtime} ${activityText(agent)}${agent.error ? ` error=${agent.error}` : ""}`;
+	return `- ${statusGlyph(agent.status)} ${agent.taskId} [${agent.status}] ${agent.role}->${agent.agent} runtime=${agent.runtime} ${activityText(agent)}${outputWarning(agent)}${agent.error ? ` error=${agent.error}` : ""}`;
 }
 
 export function buildAgentDashboard(manifest: TeamRunManifest): { text: string; groups: Record<string, CrewAgentRecord[]> } {

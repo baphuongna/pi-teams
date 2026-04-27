@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import type { AgentConfig } from "../agents/agent-config.ts";
+import type { CrewLimitsConfig } from "../config/config.ts";
 import type { ArtifactDescriptor, TeamRunManifest, TeamTaskState, UsageState } from "../state/types.ts";
 import { writeArtifact } from "../state/artifact-store.ts";
 import { appendEvent } from "../state/event-log.ts";
@@ -28,6 +29,7 @@ export interface TaskRunnerInput {
 	agent: AgentConfig;
 	signal?: AbortSignal;
 	executeWorkers: boolean;
+	limits?: CrewLimitsConfig;
 	dependencyContextText?: string;
 }
 
@@ -190,6 +192,9 @@ function applyAgentProgressEvent(progress: CrewAgentProgress, event: unknown, st
 		next.currentToolArgs = undefined;
 		next.currentToolStartedAt = undefined;
 	}
+	if ((obj?.type === "tool_execution_error" || obj?.type === "tool_execution_failed") && next.currentTool) {
+		next.failedTool = next.currentTool;
+	}
 	const usage = eventUsage(event);
 	if (usage) {
 		next.tokens = (usage.input ?? 0) + (usage.output ?? 0);
@@ -269,6 +274,7 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 				model,
 				signal: input.signal,
 				transcriptPath,
+				maxDepth: input.limits?.maxTaskDepth,
 				onStdoutLine: (line) => appendCrewAgentOutput(manifest, task.id, line),
 				onJsonEvent: (event) => {
 					appendCrewAgentEvent(manifest, task.id, event);
@@ -349,7 +355,7 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 		modelAttempts,
 		usage: parsedOutput?.usage,
 		jsonEvents: parsedOutput?.jsonEvents,
-		agentProgress: task.agentProgress,
+		agentProgress: error && task.agentProgress?.currentTool ? { ...task.agentProgress, failedTool: task.agentProgress.currentTool } : task.agentProgress,
 		error,
 		verification: createVerificationEvidence(taskPacket.verification, !error, error ? `Task failed: ${error}` : input.executeWorkers ? "Worker finished without reporting a verification failure." : "Safe scaffold mode; verification commands were not executed."),
 		promptArtifact,
