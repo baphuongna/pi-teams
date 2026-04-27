@@ -1,12 +1,19 @@
 # Publishing pi-teams
 
-This package is currently local-first. Before publishing to npm:
+This package is published as the scoped public npm package:
 
-1. Set package metadata in `package.json`:
+```text
+@baphuongna/pi-teams
+```
+
+Before publishing to npm:
+
+1. Confirm package metadata in `package.json`:
    - `author`
    - `repository`
    - `homepage`
    - `bugs`
+   - `publishConfig.access = public`
 2. Confirm license and notices:
    - keep `LICENSE`
    - keep `NOTICE.md`
@@ -34,7 +41,13 @@ pi install ./pi-teams
 6. Publish when ready:
 
 ```bash
-npm publish
+npm publish --access public
+```
+
+Users can install the published package with:
+
+```bash
+pi install npm:@baphuongna/pi-teams
 ```
 
 ## Config schema

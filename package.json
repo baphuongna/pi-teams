@@ -1,5 +1,5 @@
 {
-  "name": "pi-teams",
+  "name": "@baphuongna/pi-teams",
   "version": "0.1.0",
   "description": "Pi extension for coordinated AI teams, workflows, worktrees, and async task orchestration",
   "author": "baphuongna",
@@ -75,5 +75,8 @@
     "@mariozechner/pi-ai": "^0.65.0",
     "@mariozechner/pi-coding-agent": "^0.65.0",
     "typescript": "^5.9.3"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

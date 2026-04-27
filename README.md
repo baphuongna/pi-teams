@@ -49,9 +49,15 @@ Current highlights:
 - `/team-dashboard` custom TUI overlay with progress preview, action shortcuts, and reload
 - package polish: `schema.json`, TypeScript semantic check, strip-types import smoke, cross-platform CI workflow, dry-run package verification
 
-## Install locally
+## Install
 
-From the workspace root:
+From npm:
+
+```bash
+pi install npm:@baphuongna/pi-teams
+```
+
+From the workspace root for local development:
 
 ```bash
 pi install ./pi-teams
