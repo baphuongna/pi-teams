@@ -13,7 +13,9 @@ if (!fs.existsSync(configPath)) {
   console.log(`pi-crew config already exists: ${configPath}`);
 }
 
-console.log("\nInstall this package in Pi with:");
-console.log("  pi install ./pi-crew");
+console.log("\nInstall the published package in Pi with:");
+console.log("  pi install npm:pi-crew");
+console.log("\nFor local development from a cloned repo:");
+console.log("  pi install .");
 console.log("\nEnable real child workers by setting either config executeWorkers=true or environment:");
 console.log("  PI_TEAMS_EXECUTE_WORKERS=1 pi");
