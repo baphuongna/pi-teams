@@ -124,6 +124,12 @@ export function emptyCrewAgentProgress(): CrewAgentProgress {
 	return { recentTools: [], recentOutput: [], toolCount: 0 };
 }
 
+function modelFromTask(task: TeamTaskState): string | undefined {
+	const attempts = task.modelAttempts;
+	if (!attempts?.length) return undefined;
+	return attempts.find((attempt) => attempt.success)?.model ?? attempts.at(-1)?.model;
+}
+
 export function recordFromTask(manifest: TeamRunManifest, task: TeamTaskState, runtime: CrewRuntimeKind): CrewAgentRecord {
 	return {
 		id: `${manifest.runId}:${task.id}`,
@@ -142,6 +148,8 @@ export function recordFromTask(manifest: TeamRunManifest, task: TeamTaskState, r
 		outputPath: agentOutputPath(manifest, task.id),
 		toolUses: task.agentProgress?.toolCount,
 		jsonEvents: task.jsonEvents,
+		model: modelFromTask(task),
+		usage: task.usage,
 		progress: task.agentProgress,
 		error: task.error,
 	};

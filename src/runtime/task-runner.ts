@@ -190,6 +190,17 @@ function shouldFlushProgressEvent(event: unknown): boolean {
 	return type === "tool_execution_start" || type === "tool_execution_end" || type === "message_end" || type === "tool_result_end";
 }
 
+function cleanResultText(text: string | undefined): string | undefined {
+	const trimmed = text?.trim();
+	if (!trimmed) return undefined;
+	const doneIndex = trimmed.lastIndexOf("\nDONE\n");
+	if (doneIndex >= 0) return trimmed.slice(doneIndex + 1).trim();
+	if (trimmed === "DONE" || trimmed.startsWith("DONE\n")) return trimmed;
+	const fencedPromptIndex = trimmed.lastIndexOf("</file>");
+	if (fencedPromptIndex >= 0 && fencedPromptIndex < trimmed.length - 7) return trimmed.slice(fencedPromptIndex + 7).trim() || trimmed;
+	return trimmed;
+}
+
 function progressEventSummary(task: TeamTaskState, event: unknown): Record<string, unknown> {
 	const type = asRecord(event)?.type;
 	return {
@@ -309,6 +320,10 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 		for (let i = 0; i < attemptModels.length; i++) {
 			const model = attemptModels[i];
 			const attemptStartedAt = new Date();
+			const pendingAttempt: ModelAttemptSummary = { model: model ?? "default", success: false };
+			task = { ...task, modelAttempts: [...modelAttempts, pendingAttempt] };
+			tasks = updateTask(tasks, task);
+			upsertCrewAgent(manifest, recordFromTask(manifest, task, "child-process"));
 			const childResult = await runChildPi({
 				cwd: task.cwd,
 				task: prompt,
@@ -329,11 +344,13 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 			exitCode = childResult.exitCode;
 			finalStdout = childResult.stdout;
 			finalStderr = childResult.stderr;
-			parsedOutput = parsePiJsonOutput(childResult.stdout);
+			parsedOutput = parsePiJsonOutput(fs.existsSync(transcriptPath) ? fs.readFileSync(transcriptPath, "utf-8") : childResult.stdout);
 			error = childResult.error || (childResult.exitCode && childResult.exitCode !== 0 ? childResult.stderr || `Child Pi exited with ${childResult.exitCode}` : undefined);
 			persistChildProgress({ type: "attempt_finished" }, true);
 			const attempt: ModelAttemptSummary = { model: model ?? "default", success: !error, exitCode, error };
 			modelAttempts.push(attempt);
+			task = { ...task, modelAttempts: [...modelAttempts] };
+			tasks = updateTask(tasks, task);
 			logs.push(`MODEL ATTEMPT ${i + 1}: ${attempt.model}`, `success=${attempt.success}`, `exitCode=${attempt.exitCode ?? "null"}`, attempt.error ? `error=${attempt.error}` : "", "");
 			if (!error) break;
 			const nextModel = attemptModels[i + 1];
@@ -343,7 +360,7 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 		resultArtifact = writeArtifact(manifest.artifactsRoot, {
 			kind: "result",
 			relativePath: `results/${task.id}.txt`,
-			content: parsedOutput?.finalText || finalStdout || finalStderr || "(no output)",
+			content: cleanResultText(parsedOutput?.finalText) ?? cleanResultText(finalStdout) ?? cleanResultText(finalStderr) ?? "(no output)",
 			producer: task.id,
 		});
 		logArtifact = writeArtifact(manifest.artifactsRoot, {

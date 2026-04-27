@@ -7,7 +7,7 @@ import { notifyActiveRuns } from "./session-summary.ts";
 import { piTeamsHelp } from "./help.ts";
 import { handleTeamManagerCommand } from "./team-manager-command.ts";
 import { handleTeamTool, type TeamToolDetails } from "./team-tool.ts";
-import { listRuns } from "./run-index.ts";
+import { listRecentRuns } from "./run-index.ts";
 import { RunDashboard, type RunDashboardSelection } from "../ui/run-dashboard.ts";
 import { registerPiCrewRpc, type PiCrewRpcHandle } from "./cross-extension-rpc.ts";
 import { stopCrewWidget, updateCrewWidget, type CrewWidgetState } from "../ui/crew-widget.ts";
@@ -381,13 +381,15 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		description: "Open a pi-crew run dashboard overlay",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
 			for (;;) {
-				const runs = listRuns(ctx.cwd).slice(0, 50);
+				const runs = listRecentRuns(ctx.cwd, 50);
 				const uiConfig = loadConfig(ctx.cwd).config.ui;
 				const rightPanel = uiConfig?.dashboardPlacement !== "center";
-				const width = rightPanel ? Math.min(120, Math.max(32, uiConfig?.dashboardWidth ?? 52)) : "90%";
-				const selection = await ctx.ui.custom<RunDashboardSelection | undefined>((_tui, theme, _keybindings, done) => new RunDashboard(runs, done, theme, { showModel: uiConfig?.showModel, showTokens: uiConfig?.showTokens, showTools: uiConfig?.showTools }), {
+				const width = rightPanel ? Math.min(90, Math.max(40, uiConfig?.dashboardWidth ?? 56)) : "90%";
+				const selection = await ctx.ui.custom<RunDashboardSelection | undefined>((_tui, theme, _keybindings, done) => new RunDashboard(runs, done, theme, { placement: rightPanel ? "right" : "center", showModel: uiConfig?.showModel, showTokens: uiConfig?.showTokens, showTools: uiConfig?.showTools }), {
 					overlay: true,
-					overlayOptions: { width, minWidth: rightPanel ? 32 : undefined, maxHeight: "90%", anchor: rightPanel ? "right-center" : "center", offsetX: rightPanel ? -1 : 0, margin: rightPanel ? { top: 1, right: 1, bottom: 1, left: 0 } : 2 },
+					overlayOptions: rightPanel
+						? { width, minWidth: 40, maxHeight: "100%", anchor: "top-right", offsetX: 0, offsetY: 0, margin: { top: 0, right: 0, bottom: 0, left: 0 } }
+						: { width, maxHeight: "90%", anchor: "center", margin: 2 },
 				});
 				if (!selection) return;
 				if (selection.action === "reload") continue;

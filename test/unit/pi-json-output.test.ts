@@ -19,6 +19,16 @@ test("parsePiJsonOutput extracts final text and usage", () => {
 	assert.equal(parsed.usage?.cost, 0.03);
 });
 
+test("parsePiJsonOutput ignores user prompt text when extracting final output", () => {
+	const stdout = [
+		JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "secret prompt" }] } }),
+		JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "clean answer" }] } }),
+	].join("\n");
+	const parsed = parsePiJsonOutput(stdout);
+	assert.equal(parsed.finalText, "clean answer");
+	assert.equal(parsed.textEvents.includes("secret prompt"), false);
+});
+
 test("parsePiJsonOutput handles fixture JSONL", () => {
 	const fixture = fs.readFileSync(path.join(process.cwd(), "test", "fixtures", "pi-json-output.jsonl"), "utf-8");
 	const parsed = parsePiJsonOutput(fixture);

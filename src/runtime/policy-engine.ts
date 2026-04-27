@@ -56,7 +56,7 @@ export function evaluateCrewPolicy(input: PolicyEngineInput): PolicyDecision[] {
 			const maxRetries = input.limits?.maxRetriesPerTask ?? 0;
 			decisions.push(decision(retryCount < maxRetries ? "retry" : "escalate", "task_failed", task.error ? `Task failed: ${task.error}` : "Task failed.", task.id));
 		}
-		if (task.heartbeat && isWorkerHeartbeatStale(task.heartbeat, input.limits?.heartbeatStaleMs ?? 60_000, input.now)) {
+		if ((task.status === "running" || task.status === "queued") && task.heartbeat && task.heartbeat.alive !== false && isWorkerHeartbeatStale(task.heartbeat, input.limits?.heartbeatStaleMs ?? 60_000, input.now)) {
 			decisions.push(decision("escalate", "worker_stale", "Worker heartbeat is stale.", task.id));
 		}
 		if (task.taskPacket?.verification) {

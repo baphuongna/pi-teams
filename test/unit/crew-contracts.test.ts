@@ -74,6 +74,23 @@ test("Policy engine blocks unsatisfied green contracts and closes out clean runs
 	assert.equal(clean[0]?.action, "closeout");
 });
 
+test("Policy engine ignores stale heartbeats for terminal tasks", () => {
+	const staleCompleted: TeamTaskState = {
+		id: "a",
+		runId: "team_test",
+		role: "executor",
+		agent: "executor",
+		title: "a",
+		status: "completed",
+		dependsOn: [],
+		cwd: process.cwd(),
+		heartbeat: { workerId: "a", lastSeenAt: "2026-01-01T00:00:00.000Z", alive: false },
+	};
+	const decisions = evaluateCrewPolicy({ manifest: manifest(), tasks: [staleCompleted], now: new Date("2026-01-01T00:02:00.000Z") });
+	assert.equal(decisions.some((item) => item.reason === "worker_stale"), false);
+	assert.equal(decisions[0]?.reason, "run_complete");
+});
+
 test("Policy engine enforces graph and concurrency limits", () => {
 	const tasks: TeamTaskState[] = [
 		{ id: "a", runId: "team_test", role: "executor", agent: "executor", title: "a", status: "running", dependsOn: [], cwd: process.cwd(), graph: { taskId: "a", children: ["b", "c"], dependencies: [], queue: "running" } },

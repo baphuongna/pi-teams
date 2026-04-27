@@ -72,13 +72,14 @@ function textFromContent(content: unknown): string[] {
 function extractText(value: unknown): string[] {
 	const obj = asRecord(value);
 	if (!obj) return [];
+	const message = asRecord(obj.message);
+	if (message?.role !== undefined && message.role !== "assistant") return [];
 	const text: string[] = [];
 	if (typeof obj.text === "string") text.push(obj.text);
 	if (typeof obj.output === "string") text.push(obj.output);
 	if (typeof obj.finalOutput === "string") text.push(obj.finalOutput);
 	if (typeof obj.final_output === "string") text.push(obj.final_output);
-	text.push(...textFromContent(obj.content));
-	const message = asRecord(obj.message);
+	if (!message) text.push(...textFromContent(obj.content));
 	if (message) text.push(...textFromContent(message.content));
 	return text.filter((entry) => entry.trim().length > 0);
 }

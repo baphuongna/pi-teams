@@ -9,6 +9,7 @@ const POST_EXIT_STDIO_GUARD_MS = 3000;
 const FINAL_DRAIN_MS = 5000;
 const HARD_KILL_MS = 3000;
 const MAX_CAPTURE_BYTES = 256 * 1024;
+const MAX_COMPACT_CONTENT_CHARS = 4096;
 const activeChildProcesses = new Map<number, ChildProcess>();
 
 function appendBoundedTail(current: string, chunk: string, maxBytes = MAX_CAPTURE_BYTES): string {
@@ -68,12 +69,27 @@ function appendTranscript(input: ChildPiRunInput, line: string): void {
 	fs.appendFileSync(input.transcriptPath, `${line}\n`, "utf-8");
 }
 
+function compactString(value: string, maxChars = MAX_COMPACT_CONTENT_CHARS): string {
+	if (value.length <= maxChars) return value;
+	return `${value.slice(0, maxChars)}\n[pi-crew compacted ${value.length - maxChars} chars]`;
+}
+
+function compactValue(value: unknown): unknown {
+	if (typeof value === "string") return compactString(value);
+	if (Array.isArray(value)) return value.slice(0, 20).map(compactValue);
+	const record = asRecord(value);
+	if (!record) return value;
+	const compacted: Record<string, unknown> = {};
+	for (const [key, entry] of Object.entries(record).slice(0, 20)) compacted[key] = compactValue(entry);
+	return compacted;
+}
+
 function compactContentPart(part: unknown): unknown | undefined {
 	const record = asRecord(part);
 	if (!record) return undefined;
-	if (record.type === "text") return { type: "text", text: typeof record.text === "string" ? record.text : "" };
-	if (record.type === "toolCall") return { type: "toolCall", name: record.name, input: record.input };
-	if (record.type === "toolResult") return { type: "toolResult", name: record.name, content: record.content };
+	if (record.type === "text") return { type: "text", text: typeof record.text === "string" ? compactString(record.text) : "" };
+	if (record.type === "toolCall") return { type: "toolCall", name: record.name, input: compactValue(record.input) };
+	if (record.type === "toolResult") return { type: "toolResult", name: record.name, content: compactValue(record.content) };
 	return undefined;
 }
 
@@ -106,7 +122,9 @@ function displayTextFromCompactEvent(event: unknown): string | undefined {
 	if (record.type === "tool_execution_start") {
 		return typeof record.toolName === "string" ? `tool: ${record.toolName}` : "tool started";
 	}
+	if (record.type !== "message" && record.type !== "message_end") return undefined;
 	const message = asRecord(record.message);
+	if (message?.role !== undefined && message.role !== "assistant") return undefined;
 	const content = Array.isArray(message?.content) ? message.content : [];
 	const text = content.flatMap((part) => {
 		const item = asRecord(part);

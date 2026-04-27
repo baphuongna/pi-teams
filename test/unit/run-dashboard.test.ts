@@ -42,6 +42,13 @@ test("RunDashboard renders and selects runs", () => {
 	assert.deepEqual(selected, { runId: "team_b", action: "status" });
 });
 
+test("RunDashboard renders a visibly right-sidebar title when requested", () => {
+	const dashboard = new RunDashboard([run("team_right", "running")], () => {}, {}, { placement: "right" });
+	const lines = dashboard.render(70);
+	assert.ok(lines.some((line) => line.includes("pi-crew right sidebar")));
+	assert.ok(lines.some((line) => line.includes("anchored top-right")));
+});
+
 test("RunDashboard supports phase 5 observability hotkeys", () => {
 	let selected: RunDashboardSelection | undefined;
 	const dashboard = new RunDashboard([run("team_obs", "running")], (selection) => {

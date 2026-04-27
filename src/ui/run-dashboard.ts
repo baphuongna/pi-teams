@@ -13,6 +13,7 @@ interface DashboardComponent {
 type DashboardTheme = { fg?: (color: string, text: string) => string; bold?: (text: string) => string };
 
 export interface RunDashboardOptions {
+	placement?: "center" | "right";
 	showModel?: boolean;
 	showTokens?: boolean;
 	showTools?: boolean;
@@ -126,11 +127,19 @@ function modelForTask(task: TeamTaskState | undefined): string | undefined {
 	return attempts.find((attempt) => attempt.success)?.model ?? attempts.at(-1)?.model;
 }
 
+function modelForAgent(agent: CrewAgentRecord, task: TeamTaskState | undefined): string | undefined {
+	return modelForTask(task) ?? agent.model;
+}
+
+function usageForAgent(agent: CrewAgentRecord, task: TeamTaskState | undefined): UsageState | undefined {
+	return task?.usage ?? agent.usage;
+}
+
 function agentPreviewLine(agent: CrewAgentRecord, task: TeamTaskState | undefined, options: RunDashboardOptions): string {
 	const stats = [
 		agent.progress?.activityState,
-		options.showModel !== false && modelForTask(task) ? `model=${modelForTask(task)}` : undefined,
-		options.showTokens !== false ? formatTokens(task?.usage) ?? (agent.progress?.tokens !== undefined ? `tok=${agent.progress.tokens}` : undefined) : undefined,
+		options.showModel !== false && modelForAgent(agent, task) ? `model=${modelForAgent(agent, task)}` : undefined,
+		options.showTokens !== false ? formatTokens(usageForAgent(agent, task)) ?? (agent.progress?.tokens !== undefined ? `tok=${agent.progress.tokens}` : undefined) : undefined,
 		options.showTools !== false && agent.progress?.currentTool ? `tool=${agent.progress.currentTool}` : undefined,
 		options.showTools !== false && agent.toolUses !== undefined ? `${agent.toolUses} tools` : undefined,
 		agent.progress?.turns !== undefined ? `${agent.progress.turns} turns` : undefined,
@@ -219,9 +228,10 @@ export class RunDashboard implements DashboardComponent {
 		const innerWidth = Math.max(20, width - 4);
 		const borderWidth = Math.min(innerWidth, Math.max(0, width - 2));
 		const border = (text: string) => fg("border", text);
+		const title = this.options.placement === "right" ? "pi-crew right sidebar" : "pi-crew dashboard";
 		const lines = [
 			border(`╭${"─".repeat(borderWidth)}╮`),
-			`│ ${padVisible(truncate(`${fg("accent", "●")} ${bold("pi-crew dashboard")}`, innerWidth - 1), innerWidth - 1)}│`,
+			`│ ${padVisible(truncate(`${fg("accent", "▐")} ${bold(title)} ${this.options.placement === "right" ? fg("dim", "anchored top-right") : ""}`, innerWidth - 1), innerWidth - 1)}│`,
 			`│ ${padVisible(truncate(fg("dim", "↑/↓/j/k select • r reload • p progress • s/u/a/i actions • d agents • e/v/o viewers • q close"), innerWidth - 1), innerWidth - 1)}│`,
 			`│ ${padVisible(truncate(`Runs: ${this.runs.length} • ${countByStatus(this.runs)}`, innerWidth - 1), innerWidth - 1)}│`,
 			border(`├${"─".repeat(borderWidth)}┤`),

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.17
+
+- Fixed terminal/completed workers being incorrectly escalated as stale heartbeat blockers after all tasks completed.
+- Cleaned child-process result extraction so result artifacts prefer final assistant output and no longer include worker prompt/context.
+- Made `/team-dashboard` visibly render as a top-right sidebar by default with explicit right-sidebar title text.
+- Added per-subagent model and usage fields to agent records, status output, and dashboard fallbacks so model/token totals stay visible while and after workers run.
+
 ## 0.1.16
 
 - Added right-side `/team-dashboard` placement with model, token, and tool detail rows for subagents.
