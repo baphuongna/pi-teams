@@ -1,20 +1,20 @@
 {
-  "name": "@bom0792/pi-teams",
+  "name": "pi-crew",
   "version": "0.1.0",
   "description": "Pi extension for coordinated AI teams, workflows, worktrees, and async task orchestration",
   "author": "baphuongna",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/baphuongna/pi-teams.git"
+    "url": "git+https://github.com/baphuongna/pi-crew.git"
   },
-  "homepage": "https://github.com/baphuongna/pi-teams#readme",
+  "homepage": "https://github.com/baphuongna/pi-crew#readme",
   "bugs": {
-    "url": "https://github.com/baphuongna/pi-teams/issues"
+    "url": "https://github.com/baphuongna/pi-crew/issues"
   },
   "type": "module",
   "bin": {
-    "pi-teams": "install.mjs"
+    "pi-crew": "install.mjs"
   },
   "keywords": [
     "pi-package",
@@ -75,8 +75,5 @@
     "@mariozechner/pi-ai": "^0.65.0",
     "@mariozechner/pi-coding-agent": "^0.65.0",
     "typescript": "^5.9.3"
-  },
-  "publishConfig": {
-    "access": "public"
   }
 }

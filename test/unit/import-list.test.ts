@@ -7,7 +7,7 @@ import { handleTeamTool } from "../../src/extension/team-tool.ts";
 import { listImportedRuns } from "../../src/extension/import-index.ts";
 
 test("imports action lists imported run bundles", async () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-import-list-test-"));
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-import-list-test-"));
 	fs.mkdirSync(path.join(cwd, ".pi"));
 	try {
 		const run = await handleTeamTool({ action: "run", team: "fast-fix", goal: "List imported" }, { cwd });

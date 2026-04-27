@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
 
 test("team run creates durable artifacts and status", async () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-run-test-"));
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-run-test-"));
 	fs.mkdirSync(path.join(cwd, ".pi"));
 	try {
 		const run = await handleTeamTool({ action: "run", team: "default", goal: "Test durable run" }, { cwd });

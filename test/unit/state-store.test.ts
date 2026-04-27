@@ -24,7 +24,7 @@ const workflow: WorkflowConfig = {
 };
 
 test("createRunManifest writes manifest and tasks", () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-state-test-"));
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-test-"));
 	fs.mkdirSync(path.join(cwd, ".pi"));
 	try {
 		const created = createRunManifest({ cwd, team, workflow, goal: "test" });

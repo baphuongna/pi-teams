@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
 
 test("api supports mailbox inbox/outbox and delivery state", async () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-mailbox-"));
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-mailbox-"));
 	fs.mkdirSync(path.join(cwd, ".pi"));
 	try {
 		const run = await handleTeamTool({ action: "run", team: "fast-fix", goal: "mailbox api" }, { cwd });

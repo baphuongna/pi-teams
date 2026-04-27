@@ -7,7 +7,7 @@ import { handleTeamTool } from "../../src/extension/team-tool.ts";
 import { loadRunManifestById } from "../../src/state/state-store.ts";
 
 test("team run writes progress artifacts and API exposes state", async () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-runtime-hardening-"));
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-runtime-hardening-"));
 	fs.mkdirSync(path.join(cwd, ".pi"));
 	try {
 		const run = await handleTeamTool({ action: "run", team: "fast-fix", goal: "Check runtime hardening" }, { cwd });

@@ -46,7 +46,7 @@ function collect(root: string, scope: "project" | "user"): ImportedRunIndexEntry
 
 export function listImportedRuns(cwd: string): ImportedRunIndexEntry[] {
 	const projectRoot = path.join(projectPiRoot(cwd), "teams", "imports");
-	const userRoot = path.join(userPiRoot(), "extensions", "pi-teams", "imports");
+	const userRoot = path.join(userPiRoot(), "extensions", "pi-crew", "imports");
 	return [...collect(userRoot, "user"), ...collect(projectRoot, "project")]
 		.sort((a, b) => (b.importedAt ?? "").localeCompare(a.importedAt ?? ""));
 }

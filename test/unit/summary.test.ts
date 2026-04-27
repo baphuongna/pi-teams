@@ -7,7 +7,7 @@ import { handleTeamTool } from "../../src/extension/team-tool.ts";
 
 
 test("summary action and summary artifact are created for runs", async () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-summary-test-"));
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-summary-test-"));
 	fs.mkdirSync(path.join(cwd, ".pi"));
 	try {
 		const run = await handleTeamTool({ action: "run", team: "fast-fix", goal: "Summarize me" }, { cwd });
@@ -15,7 +15,7 @@ test("summary action and summary artifact are created for runs", async () => {
 		assert.ok(runId);
 		const summaryPath = path.join(cwd, ".pi", "teams", "artifacts", runId!, "summary.md");
 		assert.ok(fs.existsSync(summaryPath));
-		assert.match(fs.readFileSync(summaryPath, "utf-8"), /# pi-teams run/);
+		assert.match(fs.readFileSync(summaryPath, "utf-8"), /# pi-crew run/);
 		const summary = await handleTeamTool({ action: "summary", runId }, { cwd });
 		assert.equal(summary.isError, false);
 		assert.match(summary.content[0]?.text ?? "", /Summary for/);

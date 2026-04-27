@@ -10,5 +10,5 @@ test("help includes major commands", async () => {
 	assert.match(help, /\/team-export/);
 	const result = await handleTeamTool({ action: "help" }, { cwd: process.cwd() });
 	assert.equal(result.isError, false);
-	assert.match(result.content[0]?.text ?? "", /pi-teams commands/);
+	assert.match(result.content[0]?.text ?? "", /pi-crew commands/);
 });

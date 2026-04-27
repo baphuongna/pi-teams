@@ -1,4 +1,4 @@
-# pi-teams Development Notes
+# pi-crew Development Notes
 
 This package is a Pi extension for team orchestration.
 
@@ -14,7 +14,7 @@ This package is a Pi extension for team orchestration.
 - Default execution should remain safe: child Pi workers only run when explicitly enabled with `PI_TEAMS_EXECUTE_WORKERS=1`.
 - Worktree cleanup must preserve dirty worktrees unless `force` is explicitly set.
 - Management deletes must require `confirm: true`; referenced resources should be blocked unless `force: true`.
-- After code changes, run `npm test` from `pi-teams/` unless explicitly told not to.
+- After code changes, run `npm test` from `pi-crew/` unless explicitly told not to.
 
 ## Important commands
 

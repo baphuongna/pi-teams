@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
 
 test("import action stores exported run bundles", async () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-import-test-"));
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-import-test-"));
 	fs.mkdirSync(path.join(cwd, ".pi"));
 	try {
 		const run = await handleTeamTool({ action: "run", team: "fast-fix", goal: "Import me" }, { cwd });
@@ -19,7 +19,7 @@ test("import action stores exported run bundles", async () => {
 		const importRoot = path.join(cwd, ".pi", "teams", "imports", runId!);
 		assert.ok(fs.existsSync(path.join(importRoot, "run-export.json")));
 		assert.ok(fs.existsSync(path.join(importRoot, "README.md")));
-		assert.match(fs.readFileSync(path.join(importRoot, "README.md"), "utf-8"), /Imported pi-teams run/);
+		assert.match(fs.readFileSync(path.join(importRoot, "README.md"), "utf-8"), /Imported pi-crew run/);
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}

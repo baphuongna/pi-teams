@@ -1,18 +1,18 @@
-# pi-teams
+# pi-crew
 
-`pi-teams` is a Pi extension/package for coordinated AI teams: autonomous routing, manual slash-command controls, durable run state, artifacts, async/background execution, optional worktree isolation, resource management, validation, import/export, dashboard helpers, and safe API interop.
+`pi-crew` is a Pi extension/package for coordinated AI teams: autonomous routing, manual slash-command controls, durable run state, artifacts, async/background execution, optional worktree isolation, resource management, validation, import/export, dashboard helpers, and safe API interop.
 
 It is intentionally located at workspace root:
 
 ```text
-pi-teams/
+pi-crew/
 ```
 
 not under `Source/`.
 
 ## Status
 
-`pi-teams` is implemented as a local Pi package with safe execution defaults and product-oriented foundations.
+`pi-crew` is implemented as a local Pi package with safe execution defaults and product-oriented foundations.
 
 Current highlights:
 
@@ -54,25 +54,25 @@ Current highlights:
 From npm:
 
 ```bash
-pi install npm:@bom0792/pi-teams
+pi install npm:pi-crew
 ```
 
 From the workspace root for local development:
 
 ```bash
-pi install ./pi-teams
+pi install ./pi-crew
 ```
 
 Optional config bootstrap:
 
 ```bash
-node ./pi-teams/install.mjs
+node ./pi-crew/install.mjs
 ```
 
 Local verification from this package:
 
 ```bash
-cd pi-teams
+cd pi-crew
 npm run ci
 ```
 
@@ -112,7 +112,7 @@ By default, worktree mode requires a clean leader repository. Dirty task worktre
 User config path:
 
 ```text
-~/.pi/agent/extensions/pi-teams/config.json
+~/.pi/agent/extensions/pi-crew/config.json
 ```
 
 Project config path:
@@ -504,8 +504,8 @@ Mailbox state:
 User-global fallback:
 
 ```text
-~/.pi/agent/extensions/pi-teams/runs/...
-~/.pi/agent/extensions/pi-teams/imports/...
+~/.pi/agent/extensions/pi-crew/runs/...
+~/.pi/agent/extensions/pi-crew/imports/...
 ```
 
 ## Project initialization
@@ -615,7 +615,7 @@ PI_TEAMS_PI_BIN                  optional explicit Pi CLI script/shim path for d
 Install dependencies:
 
 ```bash
-cd pi-teams
+cd pi-crew
 npm install
 ```
 
@@ -656,20 +656,20 @@ npm pack --dry-run
 Package docs:
 
 ```text
-pi-teams/docs/architecture.md
-pi-teams/docs/usage.md
-pi-teams/docs/resource-formats.md
-pi-teams/docs/live-mailbox-runtime.md
-pi-teams/docs/publishing.md
+pi-crew/docs/architecture.md
+pi-crew/docs/usage.md
+pi-crew/docs/resource-formats.md
+pi-crew/docs/live-mailbox-runtime.md
+pi-crew/docs/publishing.md
 ```
 
 Workspace-level design/progress docs:
 
 ```text
-docs/pi-teams-source-review-and-lessons.md
-docs/pi-teams-architecture.md
-docs/pi-teams-mvp-plan.md
-docs/pi-teams-*-progress-2026-04-26.md
+docs/pi-crew-source-review-and-lessons.md
+docs/pi-crew-architecture.md
+docs/pi-crew-mvp-plan.md
+docs/pi-crew-*-progress-2026-04-26.md
 ```
 
 ## Known remaining release metadata
@@ -684,7 +684,7 @@ Package metadata still needs real project values before publishing:
 Local Pi smoke still requires an actual Pi environment:
 
 ```bash
-cd pi-teams
+cd pi-crew
 npm run smoke:pi
 ```
 
@@ -698,6 +698,6 @@ Then in Pi:
 
 ## Acknowledgements
 
-`pi-teams` builds on ideas and selected MIT-licensed implementation patterns from `pi-subagents` and `oh-my-claudecode`.
+`pi-crew` builds on ideas and selected MIT-licensed implementation patterns from `pi-subagents` and `oh-my-claudecode`.
 
 It also draws conceptual inspiration from `oh-my-openagent`; no `oh-my-openagent` source code is copied unless separately documented and license-compatible.

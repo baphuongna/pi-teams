@@ -41,7 +41,7 @@ export interface UpdateConfigOptions {
 
 export function configPath(): string {
 	const home = process.env.PI_TEAMS_HOME?.trim() || os.homedir();
-	return path.join(home, ".pi", "agent", "extensions", "pi-teams", "config.json");
+	return path.join(home, ".pi", "agent", "extensions", "pi-crew", "config.json");
 }
 
 export function projectConfigPath(cwd: string): string {
@@ -161,7 +161,7 @@ export function updateConfig(patch: PiTeamsConfig, options: UpdateConfigOptions 
 		current = readConfigRecord(filePath);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`Could not update pi-teams config: ${message}`);
+		throw new Error(`Could not update pi-crew config: ${message}`);
 	}
 	let merged = mergeConfig(parseConfig(current), patch);
 	if (options.unsetPaths?.length) {
@@ -181,7 +181,7 @@ export function updateAutonomousConfig(patch: PiTeamsAutonomousConfig): SavedPiT
 		current = readConfigRecord(filePath);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`Could not update pi-teams config: ${message}`);
+		throw new Error(`Could not update pi-crew config: ${message}`);
 	}
 	const currentAutonomous = current.autonomous && typeof current.autonomous === "object" && !Array.isArray(current.autonomous)
 		? current.autonomous as Record<string, unknown>

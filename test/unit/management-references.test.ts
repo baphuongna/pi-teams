@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
 
 test("delete agent is blocked when referenced by a team unless forced", async () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-ref-test-"));
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-ref-test-"));
 	fs.mkdirSync(path.join(cwd, ".pi", "agents"), { recursive: true });
 	fs.mkdirSync(path.join(cwd, ".pi", "teams"), { recursive: true });
 	try {

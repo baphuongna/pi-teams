@@ -46,14 +46,14 @@ export function buildPiWorkerArgs(input: BuildPiWorkerArgsInput): BuildPiWorkerA
 
 	let tempDir: string | undefined;
 	if (input.agent.systemPrompt) {
-		tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-"));
+		tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-"));
 		const promptPath = path.join(tempDir, `${input.agent.name.replace(/[^\w.-]/g, "_")}.md`);
 		fs.writeFileSync(promptPath, input.agent.systemPrompt, { mode: 0o600 });
 		args.push(input.agent.systemPromptMode === "append" ? "--append-system-prompt" : "--system-prompt", promptPath);
 	}
 
 	if (input.task.length > TASK_ARG_LIMIT) {
-		if (!tempDir) tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-"));
+		if (!tempDir) tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-"));
 		const taskPath = path.join(tempDir, "task.md");
 		fs.writeFileSync(taskPath, input.task, { mode: 0o600 });
 		args.push(`@${taskPath}`);

@@ -1,10 +1,10 @@
-# pi-teams Architecture
+# pi-crew Architecture
 
 Canonical architecture documentation currently lives at workspace level:
 
-- `../docs/pi-teams-source-review-and-lessons.md`
-- `../docs/pi-teams-architecture.md`
-- `../docs/pi-teams-mvp-plan.md`
+- `../docs/pi-crew-source-review-and-lessons.md`
+- `../docs/pi-crew-architecture.md`
+- `../docs/pi-crew-mvp-plan.md`
 
 This project-local document exists so the package contains an obvious documentation entry point. Keep it in sync as implementation progresses.
 
@@ -53,7 +53,7 @@ Implemented now:
 - expanded doctor checks for `pi`, `git`, writable state paths, and resource discovery
 - durable run integration-style test coverage
 - user config loader for async defaults, worker execution, notifier interval, and worktree cleanliness policy
-- `pi-teams` install helper that creates default config
+- `pi-crew` install helper that creates default config
 - worktree branch mismatch detection before reuse
 - simple interactive `/team-manager` built with Pi UI dialogs
 - dedicated `events` and `artifacts` actions plus slash commands

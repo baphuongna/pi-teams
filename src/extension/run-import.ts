@@ -13,7 +13,7 @@ export interface ImportedRunBundleInfo {
 function importRoot(cwd: string, scope: "project" | "user"): string {
 	return scope === "project"
 		? path.join(projectPiRoot(cwd), "teams", "imports")
-		: path.join(userPiRoot(), "extensions", "pi-teams", "imports");
+		: path.join(userPiRoot(), "extensions", "pi-crew", "imports");
 }
 
 export function importRunBundle(cwd: string, bundlePath: string, scope: "project" | "user" = "project"): ImportedRunBundleInfo {
@@ -28,7 +28,7 @@ export function importRunBundle(cwd: string, bundlePath: string, scope: "project
 	const targetSummary = path.join(root, "README.md");
 	fs.writeFileSync(targetJson, `${JSON.stringify({ ...raw, importedAt, importedFrom: resolvedPath }, null, 2)}\n`, "utf-8");
 	fs.writeFileSync(targetSummary, [
-		`# Imported pi-teams run ${runId}`,
+		`# Imported pi-crew run ${runId}`,
 		"",
 		`Imported: ${importedAt}`,
 		`Source: ${resolvedPath}`,

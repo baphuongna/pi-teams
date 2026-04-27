@@ -143,7 +143,7 @@ function piCommandExists(): { ok: boolean; detail: string } {
 function checkWritableDir(dir: string): { ok: boolean; detail: string } {
 	try {
 		fs.mkdirSync(dir, { recursive: true });
-		const probe = path.join(dir, `.pi-teams-write-${process.pid}-${Date.now()}`);
+		const probe = path.join(dir, `.pi-crew-write-${process.pid}-${Date.now()}`);
 		fs.writeFileSync(probe, "ok", "utf-8");
 		fs.unlinkSync(probe);
 		return { ok: true, detail: dir };
@@ -161,7 +161,7 @@ export function handleDoctor(ctx: TeamContext, params: TeamToolParamsValue = {})
 	const git = commandExists("git", ["--version"]);
 	const pi = piCommandExists();
 	const loadedConfig = loadConfig(ctx.cwd);
-	const userWritable = checkWritableDir(path.join(userPiRoot(), "extensions", "pi-teams"));
+	const userWritable = checkWritableDir(path.join(userPiRoot(), "extensions", "pi-crew"));
 	const projectWritable = checkWritableDir(path.join(projectPiRoot(ctx.cwd), "teams"));
 	const validation = validateResources(ctx.cwd);
 	const validationErrors = validation.issues.filter((issue) => issue.level === "error").length;
@@ -194,7 +194,7 @@ export function handleDoctor(ctx: TeamContext, params: TeamToolParamsValue = {})
 		{ label: "resource validation", ok: validationErrors === 0, detail: `${validationErrors} errors, ${validationWarnings} warnings` },
 		...(smokeChildPi ? [{ label: "child Pi smoke", ok: smokeChildPi.ok, detail: smokeChildPi.detail }] : []),
 	];
-	const text = ["pi-teams doctor:", ...checks.map((check) => `- ${check.ok ? "OK" : "FAIL"} ${check.label}: ${check.detail}`)].join("\n");
+	const text = ["pi-crew doctor:", ...checks.map((check) => `- ${check.ok ? "OK" : "FAIL"} ${check.label}: ${check.detail}`)].join("\n");
 	return result(text, { action: "doctor", status: checks.every((check) => check.ok) ? "ok" : "error" }, checks.some((check) => !check.ok));
 }
 
@@ -241,7 +241,7 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 		atomicWriteJson(paths.manifestPath, asyncManifest);
 		appendEvent(updatedManifest.eventsPath, { type: "async.spawned", runId: updatedManifest.runId, data: { pid: spawned.pid, logPath: spawned.logPath } });
 		const text = [
-			`Started async pi-teams run ${updatedManifest.runId}.`,
+			`Started async pi-crew run ${updatedManifest.runId}.`,
 			`Team: ${team.name}`,
 			`Workflow: ${workflow.name}`,
 			`Status: ${updatedManifest.status}`,
@@ -258,7 +258,7 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 	const executeWorkers = loadedConfig.config.executeWorkers === true || process.env.PI_TEAMS_EXECUTE_WORKERS === "1";
 	const executed = await executeTeamRun({ manifest: updatedManifest, tasks, team, workflow, agents, executeWorkers });
 	const text = [
-		`Created pi-teams run ${executed.manifest.runId}.`,
+		`Created pi-crew run ${executed.manifest.runId}.`,
 		`Team: ${team.name}`,
 		`Workflow: ${workflow.name}`,
 		`Status: ${executed.manifest.status}`,
@@ -456,7 +456,7 @@ function configPatchFromConfig(config: unknown): PiTeamsConfig {
 function formatAutonomyStatus(config: PiTeamsAutonomousConfig | undefined, pathValue: string, updated: boolean): string {
 	const effective = effectiveAutonomousConfig(config);
 	return [
-		updated ? "Updated pi-teams autonomous mode." : "pi-teams autonomous mode:",
+		updated ? "Updated pi-crew autonomous mode." : "pi-crew autonomous mode:",
 		`Path: ${pathValue}`,
 		`Profile: ${effective.profile}`,
 		`Enabled: ${effective.enabled}`,
@@ -469,7 +469,7 @@ function formatAutonomyStatus(config: PiTeamsAutonomousConfig | undefined, pathV
 export function handleImports(_params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
 	const imports = listImportedRuns(ctx.cwd);
 	const lines = [
-		"Imported pi-teams runs:",
+		"Imported pi-crew runs:",
 		...(imports.length ? imports.map((entry) => `- ${entry.runId} (${entry.scope})${entry.status ? ` [${entry.status}]` : ""} ${entry.team ?? "unknown"}/${entry.workflow ?? "none"}: ${entry.goal ?? ""}\n  Bundle: ${entry.bundlePath}\n  Summary: ${entry.summaryPath}`) : ["- (none)"]),
 	];
 	return result(lines.join("\n"), { action: "imports", status: "ok" });
@@ -503,7 +503,7 @@ export function handlePrune(params: TeamToolParamsValue, ctx: TeamContext): PiTe
 	if (!params.confirm) return result("prune requires confirm: true.", { action: "prune", status: "error" }, true);
 	if (keep < 0 || !Number.isInteger(keep)) return result("keep must be an integer >= 0.", { action: "prune", status: "error" }, true);
 	const pruned = pruneFinishedRuns(ctx.cwd, keep);
-	return result([`Pruned finished pi-teams runs.`, `Kept: ${pruned.kept.length}`, `Removed: ${pruned.removed.length}`, ...(pruned.removed.length ? ["Removed runs:", ...pruned.removed.map((runId) => `- ${runId}`)] : [])].join("\n"), { action: "prune", status: "ok" });
+	return result([`Pruned finished pi-crew runs.`, `Kept: ${pruned.kept.length}`, `Removed: ${pruned.removed.length}`, ...(pruned.removed.length ? ["Removed runs:", ...pruned.removed.map((runId) => `- ${runId}`)] : [])].join("\n"), { action: "prune", status: "ok" });
 }
 
 export function handleForget(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
@@ -696,7 +696,7 @@ export async function handleTeamTool(params: TeamToolParamsValue, ctx: TeamConte
 			const cfg = configRecord(params.config);
 			const initialized = initializeProject(ctx.cwd, { copyBuiltins: cfg.copyBuiltins === true, overwrite: cfg.overwrite === true });
 			return result([
-				"Initialized pi-teams project layout.",
+				"Initialized pi-crew project layout.",
 				"Directories:",
 				...(initialized.createdDirs.length ? initialized.createdDirs.map((dir) => `- created ${dir}`) : ["- already existed"]),
 				"Copied builtin files:",
@@ -736,7 +736,7 @@ export async function handleTeamTool(params: TeamToolParamsValue, ctx: TeamConte
 			if (shouldUpdate) {
 				try {
 					const saved = updateConfig(patch, { cwd: ctx.cwd, scope: cfg.scope === "project" ? "project" : "user", unsetPaths });
-					return result(["Updated pi-teams config.", `Path: ${saved.path}`, "Effective config:", JSON.stringify(saved.config, null, 2)].join("\n"), { action: "config", status: "ok" });
+					return result(["Updated pi-crew config.", `Path: ${saved.path}`, "Effective config:", JSON.stringify(saved.config, null, 2)].join("\n"), { action: "config", status: "ok" });
 				} catch (error) {
 					const message = error instanceof Error ? error.message : String(error);
 					return result(message, { action: "config", status: "error" }, true);
@@ -744,7 +744,7 @@ export async function handleTeamTool(params: TeamToolParamsValue, ctx: TeamConte
 			}
 			const loaded = loadConfig(ctx.cwd);
 			const lines = [
-				"pi-teams config:",
+				"pi-crew config:",
 				`Path: ${loaded.path}`,
 				`Status: ${loaded.error ? `error: ${loaded.error}` : "ok"}`,
 				"Effective config:",

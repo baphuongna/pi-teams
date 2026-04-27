@@ -7,7 +7,7 @@ import { handleTeamTool } from "../../src/extension/team-tool.ts";
 import { projectConfigPath } from "../../src/config/config.ts";
 
 test("config action can update project config", async () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-config-update-"));
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-config-update-"));
 	try {
 		const result = await handleTeamTool({ action: "config", config: { scope: "project", asyncByDefault: true, notifierIntervalMs: 2000 } }, { cwd });
 		assert.equal(result.isError, false);

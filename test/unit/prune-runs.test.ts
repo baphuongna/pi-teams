@@ -8,7 +8,7 @@ import { listRuns } from "../../src/extension/run-index.ts";
 
 
 test("prune removes old finished runs after confirmation", async () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-prune-test-"));
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-prune-test-"));
 	fs.mkdirSync(path.join(cwd, ".pi"));
 	try {
 		for (let i = 0; i < 3; i++) {

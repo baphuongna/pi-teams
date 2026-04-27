@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
 
 test("management create/update/delete project team with backups", async () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-mgmt-test-"));
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-mgmt-test-"));
 	fs.mkdirSync(path.join(cwd, ".pi"));
 	try {
 		const create = await handleTeamTool({

@@ -34,7 +34,7 @@ export function exportRunBundle(manifest: TeamRunManifest, tasks: TeamTaskState[
 		relativePath: "export/run-export.md",
 		producer: "run-export",
 		content: [
-			`# pi-teams export ${manifest.runId}`,
+			`# pi-crew export ${manifest.runId}`,
 			"",
 			`Exported: ${bundle.exportedAt}`,
 			`Status: ${manifest.status}`,

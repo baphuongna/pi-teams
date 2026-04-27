@@ -21,11 +21,11 @@ export function startAsyncRunNotifier(ctx: ExtensionContext, state: AsyncNotifie
 				if (!isFinished(run.status) || state.seenFinishedRunIds.has(run.runId)) continue;
 				state.seenFinishedRunIds.add(run.runId);
 				const level = run.status === "completed" ? "info" : run.status === "cancelled" ? "warning" : "error";
-				ctx.ui.notify(`pi-teams run ${run.status}: ${run.runId} (${run.team}/${run.workflow ?? "none"})`, level);
+				ctx.ui.notify(`pi-crew run ${run.status}: ${run.runId} (${run.team}/${run.workflow ?? "none"})`, level);
 			}
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			console.error(`[pi-teams] async notifier error: ${message}`);
+			console.error(`[pi-crew] async notifier error: ${message}`);
 		}
 	}, intervalMs);
 }

@@ -7,7 +7,7 @@ import { handleTeamTool } from "../../src/extension/team-tool.ts";
 import { loadRunManifestById } from "../../src/state/state-store.ts";
 
 test("mailbox supports task-scoped messages and validation repair", async () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-mailbox-validation-"));
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-mailbox-validation-"));
 	fs.mkdirSync(path.join(cwd, ".pi"));
 	try {
 		const run = await handleTeamTool({ action: "run", team: "fast-fix", goal: "mailbox validation" }, { cwd });

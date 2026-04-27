@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { loadConfig, projectConfigPath } from "../../src/config/config.ts";
 
 test("loadConfig merges project config over user config", () => {
-	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-project-config-"));
+	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-project-config-"));
 	const oldHome = process.env.HOME;
 	const oldUserProfile = process.env.USERPROFILE;
 	const oldPiTeamsHome = process.env.PI_TEAMS_HOME;
@@ -14,7 +14,7 @@ test("loadConfig merges project config over user config", () => {
 	process.env.USERPROFILE = tmp;
 	process.env.PI_TEAMS_HOME = tmp;
 	try {
-		const userConfig = path.join(tmp, ".pi", "agent", "extensions", "pi-teams", "config.json");
+		const userConfig = path.join(tmp, ".pi", "agent", "extensions", "pi-crew", "config.json");
 		fs.mkdirSync(path.dirname(userConfig), { recursive: true });
 		fs.writeFileSync(userConfig, JSON.stringify({ asyncByDefault: true, autonomous: { profile: "suggested", preferAsyncForLongTasks: false } }), "utf-8");
 		const projectConfig = projectConfigPath(tmp);

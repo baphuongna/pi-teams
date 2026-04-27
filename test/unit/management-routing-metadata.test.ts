@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
 
 test("management create persists routing metadata", async () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-management-routing-"));
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-management-routing-"));
 	try {
 		const created = await handleTeamTool({ action: "create", resource: "agent", config: { scope: "project", name: "router", description: "Router", triggers: ["route"], useWhen: ["routing work"], cost: "cheap", category: "routing", systemPrompt: "Route." } }, { cwd });
 		assert.equal(created.isError, false);

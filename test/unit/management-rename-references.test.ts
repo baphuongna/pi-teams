@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
 
 test("agent rename can update team role references", async () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-rename-test-"));
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-rename-test-"));
 	fs.mkdirSync(path.join(cwd, ".pi", "agents"), { recursive: true });
 	fs.mkdirSync(path.join(cwd, ".pi", "teams"), { recursive: true });
 	try {

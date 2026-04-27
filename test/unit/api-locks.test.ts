@@ -7,7 +7,7 @@ import { handleTeamTool } from "../../src/extension/team-tool.ts";
 import { loadRunManifestById } from "../../src/state/state-store.ts";
 
 test("mutating api operations respect run locks", async () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-api-locks-"));
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-api-locks-"));
 	fs.mkdirSync(path.join(cwd, ".pi"));
 	try {
 		const run = await handleTeamTool({ action: "run", team: "fast-fix", goal: "api locks" }, { cwd });

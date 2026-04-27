@@ -25,10 +25,10 @@ test("worktree mode creates task worktrees and exposes them", async (t) => {
 		t.skip("git is not available");
 		return;
 	}
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-worktree-test-"));
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-worktree-test-"));
 	try {
 		git(cwd, ["init"]);
-		git(cwd, ["config", "user.email", "pi-teams@example.invalid"]);
+		git(cwd, ["config", "user.email", "pi-crew@example.invalid"]);
 		git(cwd, ["config", "user.name", "pi Teams Test"]);
 		fs.writeFileSync(path.join(cwd, "README.md"), "test\n", "utf-8");
 		fs.writeFileSync(path.join(cwd, ".gitignore"), ".pi/\n", "utf-8");
@@ -45,7 +45,7 @@ test("worktree mode creates task worktrees and exposes them", async (t) => {
 
 		const worktrees = await handleTeamTool({ action: "worktrees", runId }, { cwd });
 		assert.equal(worktrees.isError, false);
-		assert.match(worktrees.content[0]?.text ?? "", /branch=pi-teams\//);
+		assert.match(worktrees.content[0]?.text ?? "", /branch=pi-crew\//);
 
 		const cleanup = await handleTeamTool({ action: "cleanup", runId }, { cwd });
 		assert.equal(cleanup.isError, false);

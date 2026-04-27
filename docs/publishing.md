@@ -1,9 +1,9 @@
-# Publishing pi-teams
+# Publishing pi-crew
 
 This package is published as the scoped public npm package:
 
 ```text
-@bom0792/pi-teams
+pi-crew
 ```
 
 Before publishing to npm:
@@ -33,7 +33,7 @@ npm pack --dry-run
 5. Verify local install in Pi:
 
 ```bash
-pi install ./pi-teams
+pi install ./pi-crew
 /team-doctor
 /team-validate
 ```
@@ -47,7 +47,7 @@ npm publish --access public
 Users can install the published package with:
 
 ```bash
-pi install npm:@bom0792/pi-teams
+pi install npm:pi-crew
 ```
 
 ## Config schema
@@ -61,5 +61,5 @@ The package exports:
 Use this for editor validation of:
 
 ```text
-~/.pi/agent/extensions/pi-teams/config.json
+~/.pi/agent/extensions/pi-crew/config.json
 ```

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { validateResources } from "../../src/extension/validate-resources.ts";
 
 test("validateResources warns about suspicious model references", () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-model-validation-"));
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-model-validation-"));
 	try {
 		fs.mkdirSync(path.join(cwd, ".pi", "agents"), { recursive: true });
 		fs.writeFileSync(path.join(cwd, ".pi", "agents", "bad-model.md"), "---\nname: bad-model\ndescription: Bad model\nmodel: bad model\n---\nPrompt\n", "utf-8");

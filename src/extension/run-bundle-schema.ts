@@ -81,5 +81,5 @@ export function validateRunBundle(value: unknown): BundleValidationResult {
 
 export function assertRunBundle(value: unknown): asserts value is ExportedRunBundle {
 	const validation = validateRunBundle(value);
-	if (!validation.ok) throw new Error(`File is not a valid pi-teams exported run bundle:\n${validation.errors.map((error) => `- ${error}`).join("\n")}`);
+	if (!validation.ok) throw new Error(`File is not a valid pi-crew exported run bundle:\n${validation.errors.map((error) => `- ${error}`).join("\n")}`);
 }

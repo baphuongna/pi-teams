@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
 
 test("doctor includes platform diagnostics", async () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-doctor-platform-"));
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-doctor-platform-"));
 	try {
 		const doctor = await handleTeamTool({ action: "doctor" }, { cwd });
 		assert.match(doctor.content[0]?.text ?? "", new RegExp(`platform: ${process.platform.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/${process.arch}`));
@@ -17,7 +17,7 @@ test("doctor includes platform diagnostics", async () => {
 });
 
 test("doctor includes resource validation result", async () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-doctor-test-"));
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-doctor-test-"));
 	fs.mkdirSync(path.join(cwd, ".pi", "teams"), { recursive: true });
 	try {
 		fs.writeFileSync(path.join(cwd, ".pi", "teams", "broken.team.md"), "---\nname: broken\ndescription: Broken team\ndefaultWorkflow: missing-flow\n---\n\n- ghost: agent=ghost\n", "utf-8");

@@ -38,7 +38,7 @@ export function prepareTaskWorkspace(manifest: TeamRunManifest, task: TeamTaskSt
 	const worktreeRoot = path.join(repoRoot, ".pi", "teams", "worktrees", manifest.runId);
 	fs.mkdirSync(worktreeRoot, { recursive: true });
 	const worktreePath = path.join(worktreeRoot, task.id);
-	const branch = `pi-teams/${sanitizeBranchPart(manifest.runId)}/${sanitizeBranchPart(task.id)}`;
+	const branch = `pi-crew/${sanitizeBranchPart(manifest.runId)}/${sanitizeBranchPart(task.id)}`;
 	if (fs.existsSync(worktreePath)) {
 		const currentBranch = git(worktreePath, ["rev-parse", "--abbrev-ref", "HEAD"]);
 		if (currentBranch !== branch) {

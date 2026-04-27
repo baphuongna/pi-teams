@@ -7,7 +7,7 @@ import { handleTeamTool } from "../../src/extension/team-tool.ts";
 import { loadRunManifestById } from "../../src/state/state-store.ts";
 
 test("api supports claim, transition, and release task claim", async () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-api-claim-"));
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-api-claim-"));
 	fs.mkdirSync(path.join(cwd, ".pi"));
 	try {
 		const run = await handleTeamTool({ action: "run", team: "fast-fix", goal: "claim api" }, { cwd });

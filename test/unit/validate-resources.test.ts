@@ -7,7 +7,7 @@ import { handleTeamTool } from "../../src/extension/team-tool.ts";
 import { validateResources } from "../../src/extension/validate-resources.ts";
 
 test("validateResources reports broken team references", async () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-validate-test-"));
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-validate-test-"));
 	fs.mkdirSync(path.join(cwd, ".pi", "teams"), { recursive: true });
 	try {
 		fs.writeFileSync(path.join(cwd, ".pi", "teams", "broken.team.md"), "---\nname: broken\ndescription: Broken team\ndefaultWorkflow: missing-flow\n---\n\n- ghost: agent=ghost\n", "utf-8");

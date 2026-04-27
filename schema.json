@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.invalid/pi-teams.schema.json",
-  "title": "pi-teams config",
+  "$id": "https://example.invalid/pi-crew.schema.json",
+  "title": "pi-crew config",
   "type": "object",
   "additionalProperties": false,
   "properties": {

@@ -59,7 +59,7 @@ export class RunDashboard implements Component {
 		const borderWidth = Math.min(innerWidth, Math.max(0, width - 2));
 		const lines = [
 			`╭${"─".repeat(borderWidth)}╮`,
-			`│ ${truncate("pi-teams dashboard", innerWidth - 1).padEnd(innerWidth - 1)}│`,
+			`│ ${truncate("pi-crew dashboard", innerWidth - 1).padEnd(innerWidth - 1)}│`,
 			`│ ${truncate("↑/↓/j/k select • r reload • p progress • s/u/a/i actions • q close", innerWidth - 1).padEnd(innerWidth - 1)}│`,
 			`│ ${truncate(`Runs: ${this.runs.length} • ${countByStatus(this.runs)}`, innerWidth - 1).padEnd(innerWidth - 1)}│`,
 			`├${"─".repeat(borderWidth)}┤`,

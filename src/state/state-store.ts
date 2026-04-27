@@ -25,7 +25,7 @@ function useProjectState(cwd: string): boolean {
 export function createRunPaths(cwd: string, runId = createRunId()): RunPaths {
 	const baseRoot = useProjectState(cwd)
 		? path.join(projectPiRoot(cwd), "teams")
-		: path.join(userPiRoot(), "extensions", "pi-teams", "runs");
+		: path.join(userPiRoot(), "extensions", "pi-crew", "runs");
 	const stateRoot = path.join(baseRoot, "state", "runs", runId);
 	const artifactsRoot = path.join(baseRoot, "artifacts", runId);
 	return {
@@ -110,7 +110,7 @@ export function updateRunStatus(manifest: TeamRunManifest, status: TeamRunManife
 
 export function loadRunManifestById(cwd: string, runId: string): { manifest: TeamRunManifest; tasks: TeamTaskState[] } | undefined {
 	const projectPath = path.join(projectPiRoot(cwd), "teams", "state", "runs", runId);
-	const userPath = path.join(userPiRoot(), "extensions", "pi-teams", "runs", "state", "runs", runId);
+	const userPath = path.join(userPiRoot(), "extensions", "pi-crew", "runs", "state", "runs", runId);
 	const stateRoot = fs.existsSync(projectPath) ? projectPath : userPath;
 	const manifest = readJsonFile<TeamRunManifest>(path.join(stateRoot, "manifest.json"));
 	if (!manifest) return undefined;

@@ -9,7 +9,7 @@ async function notifyResult(ctx: ExtensionCommandContext, result: Awaited<Return
 }
 
 export async function handleTeamManagerCommand(_args: string, ctx: ExtensionCommandContext): Promise<void> {
-	const action = await ctx.ui.select("pi-teams", [
+	const action = await ctx.ui.select("pi-crew", [
 		"List teams/workflows/agents/runs",
 		"Run team",
 		"Show run status",
@@ -67,7 +67,7 @@ export async function handleTeamManagerCommand(_args: string, ctx: ExtensionComm
 
 	const runs = listRuns(ctx.cwd).slice(0, 20);
 	if (runs.length === 0) {
-		ctx.ui.notify("No pi-teams runs found.", "info");
+		ctx.ui.notify("No pi-crew runs found.", "info");
 		return;
 	}
 	const selected = await ctx.ui.select("Select run", runs.map((run) => `${run.runId} [${run.status}] ${run.team}/${run.workflow ?? "none"}`));

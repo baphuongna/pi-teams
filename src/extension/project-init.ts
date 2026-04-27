@@ -66,7 +66,7 @@ export function initializeProject(cwd: string, options: ProjectInitOptions = {})
 	let gitignoreUpdated = false;
 	if (missing.length > 0) {
 		const prefix = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
-		fs.writeFileSync(gitignorePath, `${existing}${prefix}\n# pi-teams runtime state\n${missing.join("\n")}\n`, "utf-8");
+		fs.writeFileSync(gitignorePath, `${existing}${prefix}\n# pi-crew runtime state\n${missing.join("\n")}\n`, "utf-8");
 		gitignoreUpdated = true;
 	}
 

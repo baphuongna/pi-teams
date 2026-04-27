@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
 
 test("autonomy action shows and toggles autonomous config", async () => {
-	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-autonomy-"));
+	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-autonomy-"));
 	const oldHome = process.env.HOME;
 	const oldUserProfile = process.env.USERPROFILE;
 	const oldPiTeamsHome = process.env.PI_TEAMS_HOME;
@@ -29,7 +29,7 @@ test("autonomy action shows and toggles autonomous config", async () => {
 		assert.match(text, /Prefer async for long tasks: true/);
 		assert.match(text, /Allow worktree suggestion: false/);
 
-		const configPath = path.join(tmp, ".pi", "agent", "extensions", "pi-teams", "config.json");
+		const configPath = path.join(tmp, ".pi", "agent", "extensions", "pi-crew", "config.json");
 		const raw = JSON.parse(fs.readFileSync(configPath, "utf-8")) as { autonomous?: { enabled?: boolean } };
 		assert.equal(raw.autonomous?.enabled, true);
 	} finally {

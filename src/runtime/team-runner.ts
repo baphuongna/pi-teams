@@ -46,7 +46,7 @@ function writeProgress(manifest: TeamRunManifest, tasks: TeamTaskState[], produc
 		relativePath: "progress.md",
 		producer,
 		content: [
-			`# pi-teams progress ${manifest.runId}`,
+			`# pi-crew progress ${manifest.runId}`,
 			"",
 			`Status: ${manifest.status}`,
 			`Team: ${manifest.team}`,
@@ -115,7 +115,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 		relativePath: "summary.md",
 		producer: "team-runner",
 		content: [
-			`# pi-teams run ${manifest.runId}`,
+			`# pi-crew run ${manifest.runId}`,
 			"",
 			`Status: ${manifest.status}`,
 			`Team: ${manifest.team}`,

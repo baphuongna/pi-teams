@@ -21,7 +21,7 @@ function collectRuns(root: string): TeamRunManifest[] {
 
 export function listRuns(cwd: string): TeamRunManifest[] {
 	const projectRuns = collectRuns(path.join(projectPiRoot(cwd), "teams"));
-	const userRuns = collectRuns(path.join(userPiRoot(), "extensions", "pi-teams", "runs"));
+	const userRuns = collectRuns(path.join(userPiRoot(), "extensions", "pi-crew", "runs"));
 	const byId = new Map<string, TeamRunManifest>();
 	for (const run of [...userRuns, ...projectRuns]) byId.set(run.runId, run);
 	return [...byId.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));

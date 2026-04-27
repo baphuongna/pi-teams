@@ -1,4 +1,4 @@
-# pi-teams Resource Formats
+# pi-crew Resource Formats
 
 ## Agent files
 

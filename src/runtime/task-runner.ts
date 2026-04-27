@@ -23,7 +23,7 @@ export interface TaskRunnerInput {
 
 function renderTaskPrompt(manifest: TeamRunManifest, step: WorkflowStep, task: TeamTaskState): string {
 	return [
-		"# pi-teams Worker Runtime Context",
+		"# pi-crew Worker Runtime Context",
 		`Run ID: ${manifest.runId}`,
 		`Team: ${manifest.team}`,
 		`Workflow: ${manifest.workflow ?? "(none)"}`,

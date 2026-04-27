@@ -64,7 +64,7 @@ export function validateResources(cwd: string): ValidationReport {
 
 export function formatValidationReport(report: ValidationReport): string {
 	const lines = [
-		"pi-teams resource validation:",
+		"pi-crew resource validation:",
 		`Agents: ${report.agents}`,
 		`Teams: ${report.teams}`,
 		`Workflows: ${report.workflows}`,

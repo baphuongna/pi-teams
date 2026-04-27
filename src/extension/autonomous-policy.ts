@@ -34,7 +34,7 @@ export function buildAutonomousPolicy(prompt: string, config: PiTeamsAutonomousC
 		? "Do not suggest worktree mode unless the user explicitly asks for it."
 		: "Consider workspaceMode: 'worktree' for parallel or risky code-changing work in clean git repositories.";
 	return [
-		"# pi-teams Autonomous Delegation Policy",
+		"# pi-crew Autonomous Delegation Policy",
 		"",
 		`Autonomy profile: ${effective.profile}.`,
 		"You have access to the `team` tool for coordinated multi-agent work. Use it proactively when the task benefits from specialized roles, planning, review, verification, durable artifacts, async execution, or worktree isolation.",
@@ -62,7 +62,7 @@ export function buildAutonomousPolicy(prompt: string, config: PiTeamsAutonomousC
 		"",
 		asyncGuidance,
 		worktreeGuidance,
-		intents.length > 0 ? `Detected pi-teams routing keywords/intents in the user prompt: ${intents.join(", ")}. Consider the matching team workflow if appropriate.` : "No explicit pi-teams magic keyword was detected; decide based on task complexity and risk.",
+		intents.length > 0 ? `Detected pi-crew routing keywords/intents in the user prompt: ${intents.join(", ")}. Consider the matching team workflow if appropriate.` : "No explicit pi-crew magic keyword was detected; decide based on task complexity and risk.",
 	].join("\n");
 }
 
@@ -92,7 +92,7 @@ export function buildResourceRoutingGuidance(cwd: string, maxChars = 5000): stri
 	const workflows = allWorkflows(discoverWorkflows(cwd)).sort((a, b) => sourcePriority(a.source) - sourcePriority(b.source)).slice(0, 12);
 	const agents = allAgents(discoverAgents(cwd)).sort((a, b) => sourcePriority(a.source) - sourcePriority(b.source)).slice(0, 16);
 	const lines = [
-		"# pi-teams Available Resources",
+		"# pi-crew Available Resources",
 		"Use project-scoped resources over user/builtin resources when names overlap.",
 		"Teams:",
 		...(teams.length ? teams.map((team) => `- ${team.name} (${team.source}): ${team.description}; defaultWorkflow=${team.defaultWorkflow ?? "default"}; roles=${team.roles.map((role) => `${role.name}->${role.agent}`).join(", ") || "none"}${team.routing?.triggers?.length ? `; triggers=${team.routing.triggers.join(",")}` : ""}${team.routing?.useWhen?.length ? `; useWhen=${team.routing.useWhen.join(";")}` : ""}`) : ["- (none)"]),

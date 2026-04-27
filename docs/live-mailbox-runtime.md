@@ -1,6 +1,6 @@
 # Live Mailbox Runtime Direction
 
-`pi-teams` currently uses workflow child-process orchestration: a run materializes tasks, executes them through the scheduler, writes artifacts/events, and optionally launches child Pi workers.
+`pi-crew` currently uses workflow child-process orchestration: a run materializes tasks, executes them through the scheduler, writes artifacts/events, and optionally launches child Pi workers.
 
 A full live mailbox runtime is intentionally out of scope for the current stable surface. Current foundational mailbox files are intentionally simple and local:
 

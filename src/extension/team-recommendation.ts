@@ -155,7 +155,7 @@ export function recommendTeam(goal: string, config: PiTeamsAutonomousConfig = {}
 
 export function formatRecommendation(goal: string, recommendation: TeamRecommendation): string {
 	return [
-		"pi-teams recommendation:",
+		"pi-crew recommendation:",
 		`Goal: ${goal}`,
 		`Action: ${recommendation.action}`,
 		`Team: ${recommendation.team}`,

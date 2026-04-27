@@ -1,6 +1,6 @@
 export function piTeamsHelp(): string {
 	return [
-		"pi-teams commands:",
+		"pi-crew commands:",
 		"",
 		"Core:",
 		"- Agent can use the `team` tool autonomously; slash commands are manual controls.",

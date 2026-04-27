@@ -8,7 +8,7 @@ import { allTeams, discoverTeams } from "../../src/teams/discover-teams.ts";
 import { recommendTeam } from "../../src/extension/team-recommendation.ts";
 
 test("routing metadata is parsed and used by recommendation", () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-routing-meta-"));
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-routing-meta-"));
 	try {
 		fs.mkdirSync(path.join(cwd, ".pi", "agents"), { recursive: true });
 		fs.mkdirSync(path.join(cwd, ".pi", "teams"), { recursive: true });

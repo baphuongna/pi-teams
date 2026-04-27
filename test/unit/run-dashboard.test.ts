@@ -32,7 +32,7 @@ test("RunDashboard renders and selects runs", () => {
 		selected = selection;
 	});
 	const lines = dashboard.render(80);
-	assert.ok(lines.some((line) => line.includes("pi-teams dashboard")));
+	assert.ok(lines.some((line) => line.includes("pi-crew dashboard")));
 	assert.ok(lines.some((line) => line.includes("Runs: 2")));
 	assert.ok(lines.some((line) => line.includes("Selected: team_a")));
 	assert.ok(lines.some((line) => line.includes("team_a")));
@@ -42,7 +42,7 @@ test("RunDashboard renders and selects runs", () => {
 });
 
 test("RunDashboard renders progress preview", () => {
-	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-dashboard-progress-"));
+	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-dashboard-progress-"));
 	try {
 		const progressPath = path.join(tmp, "progress.md");
 		fs.writeFileSync(progressPath, "# Progress\nTask counts: completed=1\n", "utf-8");

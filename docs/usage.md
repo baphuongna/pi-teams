@@ -1,17 +1,17 @@
-# pi-teams Usage
+# pi-crew Usage
 
 ## Config
 
 Optional config path:
 
 ```text
-~/.pi/agent/extensions/pi-teams/config.json
+~/.pi/agent/extensions/pi-crew/config.json
 ```
 
 Create a default config:
 
 ```bash
-node ./pi-teams/install.mjs
+node ./pi-crew/install.mjs
 ```
 
 Supported fields:
@@ -35,7 +35,7 @@ Supported fields:
 ## Local Pi smoke test
 
 ```bash
-cd pi-teams
+cd pi-crew
 npm run smoke:pi
 ```
 
@@ -49,7 +49,7 @@ Then open Pi and run:
 
 ## Safe run
 
-By default, `pi-teams` does not launch child workers. It creates a durable run, prompts, placeholder results, events, and artifacts.
+By default, `pi-crew` does not launch child workers. It creates a durable run, prompts, placeholder results, events, and artifacts.
 
 ```json
 {

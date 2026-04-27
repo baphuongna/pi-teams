@@ -89,7 +89,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	pi.registerTool(tool);
 
 	pi.registerCommand("teams", {
-		description: "List pi-teams teams, workflows, and agents",
+		description: "List pi-crew teams, workflows, and agents",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
 			const result = await handleTeamTool({ action: "list" }, ctx);
 			await notifyCommandResult(ctx, commandText(result));
@@ -97,7 +97,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("team-run", {
-		description: "Manually start a pi-teams run (agent may also use the team tool autonomously)",
+		description: "Manually start a pi-crew run (agent may also use the team tool autonomously)",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const result = await handleTeamTool(parseRunArgs(args), ctx);
 			await notifyCommandResult(ctx, commandText(result));
@@ -105,7 +105,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("team-status", {
-		description: "Show pi-teams run status",
+		description: "Show pi-crew run status",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const runId = args.trim() || undefined;
 			const result = await handleTeamTool({ action: "status", runId }, ctx);
@@ -114,7 +114,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("team-resume", {
-		description: "Resume a pi-teams run by re-queueing failed/cancelled/skipped/running tasks",
+		description: "Resume a pi-crew run by re-queueing failed/cancelled/skipped/running tasks",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const runId = args.trim() || undefined;
 			const result = await handleTeamTool({ action: "resume", runId }, ctx);
@@ -123,7 +123,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("team-summary", {
-		description: "Show pi-teams run summary",
+		description: "Show pi-crew run summary",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const runId = args.trim() || undefined;
 			const result = await handleTeamTool({ action: "summary", runId }, ctx);
@@ -132,7 +132,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("team-events", {
-		description: "Show full pi-teams event log for a run",
+		description: "Show full pi-crew event log for a run",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const runId = args.trim() || undefined;
 			const result = await handleTeamTool({ action: "events", runId }, ctx);
@@ -141,7 +141,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("team-artifacts", {
-		description: "List pi-teams artifacts for a run",
+		description: "List pi-crew artifacts for a run",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const runId = args.trim() || undefined;
 			const result = await handleTeamTool({ action: "artifacts", runId }, ctx);
@@ -150,7 +150,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("team-worktrees", {
-		description: "List pi-teams worktrees for a run",
+		description: "List pi-crew worktrees for a run",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const runId = args.trim() || undefined;
 			const result = await handleTeamTool({ action: "worktrees", runId }, ctx);
@@ -159,7 +159,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("team-api", {
-		description: "Run safe pi-teams API interop operations: <runId> <operation> [key=value]",
+		description: "Run safe pi-crew API interop operations: <runId> <operation> [key=value]",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const tokens = args.trim().split(/\s+/).filter(Boolean);
 			const runId = tokens.find((token) => !token.includes("=") && !token.startsWith("--"));
@@ -175,7 +175,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("team-imports", {
-		description: "List imported pi-teams run bundles",
+		description: "List imported pi-crew run bundles",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
 			const result = await handleTeamTool({ action: "imports" }, ctx);
 			await notifyCommandResult(ctx, commandText(result));
@@ -183,7 +183,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("team-import", {
-		description: "Import a pi-teams run-export.json bundle into local imports",
+		description: "Import a pi-crew run-export.json bundle into local imports",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const tokens = args.trim().split(/\s+/).filter(Boolean);
 			const pathArg = tokens.find((token) => !token.startsWith("--"));
@@ -194,7 +194,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("team-export", {
-		description: "Export a pi-teams run bundle to artifacts/export",
+		description: "Export a pi-crew run bundle to artifacts/export",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const runId = args.trim() || undefined;
 			const result = await handleTeamTool({ action: "export", runId }, ctx);
@@ -203,7 +203,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("team-prune", {
-		description: "Prune old finished pi-teams runs, keeping the newest N",
+		description: "Prune old finished pi-crew runs, keeping the newest N",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const tokens = args.trim().split(/\s+/).filter(Boolean);
 			const keepToken = tokens.find((token) => token.startsWith("--keep="));
@@ -215,7 +215,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("team-forget", {
-		description: "Forget a pi-teams run by deleting its state and artifacts",
+		description: "Forget a pi-crew run by deleting its state and artifacts",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const tokens = args.trim().split(/\s+/).filter(Boolean);
 			const runId = tokens.find((token) => !token.startsWith("--"));
@@ -227,7 +227,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("team-cleanup", {
-		description: "Clean up pi-teams worktrees for a run",
+		description: "Clean up pi-crew worktrees for a run",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const tokens = args.trim().split(/\s+/).filter(Boolean);
 			const runId = tokens.find((token) => !token.startsWith("--"));
@@ -238,12 +238,12 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("team-manager", {
-		description: "Open a simple pi-teams interactive manager",
+		description: "Open a simple pi-crew interactive manager",
 		handler: handleTeamManagerCommand,
 	});
 
 	pi.registerCommand("team-dashboard", {
-		description: "Open a pi-teams run dashboard overlay",
+		description: "Open a pi-crew run dashboard overlay",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
 			for (;;) {
 				const runs = listRuns(ctx.cwd).slice(0, 50);
@@ -263,7 +263,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("team-init", {
-		description: "Initialize project-local pi-teams directories and gitignore entries",
+		description: "Initialize project-local pi-crew directories and gitignore entries",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const tokens = args.trim().split(/\s+/).filter(Boolean);
 			const result = await handleTeamTool({ action: "init", config: { copyBuiltins: tokens.includes("--copy-builtins"), overwrite: tokens.includes("--overwrite") } }, ctx);
@@ -272,7 +272,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("team-autonomy", {
-		description: "Show or toggle pi-teams autonomous delegation policy: status|on|off",
+		description: "Show or toggle pi-crew autonomous delegation policy: status|on|off",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const tokens = args.trim().split(/\s+/).filter(Boolean);
 			const mode = tokens[0]?.toLowerCase();
@@ -289,7 +289,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("team-config", {
-		description: "Show or update pi-teams config. Use key=value [--project] to update.",
+		description: "Show or update pi-crew config. Use key=value [--project] to update.",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const tokens = args.trim().split(/\s+/).filter(Boolean);
 			if (tokens.length === 0) {
@@ -316,7 +316,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("team-validate", {
-		description: "Validate pi-teams agents, teams, and workflows",
+		description: "Validate pi-crew agents, teams, and workflows",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
 			const result = await handleTeamTool({ action: "validate" }, ctx);
 			await notifyCommandResult(ctx, commandText(result));
@@ -324,14 +324,14 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("team-help", {
-		description: "Show pi-teams command help",
+		description: "Show pi-crew command help",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
 			await notifyCommandResult(ctx, piTeamsHelp());
 		},
 	});
 
 	pi.registerCommand("team-cancel", {
-		description: "Cancel a pi-teams run",
+		description: "Cancel a pi-crew run",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const runId = args.trim() || undefined;
 			const result = await handleTeamTool({ action: "cancel", runId }, ctx);
@@ -340,7 +340,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("team-doctor", {
-		description: "Check pi-teams installation and discovery readiness",
+		description: "Check pi-crew installation and discovery readiness",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
 			const result = await handleTeamTool({ action: "doctor" }, ctx);
 			await notifyCommandResult(ctx, commandText(result));

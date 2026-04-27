@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
 
 test("doctor child smoke is opt-in and reports failure cleanly without throwing", async () => {
-	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-teams-doctor-smoke-"));
+	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-doctor-smoke-"));
 	const previousPiBin = process.env.PI_TEAMS_PI_BIN;
 	try {
 		const failingPi = path.join(tmp, "pi-fail.mjs");
