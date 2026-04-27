@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { runChildPi } from "../../src/runtime/child-pi.ts";
+import { buildChildPiSpawnOptions, runChildPi } from "../../src/runtime/child-pi.ts";
 import { collectDependencyOutputContext, renderDependencyOutputContext } from "../../src/runtime/task-output-context.ts";
 import { readCrewAgents } from "../../src/runtime/crew-agent-records.ts";
 import { createRunManifest } from "../../src/state/state-store.ts";
@@ -29,6 +29,12 @@ const workflow: WorkflowConfig = {
 		{ id: "plan", role: "planner", task: "Plan", dependsOn: ["explore"], reads: ["context.md"] },
 	],
 };
+
+test("child Pi spawn options hide Windows console windows", () => {
+	const options = buildChildPiSpawnOptions("/tmp/project", { PATH: process.env.PATH ?? "" });
+	assert.equal(options.windowsHide, true);
+	assert.deepEqual(options.stdio, ["ignore", "pipe", "pipe"]);
+});
 
 test("child Pi runtime writes JSONL transcript callbacks", async () => {
 	const previous = process.env.PI_TEAMS_MOCK_CHILD_PI;

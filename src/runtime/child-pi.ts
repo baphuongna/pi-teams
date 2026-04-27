@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentConfig } from "../agents/agent-config.ts";
@@ -64,6 +64,16 @@ export interface ChildPiRunResult {
 	stdout: string;
 	stderr: string;
 	error?: string;
+}
+
+export function buildChildPiSpawnOptions(cwd: string, env: NodeJS.ProcessEnv): SpawnOptions {
+	return {
+		cwd,
+		env,
+		stdio: ["ignore", "pipe", "pipe"],
+		detached: process.platform !== "win32",
+		windowsHide: true,
+	};
 }
 
 function appendTranscript(input: ChildPiRunInput, line: string): void {
@@ -225,12 +235,7 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 	const spawnSpec = getPiSpawnCommand(built.args);
 	try {
 		return await new Promise<ChildPiRunResult>((resolve) => {
-			const child = spawn(spawnSpec.command, spawnSpec.args, {
-				cwd: input.cwd,
-				env: { ...process.env, ...built.env },
-				stdio: ["ignore", "pipe", "pipe"],
-				detached: process.platform !== "win32",
-			});
+			const child = spawn(spawnSpec.command, spawnSpec.args, buildChildPiSpawnOptions(input.cwd, { ...process.env, ...built.env }));
 			if (child.pid) activeChildProcesses.set(child.pid, child);
 			let stdout = "";
 			let stderr = "";

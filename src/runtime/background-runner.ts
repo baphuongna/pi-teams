@@ -7,6 +7,7 @@ import { loadConfig } from "../config/config.ts";
 import { executeTeamRun } from "./team-runner.ts";
 import { resolveCrewRuntime } from "./runtime-resolver.ts";
 import { directTeamAndWorkflowFromRun } from "./direct-run.ts";
+import { expandParallelResearchWorkflow } from "./parallel-research.ts";
 
 function argValue(name: string): string | undefined {
 	const index = process.argv.indexOf(name);
@@ -29,8 +30,9 @@ async function main(): Promise<void> {
 		const direct = directTeamAndWorkflowFromRun(manifest, tasks, agents);
 		const team = direct?.team ?? allTeams(discoverTeams(cwd)).find((candidate) => candidate.name === manifest.team);
 		if (!team) throw new Error(`Team '${manifest.team}' not found.`);
-		const workflow = direct?.workflow ?? allWorkflows(discoverWorkflows(cwd)).find((candidate) => candidate.name === manifest.workflow);
-		if (!workflow) throw new Error(`Workflow '${manifest.workflow ?? ""}' not found.`);
+		const baseWorkflow = direct?.workflow ?? allWorkflows(discoverWorkflows(cwd)).find((candidate) => candidate.name === manifest.workflow);
+		if (!baseWorkflow) throw new Error(`Workflow '${manifest.workflow ?? ""}' not found.`);
+		const workflow = expandParallelResearchWorkflow(baseWorkflow, cwd);
 		const loadedConfig = loadConfig(cwd);
 		const runtime = await resolveCrewRuntime(loadedConfig.config);
 		const executeWorkers = runtime.kind !== "scaffold";

@@ -5,7 +5,7 @@ import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { allAgents, discoverAgents } from "../agents/discover-agents.ts";
 import { allTeams, discoverTeams } from "../teams/discover-teams.ts";
 import { allWorkflows, discoverWorkflows } from "../workflows/discover-workflows.ts";
-import type { WorkflowConfig, WorkflowStep } from "../workflows/workflow-config.ts";
+import type { WorkflowConfig } from "../workflows/workflow-config.ts";
 import { effectiveAutonomousConfig, loadConfig, updateAutonomousConfig, updateConfig, type PiTeamsAutonomousConfig, type PiTeamsConfig } from "../config/config.ts";
 import { projectPiRoot, userPiRoot } from "../utils/paths.ts";
 import type { TeamToolParamsValue } from "../schema/team-tool-schema.ts";
@@ -47,6 +47,7 @@ import { appendLiveAgentControlRequest } from "../runtime/live-agent-control.ts"
 import { liveControlRealtimeMessage, publishLiveControlRealtime } from "../runtime/live-control-realtime.ts";
 import { formatTaskGraphLines, waitingReason } from "../runtime/task-display.ts";
 import { directTeamAndWorkflowFromRun } from "../runtime/direct-run.ts";
+import { expandParallelResearchWorkflow } from "../runtime/parallel-research.ts";
 
 export interface TeamToolDetails {
 	action: string;
@@ -170,48 +171,6 @@ function commandExists(command: string, args: string[]): { ok: boolean; detail: 
 	const output = spawnSync(command, args, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
 	if (!output.error && output.status === 0) return { ok: true, detail: firstOutputLine(output.stdout, output.stderr) };
 	return { ok: false, detail: output.error?.message ?? firstOutputLine(output.stdout, output.stderr) };
-}
-
-function sourcePiProjects(cwd: string): string[] {
-	const sourceDir = path.join(cwd, "Source");
-	try {
-		return fs.readdirSync(sourceDir, { withFileTypes: true })
-			.filter((entry) => entry.isDirectory() && entry.name.startsWith("pi-"))
-			.map((entry) => `Source/${entry.name}`)
-			.sort();
-	} catch {
-		return [];
-	}
-}
-
-function chunkProjects(projects: string[], target = 4): string[][] {
-	const chunks = Array.from({ length: Math.min(Math.max(1, target), Math.max(1, projects.length)) }, () => [] as string[]);
-	projects.forEach((project, index) => chunks[index % chunks.length]!.push(project));
-	return chunks.filter((chunk) => chunk.length > 0);
-}
-
-function expandParallelResearchWorkflow(workflow: WorkflowConfig, cwd: string): WorkflowConfig {
-	if (workflow.name !== "parallel-research") return workflow;
-	const projects = sourcePiProjects(cwd);
-	if (projects.length === 0) return workflow;
-	const chunks = chunkProjects(projects, Math.min(6, Math.max(4, Math.ceil(projects.length / 4))));
-	const exploreSteps: WorkflowStep[] = chunks.map((paths, index) => ({
-		id: `explore-shard-${index + 1}`,
-		role: "explorer",
-		dependsOn: ["discover"],
-		parallelGroup: "explore",
-		reads: paths,
-		task: [`Explore this dynamic shard for: {goal}`, "", "Paths:", ...paths.map((item) => `- ${item}`), "", "Focus on purpose, architecture, runtime/UI patterns, package config, docs, and lessons for pi-crew."].join("\n"),
-	}));
-	return {
-		...workflow,
-		steps: [
-			{ id: "discover", role: "explorer", task: `Discover and validate ${projects.length} pi-* projects for: {goal}\n\nProjects:\n${projects.map((item) => `- ${item}`).join("\n")}` },
-			...exploreSteps,
-			{ id: "synthesize", role: "analyst", dependsOn: exploreSteps.map((step) => step.id), task: "Synthesize all dynamic shard findings. Identify common patterns, gaps, and concrete recommendations." },
-			{ id: "write", role: "writer", dependsOn: ["synthesize"], output: "research-summary.md", task: "Write a concise final summary with evidence, risks, and actionable next steps." },
-		],
-	};
 }
 
 function effectiveRunConfig(base: PiTeamsConfig, rawOverride: unknown): PiTeamsConfig {

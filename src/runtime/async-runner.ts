@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type SpawnOptions } from "node:child_process";
 import { createRequire } from "node:module";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -36,6 +36,16 @@ export interface SpawnBackgroundTeamRunResult {
 	logPath: string;
 }
 
+export function buildBackgroundSpawnOptions(manifest: TeamRunManifest, logFd: number): SpawnOptions {
+	return {
+		cwd: manifest.cwd,
+		detached: true,
+		stdio: ["ignore", logFd, logFd],
+		env: { ...process.env },
+		windowsHide: true,
+	};
+}
+
 export function spawnBackgroundTeamRun(manifest: TeamRunManifest): SpawnBackgroundTeamRunResult {
 	const runnerPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "background-runner.ts");
 	const logPath = path.join(manifest.stateRoot, "background.log");
@@ -43,12 +53,7 @@ export function spawnBackgroundTeamRun(manifest: TeamRunManifest): SpawnBackgrou
 	const logFd = fs.openSync(logPath, "a");
 	const command = getBackgroundRunnerCommand(runnerPath, manifest.cwd, manifest.runId);
 	fs.appendFileSync(logPath, `[pi-crew] background loader=${command.loader}\n`, "utf-8");
-	const child = spawn(process.execPath, command.args, {
-		cwd: manifest.cwd,
-		detached: true,
-		stdio: ["ignore", logFd, logFd],
-		env: { ...process.env },
-	});
+	const child = spawn(process.execPath, command.args, buildBackgroundSpawnOptions(manifest, logFd));
 	child.unref();
 	fs.closeSync(logFd);
 	return { pid: child.pid, logPath };

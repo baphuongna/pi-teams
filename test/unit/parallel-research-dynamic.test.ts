@@ -18,7 +18,8 @@ test("parallel-research dynamically fans out Source/pi-* projects into shard tas
 		assert.ok(loaded);
 		const shardTasks = loaded.tasks.filter((task) => task.stepId?.startsWith("explore-shard-"));
 		assert.equal(shardTasks.length >= 4, true);
-		assert.equal(shardTasks.some((task) => task.dependsOn.includes("discover")), true);
+		assert.equal(shardTasks.every((task) => task.dependsOn.length === 0), true);
+		assert.equal(loaded.tasks.filter((task) => task.status === "completed" && task.role === "explorer").length >= 4, true);
 		assert.equal(loaded.tasks.some((task) => task.stepId === "synthesize" && task.dependsOn.length === shardTasks.length), true);
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
