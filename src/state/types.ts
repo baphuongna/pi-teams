@@ -1,6 +1,7 @@
 import type { TeamRunStatus, TeamTaskStatus } from "./contracts.ts";
 import type { TaskClaimState } from "./task-claims.ts";
 import type { WorkerHeartbeatState } from "../runtime/worker-heartbeat.ts";
+import type { CrewAgentProgress } from "../runtime/crew-agent-runtime.ts";
 export type { TeamRunStatus, TeamTaskStatus } from "./contracts.ts";
 
 export interface ArtifactDescriptor {
@@ -137,12 +138,14 @@ export interface TeamTaskState {
 	promptArtifact?: ArtifactDescriptor;
 	resultArtifact?: ArtifactDescriptor;
 	logArtifact?: ArtifactDescriptor;
+	transcriptArtifact?: ArtifactDescriptor;
 	startedAt?: string;
 	finishedAt?: string;
 	exitCode?: number | null;
 	modelAttempts?: ModelAttemptState[];
 	usage?: UsageState;
 	jsonEvents?: number;
+	agentProgress?: CrewAgentProgress;
 	error?: string;
 	claim?: TaskClaimState;
 	heartbeat?: WorkerHeartbeatState;

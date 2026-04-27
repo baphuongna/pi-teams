@@ -35,7 +35,7 @@ import { formatValidationReport, validateResources } from "./validate-resources.
 import { formatRecommendation, recommendTeam } from "./team-recommendation.ts";
 import { toolResult, type PiTeamsToolResult } from "./tool-result.ts";
 import { touchWorkerHeartbeat } from "../runtime/worker-heartbeat.ts";
-import { readCrewAgents } from "../runtime/crew-agent-records.ts";
+import { agentEventsPath, agentOutputPath, readCrewAgentEvents, readCrewAgentStatus, readCrewAgents } from "../runtime/crew-agent-records.ts";
 import { resolveCrewRuntime } from "../runtime/runtime-resolver.ts";
 import { probeLiveSessionRuntime } from "../runtime/live-session-runtime.ts";
 
@@ -315,7 +315,7 @@ export function handleStatus(params: TeamToolParamsValue, ctx: TeamContext): PiT
 		...(tasks.length ? tasks.map((task) => `- ${task.id} [${task.status}] ${task.role} -> ${task.agent}${task.taskPacket ? ` scope=${task.taskPacket.scope}` : ""}${task.verification ? ` green=${task.verification.observedGreenLevel}/${task.verification.requiredGreenLevel}` : ""}${task.modelAttempts?.length ? ` attempts=${task.modelAttempts.length}` : ""}${task.jsonEvents !== undefined ? ` jsonEvents=${task.jsonEvents}` : ""}${task.usage ? ` usage=${JSON.stringify(task.usage)}` : ""}${task.worktree ? ` worktree=${task.worktree.path}` : ""}${task.error ? ` error=${task.error}` : ""}`) : ["- (none)"]),
 		`Task counts: ${[...counts.entries()].map(([status, count]) => `${status}=${count}`).join(", ") || "none"}`,
 		"Agents:",
-		...(crewAgents.length ? crewAgents.map((agent) => `- ${agent.id} [${agent.status}] ${agent.role} -> ${agent.agent} runtime=${agent.runtime}${agent.toolUses ? ` tools=${agent.toolUses}` : ""}${agent.jsonEvents !== undefined ? ` jsonEvents=${agent.jsonEvents}` : ""}${agent.error ? ` error=${agent.error}` : ""}`) : ["- (none)"]),
+		...(crewAgents.length ? crewAgents.map((agent) => `- ${agent.id} [${agent.status}] ${agent.role} -> ${agent.agent} runtime=${agent.runtime}${agent.progress?.currentTool ? ` tool=${agent.progress.currentTool}` : ""}${agent.toolUses ? ` tools=${agent.toolUses}` : ""}${agent.progress?.tokens ? ` tokens=${agent.progress.tokens}` : ""}${agent.progress?.turns ? ` turns=${agent.progress.turns}` : ""}${agent.jsonEvents !== undefined ? ` jsonEvents=${agent.jsonEvents}` : ""}${agent.statusPath ? ` status=${agent.statusPath}` : ""}${agent.error ? ` error=${agent.error}` : ""}`) : ["- (none)"]),
 		"Policy decisions:",
 		...(manifest.policyDecisions?.length ? manifest.policyDecisions.map((item) => `- ${item.action} (${item.reason})${item.taskId ? ` ${item.taskId}` : ""}: ${item.message}`) : ["- (none)"]),
 		`Total usage: ${formatUsage(totalUsage)}`,
@@ -587,6 +587,27 @@ export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): 
 		const task = loaded.tasks.find((item) => item.id === agent.taskId);
 		const text = task?.resultArtifact && fs.existsSync(task.resultArtifact.path) ? fs.readFileSync(task.resultArtifact.path, "utf-8") : JSON.stringify(agent, null, 2);
 		return result(text, { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+	}
+	if (operation === "read-agent-status") {
+		const agentId = typeof cfg.agentId === "string" ? cfg.agentId : undefined;
+		const agent = agentId ? readCrewAgents(loaded.manifest).find((item) => item.id === agentId || item.taskId === agentId) : undefined;
+		const status = agent ? readCrewAgentStatus(loaded.manifest, agent.taskId) ?? agent : undefined;
+		if (!status) return result("API read-agent-status requires config.agentId matching an agent id or task id.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
+		return result(JSON.stringify(status, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+	}
+	if (operation === "read-agent-events") {
+		const agentId = typeof cfg.agentId === "string" ? cfg.agentId : undefined;
+		const agent = readCrewAgents(loaded.manifest).find((item) => item.id === agentId || item.taskId === agentId);
+		if (!agent) return result("API read-agent-events requires config.agentId matching an agent id or task id.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
+		return result(JSON.stringify({ path: agentEventsPath(loaded.manifest, agent.taskId), events: readCrewAgentEvents(loaded.manifest, agent.taskId) }, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+	}
+	if (operation === "read-agent-transcript") {
+		const agentId = typeof cfg.agentId === "string" ? cfg.agentId : undefined;
+		const agent = readCrewAgents(loaded.manifest).find((item) => item.id === agentId || item.taskId === agentId);
+		if (!agent) return result("API read-agent-transcript requires config.agentId matching an agent id or task id.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
+		const transcriptPath = agent.transcriptPath && fs.existsSync(agent.transcriptPath) ? agent.transcriptPath : agentOutputPath(loaded.manifest, agent.taskId);
+		const text = fs.existsSync(transcriptPath) ? fs.readFileSync(transcriptPath, "utf-8") : "";
+		return result(text || `(no transcript at ${transcriptPath})`, { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
 	}
 	if (operation === "steer-agent" || operation === "stop-agent" || operation === "resume-agent") {
 		const runtime = await resolveCrewRuntime(loadConfig(ctx.cwd).config);
