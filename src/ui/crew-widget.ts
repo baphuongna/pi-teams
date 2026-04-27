@@ -1,6 +1,6 @@
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { listRuns } from "../extension/run-index.ts";
-import { isActiveRunStatus } from "../runtime/process-status.ts";
+import { isDisplayActiveRun, isLikelyOrphanedActiveRun } from "../runtime/process-status.ts";
 import { readCrewAgents } from "../runtime/crew-agent-records.ts";
 import type { CrewAgentRecord } from "../runtime/crew-agent-runtime.ts";
 import type { TeamRunManifest } from "../state/types.ts";
@@ -62,6 +62,7 @@ function agentStats(agent: CrewAgentRecord): string {
 }
 
 function runStep(run: TeamRunManifest, agents: CrewAgentRecord[]): string {
+	if (isLikelyOrphanedActiveRun(run, agents)) return "stale";
 	const running = agents.find((agent) => agent.status === "running");
 	if (running) return running.taskId;
 	const queued = agents.find((agent) => agent.status === "queued");
@@ -69,10 +70,15 @@ function runStep(run: TeamRunManifest, agents: CrewAgentRecord[]): string {
 	return run.status;
 }
 
+function agentsFor(run: TeamRunManifest): CrewAgentRecord[] {
+	try { return readCrewAgents(run); } catch { return []; }
+}
+
 export function buildCrewWidgetLines(cwd: string, frame = 0, maxLines = 8): string[] {
 	const runs = listRuns(cwd).slice(0, 20);
-	const activeRuns = runs.filter((run) => isActiveRunStatus(run.status));
-	const recentRuns = runs.filter((run) => !isActiveRunStatus(run.status)).slice(0, 3);
+	const runAgents = new Map(runs.map((run) => [run.runId, agentsFor(run)]));
+	const activeRuns = runs.filter((run) => isDisplayActiveRun(run, runAgents.get(run.runId) ?? []));
+	const recentRuns = runs.filter((run) => !isDisplayActiveRun(run, runAgents.get(run.runId) ?? [])).slice(0, 3);
 	const shownRuns = [...activeRuns, ...recentRuns];
 	if (!shownRuns.length) return [];
 	const runningGlyph = SPINNER[frame % SPINNER.length] ?? "⠋";
@@ -80,13 +86,13 @@ export function buildCrewWidgetLines(cwd: string, frame = 0, maxLines = 8): stri
 	const activeCount = activeRuns.length;
 	lines.push(`${activeCount ? "●" : "○"} pi-crew · active=${activeCount} recent=${recentRuns.length} · /team-dashboard`);
 	for (const run of shownRuns) {
-		let agents: CrewAgentRecord[] = [];
-		try { agents = readCrewAgents(run); } catch { agents = []; }
+		const agents = runAgents.get(run.runId) ?? [];
+		const stale = isLikelyOrphanedActiveRun(run, agents);
 		const counts = new Map<string, number>();
 		for (const agent of agents) counts.set(agent.status, (counts.get(agent.status) ?? 0) + 1);
-		const countText = [...counts.entries()].map(([status, count]) => `${status}:${count}`).join(" ") || run.status;
-		lines.push(`${glyph(run.status, runningGlyph)} ${run.runId.slice(-8)} ${run.team}/${run.workflow ?? "none"} · ${runStep(run, agents)} · ${countText}`);
-		for (const agent of agents.filter((item) => item.status === "running" || item.status === "queued").slice(0, 2)) {
+		const countText = stale ? "stale queued run" : [...counts.entries()].map(([status, count]) => `${status}:${count}`).join(" ") || run.status;
+		lines.push(`${glyph(stale ? "failed" : run.status, runningGlyph)} ${run.runId.slice(-8)} ${run.team}/${run.workflow ?? "none"} · ${runStep(run, agents)} · ${countText}`);
+		for (const agent of (stale ? [] : agents.filter((item) => item.status === "running" || item.status === "queued").slice(0, 2))) {
 			const stats = agentStats(agent);
 			lines.push(`  ${glyph(agent.status, runningGlyph)} ${agent.taskId} ${agent.role}→${agent.agent} · ${agentActivity(agent)}${stats ? ` · ${stats}` : ""}`);
 		}

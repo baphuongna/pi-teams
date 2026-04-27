@@ -1,8 +1,13 @@
+import type { CrewAgentRecord } from "./crew-agent-runtime.ts";
+import type { TeamRunManifest } from "../state/types.ts";
+
 export interface ProcessLiveness {
 	pid?: number;
 	alive: boolean;
 	detail: string;
 }
+
+const ORPHANED_ACTIVE_RUN_MS = 10 * 60 * 1000;
 
 export function checkProcessLiveness(pid: number | undefined): ProcessLiveness {
 	if (pid === undefined || !Number.isInteger(pid) || pid <= 0) {
@@ -22,4 +27,17 @@ export function checkProcessLiveness(pid: number | undefined): ProcessLiveness {
 
 export function isActiveRunStatus(status: string): boolean {
 	return status === "queued" || status === "planning" || status === "running";
+}
+
+export function isLikelyOrphanedActiveRun(run: TeamRunManifest, agents: CrewAgentRecord[] = [], now = Date.now(), staleMs = ORPHANED_ACTIVE_RUN_MS): boolean {
+	if (!isActiveRunStatus(run.status)) return false;
+	if (run.async?.pid !== undefined) return false;
+	const updatedAt = new Date(run.updatedAt).getTime();
+	if (!Number.isFinite(updatedAt) || now - updatedAt < staleMs) return false;
+	if (agents.length === 0) return run.summary === "Creating workflow prompts and placeholder results.";
+	return agents.every((agent) => agent.status === "queued" && !agent.completedAt && !agent.progress);
+}
+
+export function isDisplayActiveRun(run: TeamRunManifest, agents: CrewAgentRecord[] = [], now = Date.now()): boolean {
+	return isActiveRunStatus(run.status) && !isLikelyOrphanedActiveRun(run, agents, now);
 }

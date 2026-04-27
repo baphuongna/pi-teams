@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
 import { buildCrewWidgetLines, updateCrewWidget, type CrewWidgetState } from "../../src/ui/crew-widget.ts";
 import { saveCrewAgents } from "../../src/runtime/crew-agent-records.ts";
-import { loadRunManifestById } from "../../src/state/state-store.ts";
+import { createRunManifest, loadRunManifestById, saveRunManifest } from "../../src/state/state-store.ts";
 
 test("crew widget renders installed-style run and agent summary lines", async () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-widget-"));
@@ -25,6 +25,23 @@ test("crew widget renders installed-style run and agent summary lines", async ()
 		const loaded = loadRunManifestById(cwd, run.details.runId!)!;
 		saveCrewAgents(loaded.manifest, [{ id: `${loaded.manifest.runId}:01`, runId: loaded.manifest.runId, taskId: "01", agent: "executor", role: "executor", runtime: "child-process", status: "running", startedAt: loaded.manifest.createdAt, progress: { recentTools: [], recentOutput: [], toolCount: 1, currentTool: "bash" } }]);
 		assert.match(buildCrewWidgetLines(cwd, 1).join("\n"), /running command/);
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("crew widget does not count orphaned queued runs as active", () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-widget-stale-"));
+	try {
+		const team = { name: "fast-fix", description: "", roles: [{ name: "explorer", agent: "explorer" }], source: "test", filePath: "builtin" } as never;
+		const workflow = { name: "fast-fix", description: "", steps: [{ id: "explore", role: "explorer" }], source: "test", filePath: "builtin" } as never;
+		const created = createRunManifest({ cwd, team, workflow, goal: "orphan" });
+		const old = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+		saveRunManifest({ ...created.manifest, status: "running", updatedAt: old, summary: "Creating workflow prompts and placeholder results." });
+		saveCrewAgents(created.manifest, [{ id: `${created.manifest.runId}:01`, runId: created.manifest.runId, taskId: "01", agent: "explorer", role: "explorer", runtime: "scaffold", status: "queued", startedAt: old }]);
+		const lines = buildCrewWidgetLines(cwd, 0);
+		assert.match(lines[0]!, /active=0/);
+		assert.match(lines.join("\n"), /stale queued run/);
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}

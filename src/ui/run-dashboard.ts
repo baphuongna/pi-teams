@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import type { TeamRunManifest } from "../state/types.ts";
 import { readCrewAgents } from "../runtime/crew-agent-records.ts";
 import type { CrewAgentRecord } from "../runtime/crew-agent-runtime.ts";
-import { isActiveRunStatus } from "../runtime/process-status.ts";
+import { isDisplayActiveRun, isLikelyOrphanedActiveRun } from "../runtime/process-status.ts";
 
 interface DashboardComponent {
 	invalidate(): void;
@@ -51,7 +51,7 @@ function padVisible(value: string, width: number): string {
 
 function statusIcon(status: string): string {
 	if (status === "completed") return "✓";
-	if (status === "failed") return "✗";
+	if (status === "failed" || status === "stale") return "✗";
 	if (status === "cancelled") return "!";
 	if (status === "running") return "▶";
 	if (status === "blocked") return "■";
@@ -104,19 +104,24 @@ function readAgentPreview(run: TeamRunManifest, maxLines = 5): string[] {
 	}
 }
 
+function agentsFor(run: TeamRunManifest): CrewAgentRecord[] {
+	try { return readCrewAgents(run); } catch { return []; }
+}
+
 function runLabel(run: TeamRunManifest, selected: boolean): string {
-	let agents: CrewAgentRecord[] = [];
-	try { agents = readCrewAgents(run); } catch { agents = []; }
+	const agents = agentsFor(run);
+	const stale = isLikelyOrphanedActiveRun(run, agents);
 	const running = agents.find((agent) => agent.status === "running");
 	const queued = agents.find((agent) => agent.status === "queued");
-	const step = running ? `step ${running.taskId}` : queued ? `queued ${queued.taskId}` : `agents ${agents.length}`;
+	const step = stale ? "orphaned queued run" : running ? `step ${running.taskId}` : queued ? `queued ${queued.taskId}` : `agents ${agents.length}`;
+	const status = stale ? "stale" : run.status;
 	const marker = selected ? "›" : " ";
-	return `${marker} ${statusIcon(run.status)} ${run.runId.slice(-8)} ${run.status} | ${run.team}/${run.workflow ?? "none"} | ${step} | ${run.goal}`;
+	return `${marker} ${statusIcon(status)} ${run.runId.slice(-8)} ${status} | ${run.team}/${run.workflow ?? "none"} | ${step} | ${run.goal}`;
 }
 
 function groupedRuns(runs: TeamRunManifest[]): Array<{ label: string; run?: TeamRunManifest }> {
-	const active = runs.filter((run) => isActiveRunStatus(run.status));
-	const recent = runs.filter((run) => !isActiveRunStatus(run.status));
+	const active = runs.filter((run) => isDisplayActiveRun(run, agentsFor(run)));
+	const recent = runs.filter((run) => !isDisplayActiveRun(run, agentsFor(run)));
 	const rows: Array<{ label: string; run?: TeamRunManifest }> = [];
 	if (active.length) rows.push({ label: "Active" }, ...active.map((run) => ({ label: run.runId, run })));
 	if (recent.length) rows.push({ label: "Recent" }, ...recent.map((run) => ({ label: run.runId, run })));
