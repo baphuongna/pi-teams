@@ -55,6 +55,7 @@ export function createTasksFromWorkflow(runId: string, workflow: WorkflowConfig,
 			status: "queued",
 			dependsOn: dependencies,
 			cwd,
+			model: step.model,
 			graph: {
 				taskId: id,
 				parentId: dependencies[0] ? stepToTaskId.get(dependencies[0]) : undefined,

@@ -6,6 +6,7 @@ import { allWorkflows, discoverWorkflows } from "../workflows/discover-workflows
 import { loadConfig } from "../config/config.ts";
 import { executeTeamRun } from "./team-runner.ts";
 import { resolveCrewRuntime } from "./runtime-resolver.ts";
+import { directTeamAndWorkflowFromRun } from "./direct-run.ts";
 
 function argValue(name: string): string | undefined {
 	const index = process.argv.indexOf(name);
@@ -24,14 +25,15 @@ async function main(): Promise<void> {
 	appendEvent(manifest.eventsPath, { type: "async.started", runId: manifest.runId, data: { pid: process.pid } });
 
 	try {
-		const team = allTeams(discoverTeams(cwd)).find((candidate) => candidate.name === manifest.team);
-		if (!team) throw new Error(`Team '${manifest.team}' not found.`);
-		const workflow = allWorkflows(discoverWorkflows(cwd)).find((candidate) => candidate.name === manifest.workflow);
-		if (!workflow) throw new Error(`Workflow '${manifest.workflow ?? ""}' not found.`);
 		const agents = allAgents(discoverAgents(cwd));
+		const direct = directTeamAndWorkflowFromRun(manifest, tasks, agents);
+		const team = direct?.team ?? allTeams(discoverTeams(cwd)).find((candidate) => candidate.name === manifest.team);
+		if (!team) throw new Error(`Team '${manifest.team}' not found.`);
+		const workflow = direct?.workflow ?? allWorkflows(discoverWorkflows(cwd)).find((candidate) => candidate.name === manifest.workflow);
+		if (!workflow) throw new Error(`Workflow '${manifest.workflow ?? ""}' not found.`);
 		const loadedConfig = loadConfig(cwd);
 		const runtime = await resolveCrewRuntime(loadedConfig.config);
-		const executeWorkers = runtime.kind === "child-process";
+		const executeWorkers = runtime.kind !== "scaffold";
 		const result = await executeTeamRun({ manifest, tasks, team, workflow, agents, executeWorkers, limits: loadedConfig.config.limits, runtime, runtimeConfig: loadedConfig.config.runtime });
 		manifest = result.manifest;
 		tasks = result.tasks;

@@ -1,5 +1,8 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { loadRunManifestById } from "../state/state-store.ts";
 import type { PiTeamsToolResult } from "../extension/tool-result.ts";
+import { projectPiRoot } from "../utils/paths.ts";
 
 export type SubagentStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "error" | "stopped";
 
@@ -42,6 +45,32 @@ interface QueuedSpawn {
 
 const TERMINAL_RUN_STATUS = new Set(["completed", "failed", "cancelled", "blocked"]);
 
+function persistedSubagentPath(cwd: string, id: string): string {
+	return path.join(projectPiRoot(cwd), "teams", "state", "subagents", `${id}.json`);
+}
+
+function serializableRecord(record: SubagentRecord): SubagentRecord {
+	const { promise: _promise, ...rest } = record;
+	return rest;
+}
+
+export function savePersistedSubagentRecord(cwd: string, record: SubagentRecord): void {
+	try {
+		const filePath = persistedSubagentPath(cwd, record.id);
+		fs.mkdirSync(path.dirname(filePath), { recursive: true });
+		fs.writeFileSync(filePath, `${JSON.stringify(serializableRecord(record), null, 2)}\n`, "utf-8");
+	} catch {}
+}
+
+export function readPersistedSubagentRecord(cwd: string, id: string): SubagentRecord | undefined {
+	try {
+		const parsed = JSON.parse(fs.readFileSync(persistedSubagentPath(cwd, id), "utf-8"));
+		return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as SubagentRecord : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 function resultText(result: PiTeamsToolResult): string {
 	return result.content?.map((item) => item.type === "text" ? item.text : "").filter(Boolean).join("\n") ?? "";
 }
@@ -78,6 +107,7 @@ export class SubagentManager {
 			background: options.background,
 		};
 		this.records.set(record.id, record);
+		savePersistedSubagentRecord(options.cwd, record);
 		if (record.status === "queued") {
 			this.queue.push({ record, options, runner, signal });
 			return record;
@@ -155,11 +185,13 @@ export class SubagentManager {
 		if (options.background) this.runningBackground++;
 		record.status = "running";
 		record.startedAt = Date.now();
+		savePersistedSubagentRecord(options.cwd, record);
 		record.promise = (async () => {
 			try {
 				const result = await runner(options, signal);
 				record.runId = detailsRunId(result);
 				record.result = resultText(result);
+				savePersistedSubagentRecord(options.cwd, record);
 				if (result.isError) {
 					record.status = "error";
 					record.error = record.result;
@@ -173,6 +205,7 @@ export class SubagentManager {
 			} finally {
 				if (options.background) this.runningBackground = Math.max(0, this.runningBackground - 1);
 				record.completedAt = record.completedAt ?? Date.now();
+				savePersistedSubagentRecord(options.cwd, record);
 				this.onComplete?.(record);
 				this.drainQueue();
 			}
@@ -194,6 +227,7 @@ export class SubagentManager {
 				record.status = loaded.manifest.status === "completed" ? "completed" : loaded.manifest.status === "cancelled" ? "cancelled" : "failed";
 				record.error = record.status === "completed" ? undefined : loaded.manifest.summary;
 				record.completedAt = Date.now();
+				savePersistedSubagentRecord(cwd, record);
 				return;
 			}
 			await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs));

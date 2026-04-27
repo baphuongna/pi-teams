@@ -142,6 +142,7 @@ export interface TeamTaskState {
 	startedAt?: string;
 	finishedAt?: string;
 	exitCode?: number | null;
+	model?: string;
 	modelAttempts?: ModelAttemptState[];
 	usage?: UsageState;
 	jsonEvents?: number;

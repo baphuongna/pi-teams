@@ -4,6 +4,7 @@ import * as path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { registerPiTeams } from "../../src/extension/register.ts";
+import { readPersistedSubagentRecord, savePersistedSubagentRecord } from "../../src/runtime/subagent-manager.ts";
 
 function createFakePi(options: { throwForTools?: string[] } = {}) {
 	const tools = new Map<string, any>();
@@ -88,6 +89,13 @@ test("registered Agent tool can run a background subagent and join its result", 
 		assert.match(joinedText, /Status: completed/);
 		assert.doesNotMatch(joinedText, /Error: Team workflow completed/);
 		assert.match(joinedText, /Mock JSON success for explorer/);
+		const restarted = createFakePi();
+		registerPiTeams(restarted.api as never);
+		const persisted = await restarted.tools.get("get_subagent_result").execute("call-3", { agent_id: agentId, verbose: true }, undefined, undefined, ctx);
+		assert.match(persisted.content[0]?.text ?? "", /Status: completed/);
+		assert.match(persisted.content[0]?.text ?? "", /Mock JSON success for explorer/);
+		assert.equal(readPersistedSubagentRecord(cwd, agentId)?.resultConsumed, true);
+		restarted.api.events.emit("session_shutdown", {});
 		assert.equal(fake.sentMessages.length, 0, "wait=true marks result consumed and suppresses duplicate follow-up notification");
 	} finally {
 		fake?.api.events.emit("session_shutdown", {});
@@ -95,6 +103,35 @@ test("registered Agent tool can run a background subagent and join its result", 
 		else process.env.PI_TEAMS_EXECUTE_WORKERS = previousExecute;
 		if (previousMock === undefined) delete process.env.PI_TEAMS_MOCK_CHILD_PI;
 		else process.env.PI_TEAMS_MOCK_CHILD_PI = previousMock;
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("get_subagent_result after restart fails fast for unrecoverable running record without run id", async () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-agent-unrecoverable-"));
+	fs.mkdirSync(path.join(cwd, ".pi"));
+	let fake: ReturnType<typeof createFakePi> | undefined;
+	try {
+		const agentId = "agent_unrecoverable_1";
+		savePersistedSubagentRecord(cwd, {
+			id: agentId,
+			type: "reviewer",
+			description: "Interrupted",
+			prompt: "Review",
+			status: "running",
+			startedAt: Date.now(),
+			background: true,
+		});
+		fake = createFakePi();
+		registerPiTeams(fake.api as never);
+		const ctx = fakeCtx(cwd) as never;
+		const result = await fake.tools.get("get_subagent_result").execute("call-unrecoverable", { agent_id: agentId, wait: true, verbose: true }, undefined, undefined, ctx);
+		const text = result.content[0]?.text ?? "";
+		assert.match(text, /Status: error/);
+		assert.match(text, /cannot be recovered after restart/);
+		assert.equal(readPersistedSubagentRecord(cwd, agentId)?.status, "error");
+	} finally {
+		fake?.api.events.emit("session_shutdown", {});
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}
 });

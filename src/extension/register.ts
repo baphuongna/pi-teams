@@ -19,7 +19,7 @@ import { DurableTextViewer, DurableTranscriptViewer } from "../ui/transcript-vie
 import { loadRunManifestById, updateRunStatus } from "../state/state-store.ts";
 import { readCrewAgents } from "../runtime/crew-agent-records.ts";
 import { terminateActiveChildPiProcesses } from "../runtime/child-pi.ts";
-import { SubagentManager, type SubagentRecord, type SubagentSpawnOptions } from "../runtime/subagent-manager.ts";
+import { readPersistedSubagentRecord, savePersistedSubagentRecord, SubagentManager, type SubagentRecord, type SubagentSpawnOptions } from "../runtime/subagent-manager.ts";
 
 function parseRunArgs(args: string): TeamToolParamsValue {
 	const tokens = args.match(/"[^"]*"|'[^']*'|\S+/g)?.map((token) => token.replace(/^['"]|['"]$/g, "")) ?? [];
@@ -107,6 +107,18 @@ function sendFollowUp(pi: ExtensionAPI, content: string): void {
 	const sender = (pi as unknown as { sendMessage?: (message: unknown, options?: unknown) => void }).sendMessage;
 	if (typeof sender !== "function") return;
 	sender.call(pi, { customType: "pi-crew-subagent-notification", content, display: true }, { deliverAs: "followUp", triggerTurn: true });
+}
+
+function refreshPersistedSubagentRecord(ctx: ExtensionContext | ExtensionCommandContext, record: SubagentRecord): SubagentRecord {
+	if (!record.runId) return record;
+	const loaded = loadRunManifestById(ctx.cwd, record.runId);
+	if (!loaded) return record;
+	if (loaded.manifest.status === "completed" || loaded.manifest.status === "failed" || loaded.manifest.status === "cancelled" || loaded.manifest.status === "blocked") {
+		const refreshed = { ...record, status: loaded.manifest.status === "completed" ? "completed" as const : loaded.manifest.status === "cancelled" ? "cancelled" as const : "failed" as const, error: loaded.manifest.status === "completed" ? undefined : loaded.manifest.summary, completedAt: record.completedAt ?? Date.now() };
+		savePersistedSubagentRecord(ctx.cwd, refreshed);
+		return refreshed;
+	}
+	return record;
 }
 
 function formatSubagentRecord(record: SubagentRecord): string {
@@ -338,9 +350,9 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 				agent: spawnOptions.type,
 				goal: spawnOptions.prompt,
 				model: spawnOptions.model,
-				async: false,
+				async: spawnOptions.background,
 				config: spawnOptions.maxTurns ? { runtime: { maxTurns: spawnOptions.maxTurns } } : undefined,
-			}, spawnOptions.background ? { ...ctx, signal: childSignal, startForegroundRun: (run, runId) => startForegroundRun(ctx, run, runId), onRunStarted: (runId) => openLiveSidebar(ctx, runId) } : { ...ctx, signal: childSignal });
+			}, spawnOptions.background ? { ...ctx, signal: childSignal } : { ...ctx, signal: childSignal });
 			const record = subagentManager.spawn(options, runner, options.background ? undefined : signal);
 			if (options.background || record.status === "queued") {
 				return subagentToolResult([`Agent ${record.status === "queued" ? "queued" : "started"}.`, `Agent ID: ${record.id}`, `Type: ${record.type}`, `Description: ${record.description}`, "Use get_subagent_result to retrieve output. Do not duplicate this agent's work."].join("\n"), { agentId: record.id, status: record.status });
@@ -360,18 +372,40 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 			wait: Type.Optional(Type.Boolean({ description: "Wait for completion before returning." })),
 			verbose: Type.Optional(Type.Boolean({ description: "Include status metadata before output." })),
 		}) as never,
-		async execute(_id, params, _signal, _onUpdate, ctx) {
+		async execute(_id, params, signal, _onUpdate, ctx) {
 			const p = params as { agent_id?: string; wait?: boolean; verbose?: boolean };
 			if (!p.agent_id) return subagentToolResult("get_subagent_result requires agent_id.", {}, true);
-			const record = subagentManager.getRecord(p.agent_id);
+			const inMemory = subagentManager.getRecord(p.agent_id);
+			const record = inMemory ?? readPersistedSubagentRecord(ctx.cwd, p.agent_id);
 			if (!record) return subagentToolResult(`Agent not found: ${p.agent_id}`, {}, true);
-			let current = record;
+			let current = refreshPersistedSubagentRecord(ctx, record);
+			if (!inMemory && !current.runId && (current.status === "running" || current.status === "queued")) {
+				current = { ...current, status: "error", error: "Subagent was interrupted before its durable run id was recorded; it cannot be recovered after restart.", completedAt: current.completedAt ?? Date.now() };
+				savePersistedSubagentRecord(ctx.cwd, current);
+			}
 			if (p.wait && (current.status === "running" || current.status === "queued")) {
 				current.resultConsumed = true;
-				current = await subagentManager.waitForRecord(current.id) ?? current;
+				savePersistedSubagentRecord(ctx.cwd, current);
+				const waited = await subagentManager.waitForRecord(current.id);
+				if (waited) current = waited;
+				else {
+					while (current.status === "running" || current.status === "queued") {
+						if (signal?.aborted) {
+							current = { ...current, status: "error", error: "Waiting for subagent result was aborted.", completedAt: Date.now() };
+							savePersistedSubagentRecord(ctx.cwd, current);
+							break;
+						}
+						await new Promise((resolve) => setTimeout(resolve, 1000));
+						current = refreshPersistedSubagentRecord(ctx, current);
+						if (!current.runId) break;
+					}
+				}
 			}
 			const output = readSubagentRunResult(ctx, current);
-			if (current.status !== "running" && current.status !== "queued") current.resultConsumed = true;
+			if (current.status !== "running" && current.status !== "queued") {
+				current.resultConsumed = true;
+				savePersistedSubagentRecord(ctx.cwd, current);
+			}
 			const text = [p.verbose ? formatSubagentRecord(current) : undefined, output ? `${p.verbose ? "\n" : ""}${output}` : current.status === "running" || current.status === "queued" ? "Agent is still running. Use wait=true or check again later." : current.error ?? "No output."].filter((line): line is string => Boolean(line)).join("\n");
 			return subagentToolResult(text, { agentId: current.id, runId: current.runId, status: current.status }, current.status === "failed" || current.status === "error");
 		},
@@ -382,9 +416,9 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		label: "Steer Agent",
 		description: "Send a steering note to a running pi-crew subagent. Live-session steering is planned; child-process runs expose durable status and can be cancelled if needed.",
 		parameters: Type.Object({ agent_id: Type.String(), message: Type.String() }) as never,
-		async execute(_id, params) {
+		async execute(_id, params, _signal, _onUpdate, ctx) {
 			const p = params as { agent_id?: string; message?: string };
-			const record = p.agent_id ? subagentManager.getRecord(p.agent_id) : undefined;
+			const record = p.agent_id ? subagentManager.getRecord(p.agent_id) ?? readPersistedSubagentRecord(ctx.cwd, p.agent_id) : undefined;
 			if (!record) return subagentToolResult(`Agent not found: ${p.agent_id ?? ""}`, {}, true);
 			return subagentToolResult([`Steering request noted for ${record.id}.`, "Current default pi-crew backend is child-process, so mid-turn session.steer is not available yet.", record.runId ? `Use team cancel runId=${record.runId} if the agent must be interrupted.` : undefined].filter((line): line is string => Boolean(line)).join("\n"), { agentId: record.id, runId: record.runId, status: record.status });
 		},

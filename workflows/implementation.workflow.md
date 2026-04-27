@@ -35,4 +35,4 @@ Rules:
 - Use parallel tasks in the same phase only when their work is independent.
 - Later phases depend on all tasks in the previous phase.
 - Include verification/review tasks when implementation is requested.
-- Do not include more than 12 total subagents unless the user explicitly asks for a large crew.
+- Do not include more than 12 total subagents; split or summarize oversized plans instead.
