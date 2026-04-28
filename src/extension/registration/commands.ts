@@ -1,0 +1,208 @@
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { loadConfig } from "../../config/config.ts";
+import { handleTeamTool } from "../team-tool.ts";
+import { piTeamsHelp } from "../help.ts";
+import { handleTeamManagerCommand } from "../team-manager-command.ts";
+import { loadRunManifestById } from "../../state/state-store.ts";
+import type { TeamRunManifest } from "../../state/types.ts";
+import { readCrewAgents } from "../../runtime/crew-agent-records.ts";
+import { AnimatedMascot } from "../../ui/mascot.ts";
+import { RunDashboard, type RunDashboardSelection } from "../../ui/run-dashboard.ts";
+import { DurableTextViewer } from "../../ui/transcript-viewer.ts";
+import { commandText, notifyCommandResult, parseRunArgs, parseScalar, pushUnset, setNestedConfig } from "./command-utils.ts";
+import { openTranscriptViewer, selectAgentTask } from "./viewers.ts";
+import { printTimings, time } from "../../utils/timings.ts";
+
+export interface RegisterTeamCommandsDeps {
+	startForegroundRun: (ctx: ExtensionContext, runner: (signal?: AbortSignal) => Promise<void>, runId?: string) => void;
+	openLiveSidebar: (ctx: ExtensionContext, runId: string) => void;
+	getManifestCache: (cwd: string) => { list(max?: number): TeamRunManifest[] };
+}
+
+export function registerTeamCommands(pi: ExtensionAPI, deps: RegisterTeamCommandsDeps): void {
+	pi.registerCommand("teams", {
+		description: "List pi-crew teams, workflows, and agents",
+		handler: async (_args: string, ctx: ExtensionCommandContext) => {
+			const result = await handleTeamTool({ action: "list" }, ctx);
+			await notifyCommandResult(ctx, commandText(result));
+		},
+	});
+
+	pi.registerCommand("team-run", {
+		description: "Manually start a pi-crew run (agent may also use the team tool autonomously)",
+		handler: async (args: string, ctx: ExtensionCommandContext) => {
+			const result = await handleTeamTool(parseRunArgs(args), { ...ctx, startForegroundRun: (runner, runId) => deps.startForegroundRun(ctx as ExtensionContext, runner, runId), onRunStarted: (runId) => deps.openLiveSidebar(ctx as ExtensionContext, runId) });
+			await notifyCommandResult(ctx, commandText(result));
+		},
+	});
+
+	for (const [name, action, description] of [
+		["team-status", "status", "Show pi-crew run status"],
+		["team-resume", "resume", "Resume a pi-crew run by re-queueing failed/cancelled/skipped/running tasks"],
+		["team-summary", "summary", "Show pi-crew run summary"],
+		["team-events", "events", "Show full pi-crew event log for a run"],
+		["team-artifacts", "artifacts", "List pi-crew artifacts for a run"],
+		["team-worktrees", "worktrees", "List pi-crew worktrees for a run"],
+		["team-export", "export", "Export a pi-crew run bundle to artifacts/export"],
+		["team-cancel", "cancel", "Cancel a pi-crew run"],
+	] as const) {
+		pi.registerCommand(name, { description, handler: async (args: string, ctx: ExtensionCommandContext) => {
+			const runId = args.trim() || undefined;
+			const result = await handleTeamTool({ action, runId }, ctx);
+			await notifyCommandResult(ctx, commandText(result));
+		} });
+	}
+
+	pi.registerCommand("team-api", {
+		description: "Run safe pi-crew API interop operations: <runId> <operation> [key=value]",
+		handler: async (args: string, ctx: ExtensionCommandContext) => {
+			const tokens = args.trim().split(/\s+/).filter(Boolean);
+			const runId = tokens.find((token) => !token.includes("=") && !token.startsWith("--"));
+			const operation = tokens.find((token) => token !== runId && !token.includes("=") && !token.startsWith("--")) ?? "read-manifest";
+			const config: Record<string, unknown> = { operation };
+			for (const token of tokens.filter((item) => item.includes("="))) {
+				const [key, ...rest] = token.split("=");
+				if (key) config[key] = parseScalar(rest.join("="));
+			}
+			const result = await handleTeamTool({ action: "api", runId, config }, ctx);
+			await notifyCommandResult(ctx, commandText(result));
+		},
+	});
+
+	pi.registerCommand("team-imports", { description: "List imported pi-crew run bundles", handler: async (_args: string, ctx: ExtensionCommandContext) => {
+		const result = await handleTeamTool({ action: "imports" }, ctx);
+		await notifyCommandResult(ctx, commandText(result));
+	} });
+
+	pi.registerCommand("team-import", { description: "Import a pi-crew run-export.json bundle into local imports", handler: async (args: string, ctx: ExtensionCommandContext) => {
+		const tokens = args.trim().split(/\s+/).filter(Boolean);
+		const pathArg = tokens.find((token) => !token.startsWith("--"));
+		const scope = tokens.includes("--user") ? "user" : "project";
+		const result = await handleTeamTool({ action: "import", config: { path: pathArg, scope } }, ctx);
+		await notifyCommandResult(ctx, commandText(result));
+	} });
+
+	pi.registerCommand("team-prune", { description: "Prune old finished pi-crew runs, keeping the newest N", handler: async (args: string, ctx: ExtensionCommandContext) => {
+		const tokens = args.trim().split(/\s+/).filter(Boolean);
+		const keepToken = tokens.find((token) => token.startsWith("--keep="));
+		const keep = keepToken ? Number.parseInt(keepToken.slice("--keep=".length), 10) : undefined;
+		const result = await handleTeamTool({ action: "prune", keep, confirm: tokens.includes("--confirm") }, ctx);
+		await notifyCommandResult(ctx, commandText(result));
+	} });
+
+	pi.registerCommand("team-forget", { description: "Forget a pi-crew run by deleting its state and artifacts", handler: async (args: string, ctx: ExtensionCommandContext) => {
+		const tokens = args.trim().split(/\s+/).filter(Boolean);
+		const runId = tokens.find((token) => !token.startsWith("--"));
+		const result = await handleTeamTool({ action: "forget", runId, force: tokens.includes("--force"), confirm: tokens.includes("--confirm") }, ctx);
+		await notifyCommandResult(ctx, commandText(result));
+	} });
+
+	pi.registerCommand("team-cleanup", { description: "Clean up pi-crew worktrees for a run", handler: async (args: string, ctx: ExtensionCommandContext) => {
+		const tokens = args.trim().split(/\s+/).filter(Boolean);
+		const runId = tokens.find((token) => !token.startsWith("--"));
+		const result = await handleTeamTool({ action: "cleanup", runId, force: tokens.includes("--force") }, ctx);
+		await notifyCommandResult(ctx, commandText(result));
+	} });
+
+	pi.registerCommand("team-manager", { description: "Open a simple pi-crew interactive manager", handler: handleTeamManagerCommand });
+
+	pi.registerCommand("team-result", { description: "Open a pi-crew agent result viewer: <runId> [taskId]", handler: async (args: string, ctx: ExtensionCommandContext) => {
+		const [runId, rawTaskId] = args.trim().split(/\s+/).filter(Boolean);
+		const selected = await selectAgentTask(ctx, runId, rawTaskId);
+		const loaded = selected ? loadRunManifestById(ctx.cwd, selected.runId) : undefined;
+		if (ctx.hasUI && loaded) {
+			const agent = readCrewAgents(loaded.manifest).find((item) => item.taskId === selected?.taskId || item.id === selected?.taskId) ?? readCrewAgents(loaded.manifest)[0];
+			const text = agent?.resultArtifactPath ? commandText(await handleTeamTool({ action: "api", runId: selected!.runId, config: { operation: "read-agent-output", agentId: agent.taskId, maxBytes: 64_000 } }, ctx)) : "(no result)";
+			await ctx.ui.custom<undefined>((_tui, theme, _keybindings, done) => new DurableTextViewer("pi-crew result", `${selected!.runId}:${agent?.taskId ?? "unknown"}`, text.split(/\r?\n/), theme, done), { overlay: true, overlayOptions: { width: "90%", maxHeight: "85%", anchor: "center" } });
+			return;
+		}
+		const result = await handleTeamTool({ action: "api", runId, config: { operation: "read-agent-output", agentId: rawTaskId, maxBytes: 64_000 } }, ctx);
+		await notifyCommandResult(ctx, commandText(result));
+	} });
+
+	pi.registerCommand("team-transcript", { description: "Open a pi-crew transcript viewer: <runId> [taskId]", handler: async (args: string, ctx: ExtensionCommandContext) => {
+		const [runId, taskId] = args.trim().split(/\s+/).filter(Boolean);
+		if (await openTranscriptViewer(ctx, runId, taskId)) return;
+		const result = await handleTeamTool({ action: "api", runId, config: { operation: "read-agent-transcript", agentId: taskId } }, ctx);
+		await notifyCommandResult(ctx, commandText(result));
+	} });
+
+	pi.registerCommand("team-dashboard", { description: "Open a pi-crew run dashboard overlay", handler: async (_args: string, ctx: ExtensionCommandContext) => {
+		for (;;) {
+			const runs = deps.getManifestCache(ctx.cwd).list(50);
+			const uiConfig = loadConfig(ctx.cwd).config.ui;
+			const rightPanel = uiConfig?.dashboardPlacement !== "center";
+			const width = rightPanel ? Math.min(90, Math.max(40, uiConfig?.dashboardWidth ?? 56)) : "90%";
+			const selection = await ctx.ui.custom<RunDashboardSelection | undefined>((_tui, theme, _keybindings, done) => new RunDashboard(runs, done, theme, { placement: rightPanel ? "right" : "center", showModel: uiConfig?.showModel, showTokens: uiConfig?.showTokens, showTools: uiConfig?.showTools }), { overlay: true, overlayOptions: rightPanel ? { width, minWidth: 40, maxHeight: "100%", anchor: "top-right", offsetX: 0, offsetY: 0, margin: { top: 0, right: 0, bottom: 0, left: 0 } } : { width, maxHeight: "90%", anchor: "center", margin: 2 } });
+			if (!selection) return;
+			if (selection.action === "reload") continue;
+			if (selection.action === "agent-transcript" && await openTranscriptViewer(ctx, selection.runId)) continue;
+			const result = selection.action === "api" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "read-manifest" } }, ctx) : selection.action === "agents" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "agent-dashboard" } }, ctx) : selection.action === "agent-events" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "read-agent-events", limit: 50 } }, ctx) : selection.action === "agent-output" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "read-agent-output", maxBytes: 32_000 } }, ctx) : selection.action === "agent-transcript" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "read-agent-transcript" } }, ctx) : await handleTeamTool({ action: selection.action, runId: selection.runId }, ctx);
+			await notifyCommandResult(ctx, commandText(result));
+			return;
+		}
+	} });
+
+	pi.registerCommand("team-mascot", { description: "Show an animated mascot splash", handler: async (args: string, ctx: ExtensionCommandContext) => {
+		if (!ctx.hasUI) return;
+		const tokens = args.trim().split(/\s+/).filter(Boolean);
+		const uiConfig = loadConfig(ctx.cwd).config.ui;
+		const styleArg = tokens.find((t) => t === "cat" || t === "armin");
+		const effectArg = tokens.find((t) => ["random", "none", "typewriter", "scanline", "rain", "fade", "crt", "glitch", "dissolve"].includes(t));
+		const style = (styleArg as "cat" | "armin" | undefined) ?? uiConfig?.mascotStyle ?? "cat";
+		const effect = (effectArg as "random" | "none" | "typewriter" | "scanline" | "rain" | "fade" | "crt" | "glitch" | "dissolve" | undefined) ?? uiConfig?.mascotEffect ?? "random";
+		await ctx.ui.custom<undefined>((tui, theme, _keybindings, done) => new AnimatedMascot(theme, () => done(undefined), { frameIntervalMs: style === "armin" ? 33 : 180, autoCloseMs: 7000, requestRender: () => (tui as { requestRender?: () => void }).requestRender?.(), style, effect }), { overlay: true, overlayOptions: { width: style === "armin" ? 48 : 62, maxHeight: "85%", anchor: "center" } });
+	} });
+
+	pi.registerCommand("team-init", { description: "Initialize project-local pi-crew directories and gitignore entries", handler: async (args: string, ctx: ExtensionCommandContext) => {
+		const tokens = args.trim().split(/\s+/).filter(Boolean);
+		const result = await handleTeamTool({ action: "init", config: { copyBuiltins: tokens.includes("--copy-builtins"), overwrite: tokens.includes("--overwrite") } }, ctx);
+		await notifyCommandResult(ctx, commandText(result));
+	} });
+
+	pi.registerCommand("team-autonomy", { description: "Show or toggle pi-crew autonomous delegation policy: status|on|off", handler: async (args: string, ctx: ExtensionCommandContext) => {
+		const tokens = args.trim().split(/\s+/).filter(Boolean);
+		const mode = tokens[0]?.toLowerCase();
+		const config = mode === "on" ? { profile: "suggested", enabled: true, injectPolicy: true } : mode === "off" ? { profile: "manual", enabled: false } : mode === "manual" || mode === "suggested" || mode === "assisted" || mode === "aggressive" ? { profile: mode, enabled: mode !== "manual", injectPolicy: mode !== "manual" } : { preferAsyncForLongTasks: tokens.includes("--prefer-async") ? true : undefined, allowWorktreeSuggestion: tokens.includes("--no-worktree-suggest") ? false : undefined };
+		const result = await handleTeamTool({ action: "autonomy", config }, ctx);
+		await notifyCommandResult(ctx, commandText(result));
+	} });
+
+	pi.registerCommand("team-config", { description: "Show or update pi-crew config. Use key=value [--project] to update.", handler: async (args: string, ctx: ExtensionCommandContext) => {
+		const tokens = args.trim().split(/\s+/).filter(Boolean);
+		if (tokens.length === 0) {
+			const result = await handleTeamTool({ action: "config" }, ctx);
+			await notifyCommandResult(ctx, commandText(result));
+			return;
+		}
+		const config: Record<string, unknown> = { scope: tokens.includes("--project") ? "project" : "user" };
+		for (const token of tokens) {
+			if (token.startsWith("--unset=")) {
+				pushUnset(config, token.slice("--unset=".length));
+				continue;
+			}
+			if (!token.includes("=")) continue;
+			const [key, ...rest] = token.split("=");
+			if (!key) continue;
+			const raw = rest.join("=");
+			if (raw === "unset" || raw === "null") pushUnset(config, key);
+			else setNestedConfig(config, key, parseScalar(raw));
+		}
+		const result = await handleTeamTool({ action: "config", config }, ctx);
+		await notifyCommandResult(ctx, commandText(result));
+	} });
+
+	for (const [name, action, description] of [
+		["team-validate", "validate", "Validate pi-crew agents, teams, and workflows"],
+		["team-doctor", "doctor", "Check pi-crew installation and discovery readiness"],
+	] as const) pi.registerCommand(name, { description, handler: async (_args: string, ctx: ExtensionCommandContext) => {
+		const result = await handleTeamTool({ action }, ctx);
+		await notifyCommandResult(ctx, commandText(result));
+	} });
+
+	pi.registerCommand("team-help", { description: "Show pi-crew command help", handler: async (_args: string, ctx: ExtensionCommandContext) => {
+		await notifyCommandResult(ctx, piTeamsHelp());
+	} });
+	time("register.commands");
+	printTimings();
+}

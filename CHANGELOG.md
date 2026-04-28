@@ -15,6 +15,7 @@
 - Added package snapshot coverage for Phase 6 docs, skills, Pi manifest entries, and the runtime `jiti` dependency.
 - Added `src/subagents/*` consolidation entrypoints for child spawning, background runner commands, and subagent manager APIs.
 - Split `team-tool.ts` actions into focused status, inspect, lifecycle, cancel, and plan modules while preserving public action names.
+- Split `register.ts` lifecycle wiring into command, team-tool, subagent-tool, and artifact-cleanup registration modules.
 
 ### Changed
 

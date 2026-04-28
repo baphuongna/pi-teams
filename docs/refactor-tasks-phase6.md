@@ -45,7 +45,7 @@ Tổng: **22 task / ~6.25 ngày**, có thể ship theo nhiều mini-release (0.1
 | T67 | ✅ Done | adaptive plan repair for malformed JSON, oversized plans, and role aliases |
 | T68 | ✅ Done | `1f92b8a` — persisted model routing metadata |
 | T69 | ✅ Done | `1f92b8a` — agent records carry routing metadata |
-| T70 | ⏳ Pending | `register.ts` modularization chưa triển khai |
+| T70 | ✅ Done | `register.ts` split to ≤200 lines with commands, team tool, subagent tools, artifact cleanup modules |
 | T71 | ✅ Done | `team-tool.ts` split to ≤300 lines with status/inspect/lifecycle/cancel/plan modules |
 | T72 | ⏳ Pending | `task-runner.ts` split chưa triển khai |
 | T73 | 🟡 Partial | `src/subagents/*` consolidation entrypoints added; call-site migration pending |
