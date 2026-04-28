@@ -50,7 +50,7 @@ Tổng: **22 task / ~6.25 ngày**, có thể ship theo nhiều mini-release (0.1
 | T72 | ✅ Done | `task-runner.ts` split to ≤300 lines with prompt/progress/state/live/result helper modules |
 | T73 | ✅ Done | `src/subagents/*` entrypoints added and runtime call-sites migrated |
 | T74 | ✅ Done | live-session APIs routed through `src/subagents/live/*` with dynamic task-runner import |
-| T75 | 🟡 Partial | `1004589` — recursive subagent role/depth permission hardening |
+| T75 | ✅ Done | `1004589` + explicit subagent depth/role spawn tests |
 | T76 | ✅ Done | `f6ece8e` — built-in coding skills |
 | T77 | ✅ Done | `9e54acd` — self-contained architecture docs |
 | T78 | ✅ Done | `9e54acd` — runtime flow docs |

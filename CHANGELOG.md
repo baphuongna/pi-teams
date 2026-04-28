@@ -17,6 +17,7 @@
 - Split `team-tool.ts` actions into focused status, inspect, lifecycle, cancel, and plan modules while preserving public action names.
 - Split `register.ts` lifecycle wiring into command, team-tool, subagent-tool, and artifact-cleanup registration modules.
 - Added async restart recovery integration smoke coverage for stale background pids.
+- Added explicit recursive subagent depth and read-only role spawn-denial tests.
 
 ### Changed
 
