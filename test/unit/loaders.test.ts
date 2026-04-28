@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { CrewBorderedLoader, CountdownTimer } from "../../src/ui/loaders.ts";
 import { asCrewTheme } from "../../src/ui/theme-adapter.ts";
+import { DynamicCrewBorder } from "../../src/ui/dynamic-border.ts";
 
 function wait(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
@@ -26,11 +27,21 @@ test("CrewBorderedLoader signals abort on cancel key", () => {
 	assert.equal(callbackCount, 1, "callback should not fire twice");
 });
 
-test("CountdownTimer emits ticks and calls onExpire exactly once", async () => {
+test("DynamicCrewBorder renders horizontal lines", () => {
+	const border = new DynamicCrewBorder(asCrewTheme(undefined), { color: (value) => value });
+	assert.deepEqual(border.render(20), ["─".repeat(20)]);
+});
+
+test("DynamicCrewBorder supports custom characters", () => {
+	const border = new DynamicCrewBorder(asCrewTheme(undefined), { char: "═", color: (value) => value });
+	assert.deepEqual(border.render(4), ["════"]);
+});
+
+test("CountdownTimer emits one-second ticks and calls onExpire exactly once", async () => {
 	const observed: number[] = [];
 	let expired = 0;
 	const timer = new CountdownTimer({
-		timeoutMs: 120,
+		timeoutMs: 2100,
 		onTick: (seconds: number) => {
 			observed.push(seconds);
 		},
@@ -38,10 +49,9 @@ test("CountdownTimer emits ticks and calls onExpire exactly once", async () => {
 			expired += 1;
 		},
 	});
-	await wait(350);
+	await wait(3300);
 	timer.dispose();
-	assert.ok(observed.length >= 1);
-	assert.ok(observed.at(-1) === 0, `expected last tick to be 0, got ${observed.at(-1)}`);
+	assert.deepEqual(observed, [3, 2, 1, 0]);
 	assert.equal(expired, 1);
 });
 

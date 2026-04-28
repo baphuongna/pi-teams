@@ -9,7 +9,7 @@ import type { ManifestCache } from "../runtime/manifest-cache.ts";
 import { colorForStatus, iconForStatus, type RunStatus } from "./status-colors.ts";
 import { pad, truncate } from "../utils/visual.ts";
 import type { CrewTheme } from "./theme-adapter.ts";
-import { asCrewTheme } from "./theme-adapter.ts";
+import { asCrewTheme, subscribeThemeChange } from "./theme-adapter.ts";
 import { Box, Text } from "./layout-primitives.ts";
 
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -182,6 +182,7 @@ class CrewWidgetComponent implements WidgetComponent {
 	private cachedBaseLines: string[] = [];
 	private cachedTheme: CrewTheme;
 	private manifestCache?: ManifestCache;
+	private readonly unsubscribeTheme: () => void;
 
 	constructor(cwd: string, frame: number, maxLines: number, themeLike: unknown, manifestCache?: ManifestCache) {
 		this.cwd = cwd;
@@ -191,6 +192,7 @@ class CrewWidgetComponent implements WidgetComponent {
 		this.cachedTheme = this.theme;
 		this.manifestCache = manifestCache;
 		this.cacheSignature = "";
+		this.unsubscribeTheme = subscribeThemeChange(themeLike, () => this.invalidate());
 	}
 
 	private buildSignature(runs: WidgetRun[]): string {
@@ -207,6 +209,10 @@ class CrewWidgetComponent implements WidgetComponent {
 		this.cacheSignature = "";
 		this.cachedBaseLines = [];
 		this.cachedLines = [];
+	}
+
+	dispose(): void {
+		this.unsubscribeTheme();
 	}
 
 	render(width: number): string[] {

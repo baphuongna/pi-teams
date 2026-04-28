@@ -10,7 +10,7 @@ import { readJsonFileCoalesced } from "../utils/file-coalescer.ts";
 import { pad, truncate } from "../utils/visual.ts";
 import { iconForStatus } from "./status-colors.ts";
 import type { CrewTheme } from "./theme-adapter.ts";
-import { asCrewTheme } from "./theme-adapter.ts";
+import { asCrewTheme, subscribeThemeChange } from "./theme-adapter.ts";
 import { Box, Text } from "./layout-primitives.ts";
 
 const TASK_READ_TTL_MS = 200;
@@ -57,6 +57,7 @@ export class LiveRunSidebar {
 	private readonly done: Done;
 	private readonly theme: CrewTheme;
 	private readonly config: CrewUiConfig;
+	private readonly unsubscribeTheme: () => void;
 	private cachedLines: string[] = [];
 	private cachedWidth = 0;
 	private cachedSignature = "";
@@ -67,6 +68,7 @@ export class LiveRunSidebar {
 		this.done = input.done;
 		this.theme = asCrewTheme(input.theme);
 		this.config = input.config ?? {};
+		this.unsubscribeTheme = subscribeThemeChange(input.theme, () => this.invalidate());
 	}
 
 	private buildSignature(manifestStatus: string, tasks: TeamTaskState[], agentsCount: number, waitingCount: number): string {
@@ -87,6 +89,10 @@ export class LiveRunSidebar {
 	invalidate(): void {
 		this.cachedLines = [];
 		this.cachedSignature = "";
+	}
+
+	dispose(): void {
+		this.unsubscribeTheme();
 	}
 
 	render(width: number): string[] {

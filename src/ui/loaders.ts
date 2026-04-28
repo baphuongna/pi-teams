@@ -1,6 +1,7 @@
 import { pad, truncate } from "../utils/visual.ts";
 import type { CrewTheme } from "./theme-adapter.ts";
 import { asCrewTheme } from "./theme-adapter.ts";
+import { DynamicCrewBorder } from "./dynamic-border.ts";
 
 export interface BorderedLoaderOptions {
 	message: string;
@@ -71,10 +72,11 @@ export class CrewBorderedLoader {
 		const padWidth = Math.max(0, width - (contentWidth + 4));
 		const leftRightPad = " ".repeat(Math.floor(padWidth / 2));
 		const widthAwareInner = contentWidth + padWidth;
-		const top = `${leftRightPad}┌${"─".repeat(widthAwareInner + 2)}┐`;
-		const line = `${leftRightPad}│ ${truncate(inner, widthAwareInner)} │`;
-		const hint = `${leftRightPad}│${" ".repeat(widthAwareInner + 2)}│`;
-		const bottom = `${leftRightPad}└${"─".repeat(widthAwareInner + 2)}┘`;
+		const border = new DynamicCrewBorder(this.theme).render(widthAwareInner + 2)[0];
+		const top = `${leftRightPad}${this.theme.fg("border", "┌")}${border}${this.theme.fg("border", "┐")}`;
+		const line = `${leftRightPad}${this.theme.fg("border", "│")} ${truncate(inner, widthAwareInner)} ${this.theme.fg("border", "│")}`;
+		const hint = `${leftRightPad}${this.theme.fg("border", "│")}${" ".repeat(widthAwareInner + 2)}${this.theme.fg("border", "│")}`;
+		const bottom = `${leftRightPad}${this.theme.fg("border", "└")}${border}${this.theme.fg("border", "┘")}`;
 		const lineWithHint = optionsHint(this.theme, this.message, widthAwareInner);
 		this.width = width;
 		const lines = [
@@ -128,7 +130,7 @@ export class CountdownTimer {
 			if (seconds <= 0) {
 				this.emitExpire();
 			}
-		}, 250);
+		}, 1000);
 	}
 
 	private emitExpire(): void {

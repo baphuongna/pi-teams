@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { DurableTextViewer, DurableTranscriptViewer, formatTranscriptText, readRunTranscript } from "../../src/ui/transcript-viewer.ts";
 import { saveCrewAgents } from "../../src/runtime/crew-agent-records.ts";
 import type { TeamRunManifest } from "../../src/state/types.ts";
+import type { CrewTheme } from "../../src/ui/theme-adapter.ts";
 
 function manifest(tmp: string): TeamRunManifest {
 	return {
@@ -29,7 +30,25 @@ function manifest(tmp: string): TeamRunManifest {
 
 test("formatTranscriptText formats message and tool JSONL into conversation lines", () => {
 	const text = `${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "hello" }] } })}\n${JSON.stringify({ type: "tool_result", toolName: "bash", text: "ok" })}\n`;
-	assert.deepEqual(formatTranscriptText(text), ["[Assistant]:", "hello", "[Tool: bash] tool_result", "ok"]);
+	assert.deepEqual(formatTranscriptText(text), ["[Assistant]:", "hello", "✓ [Tool: bash] tool_result", "ok"]);
+});
+
+const markerTheme: CrewTheme = {
+	fg: (color, value) => `<${color}>${value}</${color}>`,
+	bold: (value) => value,
+	inverse: (value) => value,
+};
+
+test("formatTranscriptText styles errored tool events", () => {
+	const text = `${JSON.stringify({ type: "tool_result", toolName: "bash", isError: true, text: "boom" })}\n`;
+	const lines = formatTranscriptText(text, markerTheme);
+	assert.equal(lines[0], "<error>✗ [Tool: bash] tool_result</error>");
+});
+
+test("formatTranscriptText styles partial tool events as running", () => {
+	const text = `${JSON.stringify({ type: "tool_result", toolName: "read", isPartial: true, text: "chunk" })}\n`;
+	const lines = formatTranscriptText(text, markerTheme);
+	assert.equal(lines[0], "<accent>⋯ [Tool: read] tool_result</accent>");
 });
 
 test("DurableTranscriptViewer renders transcript overlay and scroll controls", () => {

@@ -2,10 +2,11 @@ import * as fs from "node:fs";
 import type { TeamRunManifest } from "../state/types.ts";
 import { agentOutputPath, readCrewAgents } from "../runtime/crew-agent-records.ts";
 import type { CrewTheme } from "./theme-adapter.ts";
-import { asCrewTheme } from "./theme-adapter.ts";
+import { asCrewTheme, subscribeThemeChange } from "./theme-adapter.ts";
 import { renderDiff } from "./render-diff.ts";
 import { highlightCode, highlightJson } from "./syntax-highlight.ts";
 import { pad, truncate, truncateToVisualLines } from "../utils/visual.ts";
+import { colorForStatus, iconForStatus, type RunStatus } from "./status-colors.ts";
 
 type Component = { invalidate(): void; render(width: number): string[]; handleInput(data: string): void };
 
@@ -64,18 +65,23 @@ export function formatTranscriptEvent(event: unknown, themeLike: unknown = undef
 	const toolName = typeof obj.toolName === "string" ? obj.toolName : typeof obj.name === "string" ? obj.name : undefined;
 	const content = textFromContent(obj.content);
 	if (type && /tool/i.test(type)) {
+		const result = asRecord(obj.result);
+		const isError = obj.isError === true || result?.isError === true;
+		const isPartial = obj.isPartial === true;
+		const status: RunStatus = isError ? "failed" : isPartial ? "running" : "completed";
+		const header = theme.fg(colorForStatus(status), `${iconForStatus(status, { runningGlyph: "⋯" })} [Tool${toolName ? `: ${toolName}` : ""}] ${type}`);
 		const text = (content || (typeof obj.text === "string" ? obj.text : typeof obj.result === "string" ? obj.result : "")).trim();
-		if (!text) return [theme.fg("toolDiffContext", `[Tool${toolName ? `: ${toolName}` : ""}] ${type}`), "(no output)"];
+		if (!text) return [header, "(no output)"];
 		if (isLikelyDiff(text)) {
-			return [theme.fg("toolDiffContext", `[Tool${toolName ? `: ${toolName}` : ""}] ${type}`), renderDiff(text, { theme })];
+			return [header, renderDiff(text, { theme })];
 		}
 		if (text.startsWith("{") && text.endsWith("}")) {
-			return [theme.fg("toolDiffContext", `[Tool${toolName ? `: ${toolName}` : ""}] ${type}`), ...highlightJson(text, theme).split(/\r?\n/).filter(Boolean)];
+			return [header, ...highlightJson(text, theme).split(/\r?\n/).filter(Boolean)];
 		}
 		if (text.includes("```") && text.includes("```")) {
-			return [theme.fg("toolDiffContext", `[Tool${toolName ? `: ${toolName}` : ""}] ${type}`), ...highlightCodeBlocks(text, theme)];
+			return [header, ...highlightCodeBlocks(text, theme)];
 		}
-		return [theme.fg("toolDiffContext", `[Tool${toolName ? `: ${toolName}` : ""}] ${type}`), ...text.split(/\r?\n/).filter(Boolean).map((line) => theme.fg("muted", line))];
+		return [header, ...text.split(/\r?\n/).filter(Boolean).map((line) => theme.fg("muted", line))];
 	}
 	const message = asRecord(obj.message);
 	if (message) {
@@ -176,6 +182,7 @@ export class DurableTextViewer implements Component {
 	private lines: string[];
 	private theme: TranscriptTheme;
 	private done: (result: undefined) => void;
+	private readonly unsubscribeTheme: () => void;
 
 	constructor(title: string, subtitle: string, lines: string[], theme: unknown, done: (result: undefined) => void) {
 		this.title = title;
@@ -183,9 +190,14 @@ export class DurableTextViewer implements Component {
 		this.lines = lines.length ? lines : ["(empty)"];
 		this.theme = asCrewTheme(theme);
 		this.done = done;
+		this.unsubscribeTheme = subscribeThemeChange(theme, () => this.invalidate());
 	}
 
 	invalidate(): void {}
+
+	dispose(): void {
+		this.unsubscribeTheme();
+	}
 
 	handleInput(data: string): void {
 		if (data === "q" || data === "\u001b") {
@@ -233,15 +245,21 @@ export class DurableTranscriptViewer implements Component {
 	private theme: TranscriptTheme;
 	private done: (result: undefined) => void;
 	private taskId?: string;
+	private readonly unsubscribeTheme: () => void;
 
 	constructor(manifest: TeamRunManifest, theme: unknown, done: (result: undefined) => void, taskId?: string) {
 		this.manifest = manifest;
 		this.theme = asCrewTheme(theme);
 		this.done = done;
 		this.taskId = taskId;
+		this.unsubscribeTheme = subscribeThemeChange(theme, () => this.invalidate());
 	}
 
 	invalidate(): void {}
+
+	dispose(): void {
+		this.unsubscribeTheme();
+	}
 
 	handleInput(data: string): void {
 		if (data === "q" || data === "\u001b") {

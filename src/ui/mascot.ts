@@ -1,6 +1,7 @@
 import type { CrewTheme } from "./theme-adapter.ts";
 import { asCrewTheme } from "./theme-adapter.ts";
 import { pad } from "../utils/visual.ts";
+import { DynamicCrewBorder } from "./dynamic-border.ts";
 
 export type MascotStyle = "cat" | "armin";
 export type MascotEffect =
@@ -401,8 +402,9 @@ export class AnimatedMascot {
 			return this.cachedLines;
 		}
 		const safeWidth = Math.max(20, width);
+		const horizontal = new DynamicCrewBorder(this.theme).render(Math.max(0, safeWidth - 2))[0];
 		const result: string[] = [
-			`╭${"─".repeat(Math.max(0, safeWidth - 2))}╮`,
+			`${this.theme.fg("border", "╭")}${horizontal}${this.theme.fg("border", "╮")}`,
 			this.formatLine(this.theme.bold(" ARMIN SAYS HI "), safeWidth),
 			this.formatLine("", safeWidth),
 		];
@@ -419,7 +421,7 @@ export class AnimatedMascot {
 			? `Press q or Esc to close · effect: ${this.effect}`
 			: "Press q or Esc to close · animated preview";
 		result.push(this.formatLine(hint, safeWidth, "muted"));
-		result.push(`╰${"─".repeat(Math.max(0, safeWidth - 2))}╯`);
+		result.push(`${this.theme.fg("border", "╰")}${horizontal}${this.theme.fg("border", "╯")}`);
 		this.cachedWidth = safeWidth;
 		this.cachedVersion = this.gridVersion;
 		this.cachedLines = result;

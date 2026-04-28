@@ -1,11 +1,29 @@
 export const ANSI_PATTERN = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 
+const WIDTH_CACHE_LIMIT = 256;
+const widthCache = new Map<string, number>();
+
 export function visibleWidth(value: string): number {
+	const cached = widthCache.get(value);
+	if (cached !== undefined) return cached;
 	let length = 0;
 	for (const char of value.replace(ANSI_PATTERN, "")) {
 		if (char !== "\n") length += 1;
 	}
+	if (widthCache.size >= WIDTH_CACHE_LIMIT) {
+		const firstKey = widthCache.keys().next().value;
+		if (firstKey !== undefined) widthCache.delete(firstKey);
+	}
+	widthCache.set(value, length);
 	return length;
+}
+
+export function __test__clearVisibleWidthCache(): void {
+	widthCache.clear();
+}
+
+export function __test__visibleWidthCacheSize(): number {
+	return widthCache.size;
 }
 
 function consumeAnsi(input: string, index: number): number {
@@ -128,14 +146,14 @@ export function truncateToVisualLines(
 	paddingX = 0,
 ): VisualTruncateResult {
 	if (!text) {
-		return { visualLines: [""], skippedCount: 0 };
+		return { visualLines: [], skippedCount: 0 };
 	}
 	const effectiveWidth = Math.max(1, width - paddingX * 2);
+	const limit = Math.max(1, maxVisualLines);
 	const visualLines = text
 		.split("\n")
-		.flatMap((line) => wrapHard(pad(line, Math.max(0, effectiveWidth)).trimEnd(), effectiveWidth).slice(0, Math.max(1, maxVisualLines)))
-		.slice(0);
-	if (visualLines.length <= maxVisualLines) return { visualLines, skippedCount: 0 };
-	const truncated = visualLines.slice(-maxVisualLines);
-	return { visualLines: truncated, skippedCount: visualLines.length - maxVisualLines };
+		.flatMap((line) => wrapHard(pad(line, Math.max(0, effectiveWidth)).trimEnd(), effectiveWidth));
+	if (visualLines.length <= limit) return { visualLines, skippedCount: 0 };
+	const truncated = visualLines.slice(-limit);
+	return { visualLines: truncated, skippedCount: visualLines.length - limit };
 }

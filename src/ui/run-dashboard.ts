@@ -5,10 +5,13 @@ import type { CrewAgentRecord } from "../runtime/crew-agent-runtime.ts";
 import { isDisplayActiveRun, isLikelyOrphanedActiveRun } from "../runtime/process-status.ts";
 import { readJsonFileCoalesced } from "../utils/file-coalescer.ts";
 import type { CrewTheme } from "./theme-adapter.ts";
-import { asCrewTheme } from "./theme-adapter.ts";
+import { asCrewTheme, subscribeThemeChange } from "./theme-adapter.ts";
 import { applyStatusColor, iconForStatus, type RunStatus } from "./status-colors.ts";
 import { pad, truncate } from "../utils/visual.ts";
 import { Box, Text } from "./layout-primitives.ts";
+import { DynamicCrewBorder } from "./dynamic-border.ts";
+import { CrewFooter } from "./crew-footer.ts";
+import { aggregateUsage } from "../state/usage.ts";
 
 interface DashboardComponent {
 	invalidate(): void;
@@ -199,6 +202,7 @@ export class RunDashboard implements DashboardComponent {
 	private cachedWidth = 0;
 	private cachedVersion = "";
 	private cachedLines: string[] = [];
+	private readonly unsubscribeTheme: () => void;
 
 	constructor(
 		runs: TeamRunManifest[],
@@ -210,6 +214,7 @@ export class RunDashboard implements DashboardComponent {
 		this.done = done;
 		this.theme = asCrewTheme(theme);
 		this.options = options;
+		this.unsubscribeTheme = subscribeThemeChange(theme, () => this.invalidate());
 	}
 
 	private buildSignature(): string {
@@ -226,20 +231,25 @@ export class RunDashboard implements DashboardComponent {
 		this.cachedLines = [];
 	}
 
+	dispose(): void {
+		this.unsubscribeTheme();
+	}
+
 	render(width: number): string[] {
 		const signature = this.buildSignature();
 		if (signature !== this.cachedVersion || this.cachedWidth !== width) {
 			const innerWidth = Math.max(20, width - 4);
 			const borderWidth = Math.min(innerWidth, Math.max(0, width - 2));
 			const fg = (color: Parameters<CrewTheme["fg"]>[0], text: string) => this.theme.fg(color, text);
-			const border = (text: string) => fg("border", text);
+			const borderFill = (count: number) => new DynamicCrewBorder(this.theme).render(count)[0];
+			const border = (left: string, right: string) => `${fg("border", left)}${borderFill(borderWidth)}${fg("border", right)}`;
 			
 			const lines = [
-				border(`╭${"─".repeat(borderWidth)}╮`),
+				border("╭", "╮"),
 				`│ ${pad(truncate(`${fg("accent", "▐")} ${this.theme.bold(this.options.placement === "right" ? "pi-crew right sidebar (anchored top-right)" : "pi-crew dashboard")}`, innerWidth - 1), innerWidth - 1)}│`,
 				`│ ${pad(truncate(`Runs: ${this.runs.length} • ${countByStatus(this.runs)}`, innerWidth - 1), innerWidth - 1)}│`,
 				`│ ${pad(truncate(`↑/↓/j/k select • r reload • p progress • s/u/a/i actions • d agents • e/v/o viewers • q close`, innerWidth - 1), innerWidth - 1)}│`,
-				border(`├${"─".repeat(borderWidth)}┤`),
+				border("├", "┤"),
 			];
 			if (this.runs.length === 0) {
 				lines.push(`│ ${pad(truncate("No runs found.", innerWidth - 1), innerWidth - 1)}│`);
@@ -258,7 +268,7 @@ export class RunDashboard implements DashboardComponent {
 				}
 				const selectedRun = selectedRunFromGrouped(this.runs, this.selected);
 				if (selectedRun) {
-					lines.push(border(`├${"─".repeat(borderWidth)}┤`));
+					lines.push(border("├", "┤"));
 					const details = [
 						`Selected: ${selectedRun.runId}`,
 						`Status: ${isLikelyOrphanedActiveRun(selectedRun, agentsFor(selectedRun)) ? "stale" : selectedRun.status} | Team: ${selectedRun.team} | Workflow: ${selectedRun.workflow ?? "none"}`,
@@ -275,9 +285,21 @@ export class RunDashboard implements DashboardComponent {
 					]) {
 						lines.push(`│ ${pad(truncate(detail, innerWidth - 1), innerWidth - 1)}│`);
 					}
+					const selectedTasks = readRunTasks(selectedRun);
+					const footer = new CrewFooter({
+						pwd: selectedRun.cwd,
+						runId: selectedRun.runId,
+						status: isLikelyOrphanedActiveRun(selectedRun, agentsFor(selectedRun)) ? "stale" : selectedRun.status,
+						usage: aggregateUsage(selectedTasks),
+						badges: [`team ${selectedRun.team}`, `workflow ${selectedRun.workflow ?? "none"}`, `${selectedRun.artifacts.length} artifacts`, selectedRun.workspaceMode],
+					}, this.theme);
+					lines.push(border("├", "┤"));
+					for (const footerLine of footer.render(innerWidth - 1)) {
+						lines.push(`│ ${pad(truncate(footerLine, innerWidth - 1), innerWidth - 1)}│`);
+					}
 				}
 			}
-			lines.push(border(`╰${"─".repeat(borderWidth)}╯`));
+			lines.push(border("╰", "╯"));
 			this.cachedLines = renderLines(lines.map((line) => truncate(line, width)), width);
 			this.cachedVersion = signature;
 			this.cachedWidth = width;

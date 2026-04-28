@@ -39,10 +39,15 @@ export interface CrewTheme {
 	inverse?(text: string): string;
 }
 
+function inverseAnsi(text: string): string {
+	return `\u001b[7m${text}\u001b[27m`;
+}
+
 function safeNoopTheme(): CrewTheme {
 	return {
 		fg: (_color, text) => text,
 		bold: (text) => text,
+		inverse: inverseAnsi,
 	};
 }
 
@@ -64,6 +69,101 @@ function asUnaryFn(value: unknown): ((text: string) => string) | undefined {
 	};
 }
 
+function asInverse(value: unknown): (text: string) => string {
+	return asUnaryFn(value) ?? inverseAnsi;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+	return value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
+}
+
+function callMaybeString(fn: unknown): string | undefined {
+	if (typeof fn !== "function") return undefined;
+	try {
+		const result = (fn as () => unknown)();
+		return typeof result === "string" || typeof result === "number" || typeof result === "boolean" ? String(result) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function themeSignature(theme: object): string {
+	const record = theme as Record<string, unknown>;
+	const primitiveEntries = Object.entries(record)
+		.filter(([_key, value]) => value === undefined || value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+		.map(([key, value]) => `${key}:${String(value)}`)
+		.sort();
+	const colorMode = callMaybeString(record.getColorMode);
+	return [colorMode ? `mode:${colorMode}` : undefined, ...primitiveEntries].filter((item): item is string => Boolean(item)).join("|");
+}
+
+type Unsubscribe = () => void;
+
+interface ThemeSourceSubscription {
+	callbacks: Set<() => void>;
+	unsubscribeSource?: Unsubscribe;
+	pollTimer?: ReturnType<typeof setInterval>;
+	lastSignature: string;
+}
+
+const themeSubscriptions = new WeakMap<object, ThemeSourceSubscription>();
+
+function asUnsubscribe(value: unknown): Unsubscribe | undefined {
+	if (typeof value === "function") return value as Unsubscribe;
+	const record = asRecord(value);
+	if (!record) return undefined;
+	if (typeof record.unsubscribe === "function") return () => (record.unsubscribe as () => void)();
+	if (typeof record.dispose === "function") return () => (record.dispose as () => void)();
+	return undefined;
+}
+
+function startThemeSourceSubscription(theme: object, subscription: ThemeSourceSubscription): void {
+	const record = theme as Record<string, unknown>;
+	const emit = () => {
+		for (const callback of [...subscription.callbacks]) callback();
+	};
+	if (typeof record.onThemeChange === "function") {
+		const result = (record.onThemeChange as (callback: () => void) => unknown)(emit);
+		subscription.unsubscribeSource = asUnsubscribe(result);
+		return;
+	}
+	if (typeof record.addEventListener === "function") {
+		(record.addEventListener as (type: string, callback: () => void) => void)("change", emit);
+		if (typeof record.removeEventListener === "function") {
+			subscription.unsubscribeSource = () => (record.removeEventListener as (type: string, callback: () => void) => void)("change", emit);
+		}
+		return;
+	}
+	subscription.pollTimer = setInterval(() => {
+		const nextSignature = themeSignature(theme);
+		if (nextSignature === subscription.lastSignature) return;
+		subscription.lastSignature = nextSignature;
+		emit();
+	}, 1000);
+	subscription.pollTimer.unref?.();
+}
+
+export function subscribeThemeChange(theme: unknown, callback: () => void): () => void {
+	if (!theme || typeof theme !== "object") return () => {};
+	const key = theme;
+	let subscription = themeSubscriptions.get(key);
+	if (!subscription) {
+		subscription = { callbacks: new Set(), lastSignature: themeSignature(key) };
+		themeSubscriptions.set(key, subscription);
+		startThemeSourceSubscription(key, subscription);
+	}
+	subscription.callbacks.add(callback);
+	return () => {
+		const current = themeSubscriptions.get(key);
+		if (!current) return;
+		current.callbacks.delete(callback);
+		if (current.callbacks.size > 0) return;
+		if (current.pollTimer) clearInterval(current.pollTimer);
+		current.unsubscribeSource?.();
+		themeSubscriptions.delete(key);
+	};
+}
+
 export function asCrewTheme(raw: unknown): CrewTheme {
 	const fallback = safeNoopTheme();
 	if (!raw || typeof raw !== "object") return fallback;
@@ -77,6 +177,6 @@ export function asCrewTheme(raw: unknown): CrewTheme {
 		bold,
 		italic: asUnaryFn(record.italic),
 		underline: asUnaryFn(record.underline),
-		inverse: asUnaryFn(record.inverse),
+		inverse: asInverse(record.inverse),
 	};
 }
