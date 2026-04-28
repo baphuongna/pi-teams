@@ -34,6 +34,11 @@ export interface MailboxValidationReport {
 	repaired: string[];
 }
 
+export interface MailboxReplayResult {
+	messages: MailboxMessage[];
+	updatedAt: string;
+}
+
 function mailboxDir(manifest: TeamRunManifest): string {
 	return path.join(manifest.stateRoot, "mailbox");
 }
@@ -110,6 +115,18 @@ export function readMailbox(manifest: TeamRunManifest, direction?: MailboxDirect
 	return directions.flatMap((item) => safeReadMailboxFile(mailboxPath(manifest, item, taskId), item)).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
+function readAllInboxMessages(manifest: TeamRunManifest): MailboxMessage[] {
+	const messages = [...safeReadMailboxFile(mailboxPath(manifest, "inbox"), "inbox")];
+	const tasksDir = path.join(mailboxDir(manifest), "tasks");
+	if (fs.existsSync(tasksDir)) {
+		for (const entry of fs.readdirSync(tasksDir, { withFileTypes: true })) {
+			if (!entry.isDirectory()) continue;
+			messages.push(...safeReadMailboxFile(mailboxPath(manifest, "inbox", entry.name), "inbox"));
+		}
+	}
+	return messages.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
 export function readDeliveryState(manifest: TeamRunManifest): MailboxDeliveryState {
 	ensureRunMailbox(manifest);
 	try {
@@ -161,6 +178,17 @@ export function acknowledgeMailboxMessage(manifest: TeamRunManifest, messageId: 
 	delivery.updatedAt = new Date().toISOString();
 	writeDeliveryState(manifest, delivery);
 	return delivery;
+}
+
+export function replayPendingMailboxMessages(manifest: TeamRunManifest): MailboxReplayResult {
+	const delivery = readDeliveryState(manifest);
+	const pending = readAllInboxMessages(manifest).filter((message) => message.status !== "acknowledged" && delivery.messages[message.id] !== "acknowledged");
+	if (!pending.length) return { messages: [], updatedAt: delivery.updatedAt };
+	const updatedAt = new Date().toISOString();
+	for (const message of pending) delivery.messages[message.id] = "delivered";
+	delivery.updatedAt = updatedAt;
+	writeDeliveryState(manifest, delivery);
+	return { messages: pending, updatedAt };
 }
 
 export function validateMailbox(manifest: TeamRunManifest, options: { repair?: boolean } = {}): MailboxValidationReport {

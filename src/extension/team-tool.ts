@@ -8,6 +8,7 @@ import { loadRunManifestById, saveRunTasks, updateRunStatus } from "../state/sta
 import { withRunLock, withRunLockSync } from "../state/locks.ts";
 import { aggregateUsage, formatUsage } from "../state/usage.ts";
 import { appendEvent, readEvents } from "../state/event-log.ts";
+import { replayPendingMailboxMessages } from "../state/mailbox.ts";
 import { cleanupRunWorktrees } from "../worktree/cleanup.ts";
 import { piTeamsHelp } from "./help.ts";
 import { initializeProject } from "./project-init.ts";
@@ -229,7 +230,9 @@ export async function handleResume(params: TeamToolParamsValue, ctx: TeamContext
 	return await withRunLock(loaded.manifest, async () => {
 		const resetTasks = loaded.tasks.map((task) => task.status === "failed" || task.status === "cancelled" || task.status === "skipped" || task.status === "running" ? { ...task, status: "queued" as const, error: undefined, startedAt: undefined, finishedAt: undefined, claim: undefined } : task);
 		saveRunTasks(loaded.manifest, resetTasks);
-		appendEvent(loaded.manifest.eventsPath, { type: "run.resume_requested", runId: loaded.manifest.runId });
+		const replay = replayPendingMailboxMessages(loaded.manifest);
+		appendEvent(loaded.manifest.eventsPath, { type: "run.resume_requested", runId: loaded.manifest.runId, data: { replayedMailboxMessages: replay.messages.length } });
+		if (replay.messages.length) appendEvent(loaded.manifest.eventsPath, { type: "mailbox.replayed", runId: loaded.manifest.runId, message: `Replayed ${replay.messages.length} pending inbox message(s).`, data: { messageIds: replay.messages.map((message) => message.id), taskIds: replay.messages.map((message) => message.taskId).filter(Boolean) } });
 		const loadedConfig = loadConfig(ctx.cwd);
 		const runtime = await resolveCrewRuntime(loadedConfig.config);
 		const executeWorkers = runtime.kind !== "scaffold";

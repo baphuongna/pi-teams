@@ -8,11 +8,13 @@
 - Added worker concurrency hard cap with explicit `limits.allowUnboundedConcurrency` opt-out and observability event.
 - Added persisted model routing metadata on tasks and agent records: requested model, resolved model, fallback chain, reason, and used attempt.
 - Added self-contained architecture/runtime-flow docs and five built-in coding skills.
+- Added mailbox replay on resume for pending inbox messages, including task-scoped messages.
 
 ### Changed
 
 - Async background runs now use an explicit jiti loader path and expose startup markers for recovery/health checks.
 - Active batch selection now caps excessive user concurrency by default to protect local machines.
+- Resume now emits mailbox replay metadata before restarting queued work.
 
 ### Fixed
 
