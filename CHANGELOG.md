@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.29
+
+- Republished the child worker response timeout fix as a fresh npm version.
+
 ## 0.1.28
 
 - Fixed child-process workers being terminated after only 15 seconds of quiet provider/tool time by increasing the default response watchdog to five minutes and clarifying the timeout error message.
