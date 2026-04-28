@@ -39,12 +39,22 @@ import { autonomousPatchFromConfig, configPatchFromConfig, formatAutonomyStatus 
 import { handleApi } from "./team-tool/api.ts";
 import { handleRun } from "./team-tool/run.ts";
 import { handleDoctor } from "./team-tool/doctor.ts";
+import { handleStatus } from "./team-tool/status.ts";
+import { handleArtifacts, handleEvents, handleSummary } from "./team-tool/inspect.ts";
+import { handleCleanup, handleExport, handleForget, handleImport, handleImports, handlePrune, handleWorktrees } from "./team-tool/lifecycle-actions.ts";
+import { handleCancel } from "./team-tool/cancel.ts";
+import { handlePlan } from "./team-tool/plan.ts";
 import { logInternalError } from "../utils/internal-error.ts";
 
 export type { TeamToolDetails } from "./team-tool-types.ts";
 export type { TeamContext } from "./team-tool/context.ts";
 export { handleRun } from "./team-tool/run.ts";
 export { handleDoctor } from "./team-tool/doctor.ts";
+export { handleStatus } from "./team-tool/status.ts";
+export { handleArtifacts, handleEvents, handleSummary } from "./team-tool/inspect.ts";
+export { handleCleanup, handleExport, handleForget, handleImport, handleImports, handlePrune, handleWorktrees } from "./team-tool/lifecycle-actions.ts";
+export { handleCancel } from "./team-tool/cancel.ts";
+export { handlePlan } from "./team-tool/plan.ts";
 export { handleApi } from "./team-tool/api.ts";
 
 export function handleList(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
@@ -113,113 +123,6 @@ export function handleGet(params: TeamToolParamsValue, ctx: TeamContext): PiTeam
 	return result("Specify team, workflow, or agent for get.", { action: "get", status: "error" }, true);
 }
 
-export function handleStatus(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
-	if (!params.runId) return result("Status requires runId.", { action: "status", status: "error" }, true);
-	const loaded = loadRunManifestById(ctx.cwd, params.runId);
-	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "status", status: "error" }, true);
-	let { manifest, tasks } = loaded;
-	let asyncLivenessLine: string | undefined;
-	if (manifest.async) {
-		const asyncState = manifest.async;
-		const liveness = checkProcessLiveness(asyncState.pid);
-		asyncLivenessLine = `Async: pid=${asyncState.pid ?? "unknown"} alive=${liveness.alive ? "true" : "false"} detail=${liveness.detail} log=${asyncState.logPath} spawnedAt=${asyncState.spawnedAt}`;
-		if (!liveness.alive && isActiveRunStatus(manifest.status)) {
-			manifest = updateRunStatus(manifest, "failed", `Async process stale: ${liveness.detail}`);
-			appendEvent(manifest.eventsPath, { type: "async.stale", runId: manifest.runId, message: liveness.detail, data: { pid: asyncState.pid } });
-		}
-	}
-	const counts = new Map<string, number>();
-	for (const task of tasks) counts.set(task.status, (counts.get(task.status) ?? 0) + 1);
-	const events = readEvents(manifest.eventsPath).slice(-8);
-	const controlConfig = resolveCrewControlConfig(loadConfig(ctx.cwd).config);
-	const crewAgents = readCrewAgents(manifest).map((agent) => applyAttentionState(manifest, agent, controlConfig));
-	const artifactLines = manifest.artifacts.slice(-10).map((artifact) => `- ${artifact.kind}: ${artifact.path}${artifact.sizeBytes !== undefined ? ` (${artifact.sizeBytes} bytes)` : ""}`);
-	const totalUsage = aggregateUsage(tasks);
-	const activeAgents = crewAgents.filter((agent) => agent.status === "running");
-	const completedAgents = crewAgents.filter((agent) => agent.status !== "running");
-	const waitingTasks = tasks.filter((task) => task.status === "queued");
-	const agentLine = (agent: typeof crewAgents[number]): string => `- ${agent.id} [${agent.status}] ${agent.role} -> ${agent.agent} runtime=${agent.runtime}${agent.model ? ` model=${agent.model}` : ""}${agent.usage ? ` usage=${formatUsage(agent.usage)}` : ""}${agent.progress?.activityState === "needs_attention" ? " needs_attention" : ""}${formatActivityAge(agent) ? ` activity=${formatActivityAge(agent)}` : ""}${agent.progress?.currentTool ? ` tool=${agent.progress.currentTool}` : ""}${agent.toolUses ? ` tools=${agent.toolUses}` : ""}${!agent.usage && agent.progress?.tokens ? ` tokens=${agent.progress.tokens}` : ""}${agent.progress?.turns ? ` turns=${agent.progress.turns}` : ""}${agent.jsonEvents !== undefined ? ` jsonEvents=${agent.jsonEvents}` : ""}${agent.statusPath ? ` status=${agent.statusPath}` : ""}${agent.error ? ` error=${agent.error}` : ""}`;
-	const lines = [
-		`Run: ${manifest.runId}`,
-		`Team: ${manifest.team}`,
-		`Workflow: ${manifest.workflow ?? "(none)"}`,
-		`Status: ${manifest.status}`,
-		`Workspace mode: ${manifest.workspaceMode}`,
-		`Goal: ${manifest.goal}`,
-		`Created: ${manifest.createdAt}`,
-		`Updated: ${manifest.updatedAt}`,
-		`State: ${manifest.stateRoot}`,
-		`Artifacts: ${manifest.artifactsRoot}`,
-		...(asyncLivenessLine ? [asyncLivenessLine] : []),
-		"Task graph:",
-		...formatTaskGraphLines(tasks),
-		"Tasks:",
-		...(tasks.length ? tasks.map((task) => `- ${task.id} [${task.status}] ${task.role} -> ${task.agent}${task.taskPacket ? ` scope=${task.taskPacket.scope}` : ""}${task.verification ? ` green=${task.verification.observedGreenLevel}/${task.verification.requiredGreenLevel}` : ""}${task.modelAttempts?.length ? ` attempts=${task.modelAttempts.length}` : ""}${task.modelRouting ? ` modelRouting=${task.modelRouting.requested ? `${task.modelRouting.requested}->` : ""}${task.modelRouting.resolved}${task.modelRouting.usedAttempt ? ` attempt=${task.modelRouting.usedAttempt + 1}` : ""}` : ""}${task.jsonEvents !== undefined ? ` jsonEvents=${task.jsonEvents}` : ""}${task.usage ? ` usage=${JSON.stringify(task.usage)}` : ""}${task.worktree ? ` worktree=${task.worktree.path}` : ""}${task.error ? ` error=${task.error}` : ""}`) : ["- (none)"]),
-		`Task counts: ${[...counts.entries()].map(([status, count]) => `${status}=${count}`).join(", ") || "none"}`,
-		"Active agents:",
-		...(activeAgents.length ? activeAgents.map(agentLine) : ["- (none)"]),
-		"Waiting tasks:",
-		...(waitingTasks.length ? waitingTasks.map((task) => `- ${task.id} [queued] ${task.role} -> ${task.agent} ${waitingReason(task, tasks) ?? "waiting"}`) : ["- (none)"]),
-		"Completed agents:",
-		...(completedAgents.length ? completedAgents.map(agentLine) : ["- (none)"]),
-		"Policy decisions:",
-		...(manifest.policyDecisions?.length ? manifest.policyDecisions.map((item) => `- ${item.action} (${item.reason})${item.taskId ? ` ${item.taskId}` : ""}: ${item.message}`) : ["- (none)"]),
-		`Total usage: ${formatUsage(totalUsage)}`,
-		"",
-		"Recent artifacts:",
-		...(artifactLines.length ? artifactLines : ["- (none)"]),
-		"",
-		"Recent events:",
-		...(events.length ? events.map((event) => `- ${event.time} ${event.type}${event.taskId ? ` ${event.taskId}` : ""}${event.message ? `: ${event.message}` : ""}`) : ["- (none)"]),
-	];
-	return result(lines.join("\n"), { action: "status", status: "ok", runId: manifest.runId, artifactsRoot: manifest.artifactsRoot });
-}
-
-export function handlePlan(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
-	const teamName = params.team ?? "default";
-	const team = allTeams(discoverTeams(ctx.cwd)).find((item) => item.name === teamName);
-	if (!team) return result(`Team '${teamName}' not found.`, { action: "plan", status: "error" }, true);
-	const workflowName = params.workflow ?? team.defaultWorkflow ?? "default";
-	const workflow = allWorkflows(discoverWorkflows(ctx.cwd)).find((item) => item.name === workflowName);
-	if (!workflow) return result(`Workflow '${workflowName}' not found.`, { action: "plan", status: "error" }, true);
-	const errors = validateWorkflowForTeam(workflow, team);
-	if (errors.length > 0) return result([`Workflow '${workflow.name}' is not valid for team '${team.name}':`, ...errors.map((error) => `- ${error}`)].join("\n"), { action: "plan", status: "error" }, true);
-	const lines = [
-		`Team plan: ${team.name}`,
-		`Workflow: ${workflow.name}`,
-		`Goal: ${params.goal ?? params.task ?? "(not provided)"}`,
-		"",
-		"Steps:",
-		...workflow.steps.map((step, index) => `${index + 1}. ${step.id} [${step.role}]${step.dependsOn?.length ? ` after ${step.dependsOn.join(", ")}` : ""}`),
-	];
-	return result(lines.join("\n"), { action: "plan", status: "ok" });
-}
-
-export function handleCancel(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
-	if (!params.runId) return result("Cancel requires runId.", { action: "cancel", status: "error" }, true);
-	const loaded = loadRunManifestById(ctx.cwd, params.runId);
-	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "cancel", status: "error" }, true);
-	return withRunLockSync(loaded.manifest, () => {
-		if (loaded.manifest.status === "completed" && !params.force) {
-			return result(`Run ${loaded.manifest.runId} is already completed; nothing to cancel. Use force: true to mark it cancelled anyway.`, { action: "cancel", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-		}
-		const tasks = loaded.tasks.map((task) => task.status === "queued" || task.status === "running" ? { ...task, status: "cancelled" as const, finishedAt: new Date().toISOString(), error: "Run cancelled by user request." } : task);
-		saveRunTasks(loaded.manifest, tasks);
-		try {
-			saveCrewAgents(loaded.manifest, tasks.map((task) => recordFromTask(loaded.manifest, task, "child-process")));
-		} catch (error) {
-			logInternalError("team-tool.handleCancel.crewAgents", error, `runId=${loaded.manifest.runId}`);
-		}
-		try {
-			writeForegroundInterruptRequest(loaded.manifest, "Run cancelled by user request.");
-		} catch (error) {
-			logInternalError("team-tool.handleCancel.interruptRequest", error, `runId=${loaded.manifest.runId}`);
-		}
-		const updated = updateRunStatus(loaded.manifest, "cancelled", "Run cancelled by user request. Already-finished worker processes are not retroactively changed.");
-		return result(`Cancelled run ${updated.runId}.`, { action: "cancel", status: "ok", runId: updated.runId, artifactsRoot: updated.artifactsRoot });
-	});
-}
-
 function artifactKey(artifact: ArtifactDescriptor): string {
 	return `${artifact.kind}:${artifact.path}`;
 }
@@ -285,125 +188,6 @@ export async function handleResume(params: TeamToolParamsValue, ctx: TeamContext
 		const executed = await executeTeamRun({ manifest: resumeManifest, tasks: resetTasks, team, workflow, agents, executeWorkers, limits: loadedConfig.config.limits, runtime, runtimeConfig: loadedConfig.config.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, signal: ctx.signal });
 		return result([`Resumed run ${executed.manifest.runId}.`, `Status: ${executed.manifest.status}`, `Tasks: ${executed.tasks.length}`, `Artifacts: ${executed.manifest.artifactsRoot}`].join("\n"), { action: "resume", status: executed.manifest.status === "failed" ? "error" : "ok", runId: executed.manifest.runId, artifactsRoot: executed.manifest.artifactsRoot }, executed.manifest.status === "failed");
 	});
-}
-
-export function handleEvents(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
-	if (!params.runId) return result("Events requires runId.", { action: "events", status: "error" }, true);
-	const loaded = loadRunManifestById(ctx.cwd, params.runId);
-	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "events", status: "error" }, true);
-	const events = readEvents(loaded.manifest.eventsPath);
-	const lines = [`Events for ${loaded.manifest.runId}:`, ...(events.length ? events.map((event) => `${event.time} ${event.type}${event.taskId ? ` ${event.taskId}` : ""}${event.message ? `: ${event.message}` : ""}${event.data ? ` ${JSON.stringify(event.data)}` : ""}`) : ["(none)"])];
-	return result(lines.join("\n"), { action: "events", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-}
-
-export function handleArtifacts(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
-	if (!params.runId) return result("Artifacts requires runId.", { action: "artifacts", status: "error" }, true);
-	const loaded = loadRunManifestById(ctx.cwd, params.runId);
-	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "artifacts", status: "error" }, true);
-	const lines = [`Artifacts for ${loaded.manifest.runId}:`, ...(loaded.manifest.artifacts.length ? loaded.manifest.artifacts.map((artifact) => `- ${artifact.kind}: ${artifact.path}${artifact.sizeBytes !== undefined ? ` (${artifact.sizeBytes} bytes)` : ""}${artifact.contentHash ? ` sha256=${artifact.contentHash.slice(0, 12)}` : ""}`) : ["- (none)"])];
-	return result(lines.join("\n"), { action: "artifacts", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-}
-
-export function handleSummary(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
-	if (!params.runId) return result("Summary requires runId.", { action: "summary", status: "error" }, true);
-	const loaded = loadRunManifestById(ctx.cwd, params.runId);
-	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "summary", status: "error" }, true);
-	const usage = aggregateUsage(loaded.tasks);
-	const lines = [
-		`Summary for ${loaded.manifest.runId}`,
-		`Status: ${loaded.manifest.status}`,
-		`Team: ${loaded.manifest.team}`,
-		`Workflow: ${loaded.manifest.workflow ?? "(none)"}`,
-		`Goal: ${loaded.manifest.goal}`,
-		`Usage: ${formatUsage(usage)}`,
-		"Tasks:",
-		...loaded.tasks.map((task) => `- ${task.id}: ${task.status} (${task.role} -> ${task.agent})${task.error ? ` - ${task.error}` : ""}`),
-	];
-	return result(lines.join("\n"), { action: "summary", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-}
-
-export function handleWorktrees(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
-	if (!params.runId) return result("Worktrees requires runId.", { action: "worktrees", status: "error" }, true);
-	const loaded = loadRunManifestById(ctx.cwd, params.runId);
-	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "worktrees", status: "error" }, true);
-	const withWorktrees = loaded.tasks.filter((task) => task.worktree);
-	const lines = [
-		`Worktrees for ${loaded.manifest.runId}:`,
-		...(withWorktrees.length ? withWorktrees.map((task) => `- ${task.id}: ${task.worktree!.path} branch=${task.worktree!.branch} reused=${task.worktree!.reused ? "true" : "false"}`) : ["- (none)"]),
-	];
-	return result(lines.join("\n"), { action: "worktrees", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-}
-
-export function handleImports(_params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
-	const imports = listImportedRuns(ctx.cwd);
-	const lines = [
-		"Imported pi-crew runs:",
-		...(imports.length ? imports.map((entry) => `- ${entry.runId} (${entry.scope})${entry.status ? ` [${entry.status}]` : ""} ${entry.team ?? "unknown"}/${entry.workflow ?? "none"}: ${entry.goal ?? ""}\n  Bundle: ${entry.bundlePath}\n  Summary: ${entry.summaryPath}`) : ["- (none)"]),
-	];
-	return result(lines.join("\n"), { action: "imports", status: "ok" });
-}
-
-export function handleImport(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
-	const cfg = configRecord(params.config);
-	const bundlePath = typeof cfg.path === "string" ? cfg.path : typeof cfg.bundlePath === "string" ? cfg.bundlePath : undefined;
-	if (!bundlePath) return result("Import requires config.path pointing at run-export.json.", { action: "import", status: "error" }, true);
-	const scope = cfg.scope === "user" ? "user" : "project";
-	try {
-		const imported = importRunBundle(ctx.cwd, bundlePath, scope);
-		return result([`Imported run bundle ${imported.runId}.`, `Bundle: ${imported.bundlePath}`, `Summary: ${imported.summaryPath}`].join("\n"), { action: "import", status: "ok" });
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		return result(`Import failed: ${message}`, { action: "import", status: "error" }, true);
-	}
-}
-
-export function handleExport(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
-	if (!params.runId) return result("Export requires runId.", { action: "export", status: "error" }, true);
-	const loaded = loadRunManifestById(ctx.cwd, params.runId);
-	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "export", status: "error" }, true);
-	const exported = exportRunBundle(loaded.manifest, loaded.tasks);
-	appendEvent(loaded.manifest.eventsPath, { type: "run.exported", runId: loaded.manifest.runId, data: exported });
-	return result([`Exported run ${loaded.manifest.runId}.`, `JSON: ${exported.jsonPath}`, `Markdown: ${exported.markdownPath}`].join("\n"), { action: "export", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-}
-
-export function handlePrune(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
-	const keep = params.keep ?? 20;
-	if (!params.confirm) return result("prune requires confirm: true.", { action: "prune", status: "error" }, true);
-	if (keep < 0 || !Number.isInteger(keep)) return result("keep must be an integer >= 0.", { action: "prune", status: "error" }, true);
-	const pruned = pruneFinishedRuns(ctx.cwd, keep);
-	return result([`Pruned finished pi-crew runs.`, `Kept: ${pruned.kept.length}`, `Removed: ${pruned.removed.length}`, ...(pruned.removed.length ? ["Removed runs:", ...pruned.removed.map((runId) => `- ${runId}`)] : [])].join("\n"), { action: "prune", status: "ok" });
-}
-
-export function handleForget(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
-	if (!params.runId) return result("Forget requires runId.", { action: "forget", status: "error" }, true);
-	if (!params.confirm) return result("forget requires confirm: true.", { action: "forget", status: "error" }, true);
-	const loaded = loadRunManifestById(ctx.cwd, params.runId);
-	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "forget", status: "error" }, true);
-	const cleanup = cleanupRunWorktrees(loaded.manifest, { force: params.force });
-	if (cleanup.preserved.length > 0 && !params.force) {
-		return result([`Run '${params.runId}' has preserved worktrees. Use force: true to forget anyway.`, ...cleanup.preserved.map((item) => `- ${item.path}: ${item.reason}`)].join("\n"), { action: "forget", status: "error", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot }, true);
-	}
-	fs.rmSync(loaded.manifest.stateRoot, { recursive: true, force: true });
-	fs.rmSync(loaded.manifest.artifactsRoot, { recursive: true, force: true });
-	return result([`Forgot run ${loaded.manifest.runId}.`, `Removed state: ${loaded.manifest.stateRoot}`, `Removed artifacts: ${loaded.manifest.artifactsRoot}`, ...(cleanup.removed.length ? ["Removed worktrees:", ...cleanup.removed.map((item) => `- ${item}`)] : [])].join("\n"), { action: "forget", status: "ok", runId: loaded.manifest.runId });
-}
-
-export function handleCleanup(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
-	if (!params.runId) return result("Cleanup requires runId.", { action: "cleanup", status: "error" }, true);
-	const loaded = loadRunManifestById(ctx.cwd, params.runId);
-	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "cleanup", status: "error" }, true);
-	const cleanup = cleanupRunWorktrees(loaded.manifest, { force: params.force });
-	appendEvent(loaded.manifest.eventsPath, { type: "worktree.cleanup", runId: loaded.manifest.runId, data: { removed: cleanup.removed, preserved: cleanup.preserved, artifacts: cleanup.artifactPaths } });
-	const lines = [
-		`Worktree cleanup for ${loaded.manifest.runId}:`,
-		"Removed:",
-		...(cleanup.removed.length ? cleanup.removed.map((item) => `- ${item}`) : ["- (none)"]),
-		"Preserved:",
-		...(cleanup.preserved.length ? cleanup.preserved.map((item) => `- ${item.path}: ${item.reason}`) : ["- (none)"]),
-		"Artifacts:",
-		...(cleanup.artifactPaths.length ? cleanup.artifactPaths.map((item) => `- ${item}`) : ["- (none)"]),
-	];
-	return result(lines.join("\n"), { action: "cleanup", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
 }
 
 export async function handleTeamTool(params: TeamToolParamsValue, ctx: TeamContext): Promise<PiTeamsToolResult> {

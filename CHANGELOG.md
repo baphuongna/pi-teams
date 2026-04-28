@@ -14,6 +14,7 @@
 - Added adaptive planner repair for malformed JSON, oversized task plans, and common role aliases before blocking implementation runs.
 - Added package snapshot coverage for Phase 6 docs, skills, Pi manifest entries, and the runtime `jiti` dependency.
 - Added `src/subagents/*` consolidation entrypoints for child spawning, background runner commands, and subagent manager APIs.
+- Split `team-tool.ts` actions into focused status, inspect, lifecycle, cancel, and plan modules while preserving public action names.
 
 ### Changed
 
