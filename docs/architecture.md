@@ -1,92 +1,164 @@
 # pi-crew Architecture
 
-Canonical architecture documentation currently lives at workspace level:
+`pi-crew` is a Pi package for coordinated multi-agent work. It is intentionally durable-first: every run is represented on disk, every task has a state record, and child workers stream progress into JSONL/status files so foreground sessions, background jobs, dashboards, and later restarts all read the same source of truth.
 
-- `../docs/pi-crew-source-review-and-lessons.md`
-- `../docs/pi-crew-architecture.md`
-- `../docs/pi-crew-mvp-plan.md`
+## Layers
 
-This project-local document exists so the package contains an obvious documentation entry point. Keep it in sync as implementation progresses.
+```text
+Pi extension layer
+  register tools, slash commands, widget/dashboard, notifier, lifecycle cleanup
 
-## Current scaffold
+Runtime layer
+  team runner, task graph scheduler, child Pi process runner, async runner,
+  model fallback, policy engine, worktree manager, live-session experimental path
 
-Implemented now:
+State layer
+  .pi/teams/state/runs/{runId}/manifest.json
+  .pi/teams/state/runs/{runId}/tasks.json
+  .pi/teams/state/runs/{runId}/events.jsonl
+  .pi/teams/state/runs/{runId}/agents/{taskId}/status.json
+  .pi/teams/artifacts/{runId}/...
+```
 
-- Pi package manifest
-- autonomous delegation policy injection so the agent can decide when to use the `team` tool
-- dynamic autonomous resource guidance generated from discovered agents/teams/workflows
-- `recommend` action for agent-side team/workflow routing, decomposition, and fanout hints before plan/run
-- `autonomy` action and `/team-autonomy` command for toggling autonomous delegation and profiles
-- centralized state contracts plus task-claim, worker-heartbeat, run-lock, progress-artifact, mailbox files, dashboard progress/action helpers, and safe API interop contracts for runtime hardening
-- extension entrypoint
-- main `team` tool
-- slash commands: `/teams`, `/team-run`, `/team-status`, `/team-doctor`
-- builtin agent/team/workflow markdown resources
-- resource discovery for builtin/user/project paths
-- TypeBox tool schema
-- model fallback helper
-- state type definitions
-- atomic state writes
-- JSONL event log
-- artifact store with content hashes
-- durable run manifests and task files
-- workflow validation
-- foreground workflow scheduler
-- child Pi task execution by default
-- explicit scaffold/dry-run task execution via `runtime.mode=scaffold` or `executeWorkers=false`
-- safety-first create/update/delete for agents, teams, and workflows
-- backups for update/delete mutations
-- dry-run support for management mutations
-- detached async background runner
-- opt-in git worktree task workspace creation
-- worktree diff artifacts
-- child prompt runtime for inherited project-context/skills stripping
-- retryable model fallback attempts per worker task
-- rich status output with recent artifacts and event tail
-- recent run listing
-- `/team-cleanup` worktree cleanup command
-- improved `/team-run` parser for `--async`, `--worktree`, `--team=`, `--workflow=`, `--role=`, `--agent=`
-- async completion polling notifications during Pi sessions
-- active run summary on session start
-- reference checks before deleting referenced agents/workflows
-- optional reference updates when renaming agents/workflows
-- expanded doctor checks for `pi`, `git`, writable state paths, and resource discovery
-- durable run integration-style test coverage
-- user config loader for async defaults, worker execution, notifier interval, and worktree cleanliness policy
-- `pi-crew` install helper that creates default config
-- worktree branch mismatch detection before reuse
-- simple interactive `/team-manager` built with Pi UI dialogs
-- dedicated `events` and `artifacts` actions plus slash commands
-- persisted worktree metadata on task state/status
-- mocked child Pi execution path for integration-style tests
-- package polish: `.gitignore`, `tsconfig.json`, `npm run check`
-- project-local `AGENTS.md` development rules
-- run resume action/command that re-queues failed/cancelled/skipped/running tasks
-- dedicated worktrees inspection action and `/team-worktrees`
-- real temp-git worktree integration test
-- async run metadata persisted in manifest/status
-- stale async PID detection that marks active orphaned runs failed on status inspection
-- child Pi JSON output parsing for final text, usage, and JSON event counts
-- aggregate usage totals in status/summary
-- summary artifact and `summary` action/`/team-summary` command
-- custom overlay `/team-dashboard` run browser built with `ctx.ui.custom`
-- dashboard details pane with status counts and selected run metadata
-- prune action and `/team-prune` to remove old finished runs after confirmation
-- export action and `/team-export` to write portable JSON/Markdown run bundles
-- import action and `/team-import` to store exported bundles under local imports
-- imports action and `/team-imports` to browse imported bundles
-- help action and `/team-help` command
-- validate action and `/team-validate` command for agents/teams/workflows
-- doctor auto-runs resource validation and reports validation errors/warnings
-- project init action and `/team-init` command for `.pi` directories, `.gitignore`, and optional builtin resource copying
-- config action and `/team-config` command
-- published `schema.json` for config validation
-- publishing checklist docs
-- `/team-cancel` command alias
-- forget action and `/team-forget` to delete run state/artifacts after confirmation
-- resource format documentation
-- unit tests for async stale detection, autonomous config toggling, autonomous policy, autonomous recommendation/decomposition, config, project config merge, config action, dashboard rendering/navigation, discovery, doctor/model validation, events/artifacts/worktrees inspection, export/import run bundles and schema validation, help output, imported bundle listing, forget run cleanup, management, management reference checks, mocked child execution, child JSON output parsing and fixtures, model fallback, project init, prompt runtime, prune run cleanup, resource validation, resume/cancel, routing metadata, runtime hardening/progress/API interop, state contracts, state store, summary artifact/action, task claims, team run persistence, worker heartbeat, worktree mode, and workflow validation
+## Run flow
 
-Not implemented yet:
+```text
+user/team tool
+  │
+  ▼
+handleTeamTool(action=run)
+  ├─ discover agents/teams/workflows
+  ├─ validate team/workflow refs
+  ├─ create run manifest + task graph
+  ├─ write goal artifact
+  └─ choose foreground/session-bound or async/background mode
+        │
+        ├─ foreground: startForegroundRun() schedules executeTeamRun()
+        │
+        └─ async: spawnBackgroundTeamRun()
+              ├─ node --import jiti-register.mjs background-runner.ts
+              ├─ background-runner writes async.started + async.pid marker
+              └─ executeTeamRun()
+                    ├─ resolve ready task batch
+                    ├─ resolveBatchConcurrency() with hard cap
+                    ├─ runTeamTask() per task
+                    │    ├─ build prompt + dependency context
+                    │    ├─ choose configured Pi model candidates
+                    │    ├─ spawn child `pi` worker
+                    │    ├─ observe JSONL/stdout progress
+                    │    ├─ persist agent status/events/output
+                    │    └─ write result/log/transcript artifacts
+                    ├─ merge task updates monotonically
+                    ├─ write progress artifacts
+                    └─ synthesize policy closeout
+```
 
-- richer multi-pane custom TUI manager
+## Extension layer
+
+`src/extension/register.ts` wires the package into Pi:
+
+- `team` tool and management actions.
+- Conflict-safe subagent tools: `crew_agent`, `crew_agent_result`, `crew_agent_steer`.
+- Claude-style aliases: `Agent`, `get_subagent_result`, `steer_subagent` when available.
+- Slash commands including `/team-run`, `/team-status`, `/team-dashboard`, `/team-doctor`, `/team-config`, `/team-summary`.
+- Active-only widget and optional dashboard/sidebar UI.
+- Foreground run scheduling and shutdown cleanup.
+- Async completion notifier and session-start active-run summary.
+
+The extension layer should remain thin: user input is normalized into tool parameters, then delegated to runtime/state modules.
+
+## Runtime layer
+
+### Team runner
+
+`src/runtime/team-runner.ts` drives workflow execution. It reads queued tasks, computes the ready set from the task graph, applies concurrency limits, runs a batch, then merges results back into the latest task state. Terminal task states are monotonic: stale parallel snapshots must not regress completed/failed/cancelled/skipped tasks back to queued/running.
+
+### Task runner
+
+`src/runtime/task-runner.ts` executes one task. It prepares workspace/worktree context, renders a task prompt, chooses model candidates from Pi configuration, launches a child Pi process by default, and writes result artifacts. Scaffold mode is explicit dry-run only.
+
+### Child Pi runtime
+
+`src/runtime/child-pi.ts` is the default worker runtime. It:
+
+- launches real `pi` child processes,
+- hides Windows console windows with `windowsHide: true`,
+- streams JSONL output into transcripts,
+- compacts noisy message updates,
+- isolates observer callback failures so progress persistence cannot kill orchestration,
+- applies post-exit stdio guards for late output.
+
+### Async background runner
+
+`src/runtime/async-runner.ts` spawns detached background runs. Installed packages use an absolute `jiti-register.mjs` loader path because Node strip-types refuses TypeScript under `node_modules`. The runner fail-fasts if jiti is missing, and writes `async.pid` once startup begins so the parent can distinguish a healthy start from an early import crash.
+
+### Concurrency and policy
+
+`src/runtime/concurrency.ts` picks batch size from explicit limits, team settings, workflow settings, or built-in defaults. User-provided `limits.maxConcurrentWorkers` is hard-capped by default to prevent local DoS; `limits.allowUnboundedConcurrency=true` is an explicit opt-out and emits an observability event.
+
+`src/runtime/policy-engine.ts` applies closeout and safety policy decisions such as limit exceeded, failed task blocking, stale workers, and green-contract failures.
+
+### Model routing
+
+Model choice is based on Pi's current configuration/model registry, not hardcoded providers. Task and agent records persist model attempts and routing metadata so dashboards/status can show requested model, selected model, fallback chain, and fallback reason.
+
+## State layer
+
+Run state is under:
+
+```text
+.pi/teams/state/runs/{runId}/
+  manifest.json        run metadata/status/artifacts/async pid
+  tasks.json           task graph and per-task status
+  events.jsonl         append-only run events
+  events.jsonl.seq     event sequence cache
+  agents.json          aggregate agent cache
+  async.pid            background startup marker
+  agents/{taskId}/
+    status.json        per-agent status source
+    events.jsonl       per-agent event stream
+    output.log         compact worker output
+    sidechain.output.jsonl
+    live-control.jsonl
+```
+
+Artifacts are under:
+
+```text
+.pi/teams/artifacts/{runId}/
+  goal.md
+  prompts/{taskId}.md
+  results/{taskId}.txt
+  logs/{taskId}.log
+  transcripts/{taskId}.jsonl
+  metadata/*.json
+  progress.md
+  summary.md
+```
+
+Atomic writes use temp-file replace with retry for transient Windows `EPERM`/`EBUSY`/`EACCES`. JSONL append paths are best-effort where used for observers/progress; write failures must not crash child output parsing.
+
+## UI and observability
+
+- The persistent widget shows active runs only.
+- Stale async runs with dead background pids are hidden from the active widget.
+- `/team-status` is the canonical detailed state view and can mark stale active async runs failed.
+- `/team-dashboard` provides history and details.
+- Powerbar publishing is optional and event-compatible.
+- Transcript viewer is file-backed so it works for foreground and async runs.
+
+## Lifecycle and cleanup
+
+Foreground runs are session-bound and should be interrupted on session shutdown or session switch. Only explicit `async: true` runs are allowed to survive the Pi session. Runtime cleanup is registered through Pi lifecycle hooks and a global reload cleanup guard.
+
+## Configuration
+
+Key config sections:
+
+- `runtime`: `auto`, `child-process`, `scaffold`, experimental `live-session`.
+- `limits`: concurrency/task/depth safety controls.
+- `ui`: widget/dashboard/powerbar/model-token display settings.
+- `agents`: builtin overrides for models/fallbacks/tools.
+- `autonomous`: policy injection/profile for proactive team delegation.
+
+See `usage.md`, `resource-formats.md`, `runtime-flow.md`, and `live-mailbox-runtime.md` for operational details.
