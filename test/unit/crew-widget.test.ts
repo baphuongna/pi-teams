@@ -57,3 +57,23 @@ test("crew widget hides when only orphaned or fixture-only active runs exist", (
 		else process.env.PI_TEAMS_HOME = previousHome;
 	}
 });
+
+test("crew widget hides active async runs whose background process is stale", () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-widget-stale-async-"));
+	try {
+		fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
+		const team = { name: "parallel-research", description: "", roles: [{ name: "explorer", agent: "explorer" }], source: "test", filePath: "builtin" } as never;
+		const workflow = { name: "parallel-research", description: "", steps: [{ id: "discover", role: "explorer" }], source: "test", filePath: "builtin" } as never;
+		const created = createRunManifest({ cwd, team, workflow, goal: "stale async" });
+		const stalePid = 2147483000;
+		saveRunManifest({
+			...created.manifest,
+			status: "queued",
+			async: { pid: stalePid, logPath: path.join(created.manifest.stateRoot, "background.log"), spawnedAt: new Date().toISOString() },
+		});
+		const lines = buildCrewWidgetLines(cwd, 0);
+		assert.equal(lines.join("\n"), "");
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});

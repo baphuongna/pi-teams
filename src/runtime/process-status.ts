@@ -43,8 +43,13 @@ function hasDurableActiveAgentEvidence(agent: CrewAgentRecord): boolean {
 	return Boolean(agent.statusPath || agent.eventsPath || agent.outputPath || agent.progress || agent.toolUses || agent.jsonEvents);
 }
 
+export function hasStaleAsyncProcess(run: TeamRunManifest): boolean {
+	if (!isActiveRunStatus(run.status) || !run.async) return false;
+	return !checkProcessLiveness(run.async.pid).alive;
+}
+
 export function isDisplayActiveRun(run: TeamRunManifest, agents: CrewAgentRecord[] = [], now = Date.now()): boolean {
-	if (!isActiveRunStatus(run.status) || isLikelyOrphanedActiveRun(run, agents, now)) return false;
+	if (!isActiveRunStatus(run.status) || hasStaleAsyncProcess(run) || isLikelyOrphanedActiveRun(run, agents, now)) return false;
 	if (agents.length === 0) return true;
 	return agents.some(hasDurableActiveAgentEvidence);
 }
