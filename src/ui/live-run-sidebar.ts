@@ -131,7 +131,7 @@ export class LiveRunSidebar {
 				const status = iconForStatus(agent.status, { runningGlyph: SPINNER[0] });
 				const usage = agent.usage ? formatUsage(agent.usage) : agent.progress?.tokens ? `tokens=${agent.progress.tokens}` : "usage=pending";
 				lines.push(line(`${status} ${agent.taskId} ${agent.role}->${agent.agent}`, w));
-				lines.push(line(`  ${agent.model ? `model ${agent.model}` : "model pending"}`, w));
+				lines.push(line(`  ${agent.routing ? `model ${agent.routing.requested ? `${agent.routing.requested} → ` : ""}${agent.routing.resolved}` : agent.model ? `model ${agent.model}` : "model pending"}`, w));
 				lines.push(line(`  ${agent.progress?.currentTool ? `tool ${agent.progress.currentTool} · ` : ""}${agent.toolUses ?? 0} tools · ${usage}`, w));
 			}
 			if (!active.length) lines.push(line("- none", w));

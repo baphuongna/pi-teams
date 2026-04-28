@@ -36,9 +36,11 @@ test("crew agent records expose model and usage for UI/status", () => {
 		dependsOn: [],
 		cwd: process.cwd(),
 		modelAttempts: [{ model: "openai-codex/gpt-5.5", success: true, exitCode: 0 }],
+		modelRouting: { requested: "gpt-5.5", resolved: "openai-codex/gpt-5.5", fallbackChain: ["openai-codex/gpt-5.5"], usedAttempt: 0 },
 		usage: { input: 10, output: 5, cacheRead: 20 },
 	};
 	const record = recordFromTask(manifest, task, "child-process");
 	assert.equal(record.model, "openai-codex/gpt-5.5");
+	assert.deepEqual(record.routing, { requested: "gpt-5.5", resolved: "openai-codex/gpt-5.5", fallbackChain: ["openai-codex/gpt-5.5"], usedAttempt: 0 });
 	assert.deepEqual(record.usage, { input: 10, output: 5, cacheRead: 20 });
 });

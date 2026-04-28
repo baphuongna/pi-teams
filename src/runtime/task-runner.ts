@@ -9,7 +9,7 @@ import { createTaskClaim } from "../state/task-claims.ts";
 import { createWorkerHeartbeat, touchWorkerHeartbeat } from "./worker-heartbeat.ts";
 import type { WorkflowStep } from "../workflows/workflow-config.ts";
 import { captureWorktreeDiff, captureWorktreeDiffStat, prepareTaskWorkspace } from "../worktree/worktree-manager.ts";
-import { buildConfiguredModelCandidates, formatModelAttemptNote, isRetryableModelFailure, type ModelAttemptSummary } from "./model-fallback.ts";
+import { buildConfiguredModelRouting, formatModelAttemptNote, isRetryableModelFailure, type ModelAttemptSummary } from "./model-fallback.ts";
 import { parsePiJsonOutput, type ParsedPiJsonOutput } from "./pi-json-output.ts";
 import { runChildPi } from "./child-pi.ts";
 import { buildTaskPacket, renderTaskPacket } from "./task-packet.ts";
@@ -305,7 +305,8 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 		producer: task.id,
 	});
 	if (runtimeKind === "child-process") {
-		const candidates = buildConfiguredModelCandidates({ overrideModel: input.modelOverride, stepModel: input.step.model, agentModel: input.agent.model, fallbackModels: input.agent.fallbackModels, parentModel: input.parentModel, modelRegistry: input.modelRegistry, cwd: manifest.cwd });
+		const modelRoutingPlan = buildConfiguredModelRouting({ overrideModel: input.modelOverride, stepModel: input.step.model, agentModel: input.agent.model, fallbackModels: input.agent.fallbackModels, parentModel: input.parentModel, modelRegistry: input.modelRegistry, cwd: manifest.cwd });
+		const candidates = modelRoutingPlan.candidates;
 		const attemptModels = candidates.length > 0 ? candidates : [undefined];
 		const logs: string[] = [];
 		let finalStdout = "";
@@ -381,6 +382,12 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 			content: [...logs, `finalExitCode=${exitCode ?? "null"}`, `jsonEvents=${parsedOutput?.jsonEvents ?? 0}`, parsedOutput?.usage ? `usage=${JSON.stringify(parsedOutput.usage)}` : "", "", "STDOUT:", finalStdout, "", "STDERR:", finalStderr].join("\n"),
 			producer: task.id,
 		});
+		const successfulAttemptIndex = modelAttempts.findIndex((attempt) => attempt.success);
+		const usedAttempt = successfulAttemptIndex === -1 ? Math.max(0, modelAttempts.length - 1) : successfulAttemptIndex;
+		const resolvedModel = modelAttempts[usedAttempt]?.model ?? candidates[0] ?? "default";
+		const fallbackReason = usedAttempt > 0 ? modelAttempts[usedAttempt - 1]?.error : undefined;
+		task = { ...task, modelRouting: { requested: modelRoutingPlan.requested, resolved: resolvedModel, fallbackChain: candidates, reason: fallbackReason ?? modelRoutingPlan.reason, usedAttempt } };
+		tasks = updateTask(tasks, task);
 		const sessionUsage = parseSessionUsage(transcriptPath);
 		const effectiveUsage = parsedOutput?.usage ?? sessionUsage;
 		if (effectiveUsage) {

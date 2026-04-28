@@ -219,7 +219,13 @@ function isAvailableModel(model: string, availableModels: AvailableModelInfo[] |
 	return availableModels.some((entry) => entry.id === baseModel);
 }
 
-export function buildConfiguredModelCandidates(input: {
+export interface ConfiguredModelRouting {
+	requested?: string;
+	candidates: string[];
+	reason?: string;
+}
+
+export function buildConfiguredModelRouting(input: {
 	overrideModel?: string;
 	stepModel?: string;
 	agentModel?: string;
@@ -227,18 +233,29 @@ export function buildConfiguredModelCandidates(input: {
 	parentModel?: unknown;
 	modelRegistry?: unknown;
 	cwd?: string;
-}): string[] {
+}): ConfiguredModelRouting {
 	const registryModels = availableModelInfosFromRegistry(input.modelRegistry);
 	const configModels = configuredModelInfosFromPiConfig(input.cwd);
 	const availableModels = registryModels && registryModels.length > 0 ? registryModels : configModels.length > 0 ? configModels : registryModels;
 	const parentModel = modelStringFromUnknown(input.parentModel);
 	const preferredProvider = parentModel?.split("/")[0] ?? availableModels?.[0]?.provider;
-	if (availableModels && availableModels.length === 0) return [];
+	const requested = [input.overrideModel, input.stepModel, input.agentModel, parentModel].find((model): model is string => Boolean(model?.trim()));
+	if (availableModels && availableModels.length === 0) return { requested, candidates: [], reason: "no configured Pi models available" };
 	const rawModels = availableModels
 		? [input.overrideModel, input.stepModel, input.agentModel, ...(input.fallbackModels ?? []), parentModel, ...availableModels.map((model) => model.fullId)]
 		: [input.overrideModel, parentModel];
 	const configuredModels = rawModels
 		.filter((model): model is string => Boolean(model?.trim()))
 		.filter((model) => isAvailableModel(model.trim(), availableModels));
-	return buildModelCandidates(configuredModels[0], configuredModels.slice(1), availableModels, preferredProvider);
+	const candidates = buildModelCandidates(configuredModels[0], configuredModels.slice(1), availableModels, preferredProvider);
+	const reason = requested && candidates[0] && resolveModelCandidate(requested, availableModels, preferredProvider) !== candidates[0]
+		? "requested model unavailable; selected configured Pi fallback"
+		: candidates.length > 1
+			? "configured Pi fallback chain"
+			: undefined;
+	return { requested, candidates, reason };
+}
+
+export function buildConfiguredModelCandidates(input: Parameters<typeof buildConfiguredModelRouting>[0]): string[] {
+	return buildConfiguredModelRouting(input).candidates;
 }

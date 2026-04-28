@@ -1,5 +1,5 @@
 import type { TeamTaskStatus } from "../state/contracts.ts";
-import type { UsageState } from "../state/types.ts";
+import type { ModelRoutingState, UsageState } from "../state/types.ts";
 
 export type CrewRuntimeKind = "scaffold" | "child-process" | "live-session";
 export type CrewAgentStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "stopped";
@@ -43,6 +43,7 @@ export interface CrewAgentRecord {
 	toolUses?: number;
 	jsonEvents?: number;
 	model?: string;
+	routing?: ModelRoutingState;
 	usage?: UsageState;
 	progress?: CrewAgentProgress;
 	error?: string;

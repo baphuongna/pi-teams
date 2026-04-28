@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { buildConfiguredModelCandidates, buildModelCandidates, configuredModelInfosFromPiConfig, resolveModelCandidate, splitThinkingSuffix } from "../../src/runtime/model-fallback.ts";
+import { buildConfiguredModelCandidates, buildConfiguredModelRouting, buildModelCandidates, configuredModelInfosFromPiConfig, resolveModelCandidate, splitThinkingSuffix } from "../../src/runtime/model-fallback.ts";
 
 test("splitThinkingSuffix preserves model suffix", () => {
 	assert.deepEqual(splitThinkingSuffix("claude-sonnet:high"), { baseModel: "claude-sonnet", thinkingSuffix: ":high" });
@@ -52,6 +52,19 @@ test("buildConfiguredModelCandidates appends remaining configured Pi models as f
 		buildConfiguredModelCandidates({ overrideModel: "gpt-5-mini", agentModel: "claude-haiku-4-5", modelRegistry }),
 		["openai-codex/gpt-5-mini", "openai-codex/gpt-5.5", "gemini/gemini-pro"],
 	);
+});
+
+test("buildConfiguredModelRouting persists requested model and fallback chain", () => {
+	const modelRegistry = {
+		getAvailable: () => [
+			{ provider: "openai-codex", id: "gpt-5.5" },
+			{ provider: "openai-codex", id: "gpt-5-mini" },
+		],
+	};
+	const routing = buildConfiguredModelRouting({ agentModel: "claude-haiku-4-5", fallbackModels: ["gpt-5-mini"], parentModel: { provider: "openai-codex", id: "gpt-5.5" }, modelRegistry });
+	assert.equal(routing.requested, "claude-haiku-4-5");
+	assert.deepEqual(routing.candidates, ["openai-codex/gpt-5-mini", "openai-codex/gpt-5.5"]);
+	assert.match(routing.reason ?? "", /fallback/);
 });
 
 test("buildConfiguredModelCandidates falls back to Pi default when no configured model is selected", () => {

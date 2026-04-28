@@ -159,6 +159,7 @@ export function recordFromTask(manifest: TeamRunManifest, task: TeamTaskState, r
 		toolUses: task.agentProgress?.toolCount,
 		jsonEvents: task.jsonEvents,
 		model: modelFromTask(task),
+		routing: task.modelRouting,
 		usage: task.usage,
 		progress: task.agentProgress,
 		error: task.error,

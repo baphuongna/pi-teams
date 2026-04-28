@@ -118,6 +118,14 @@ export interface ModelAttemptState {
 	error?: string;
 }
 
+export interface ModelRoutingState {
+	requested?: string;
+	resolved: string;
+	fallbackChain: string[];
+	reason?: string;
+	usedAttempt: number;
+}
+
 export interface TaskWorktreeState {
 	path: string;
 	branch: string;
@@ -144,6 +152,7 @@ export interface TeamTaskState {
 	exitCode?: number | null;
 	model?: string;
 	modelAttempts?: ModelAttemptState[];
+	modelRouting?: ModelRoutingState;
 	usage?: UsageState;
 	jsonEvents?: number;
 	agentProgress?: CrewAgentProgress;
