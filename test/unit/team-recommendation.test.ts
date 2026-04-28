@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
 import { decomposeGoal, recommendTeam } from "../../src/extension/team-recommendation.ts";
+import { firstText } from "../fixtures/tool-result-helpers.ts";
 
 test("recommendTeam maps goals to teams", () => {
 	assert.equal(recommendTeam("security review this diff").team, "review");
@@ -28,7 +29,8 @@ test("recommendTeam can suggest async and worktree", () => {
 test("team tool recommend returns suggested call", async () => {
 	const result = await handleTeamTool({ action: "recommend", goal: "review this pull request for security" }, { cwd: process.cwd() });
 	assert.equal(result.isError, false);
-	const text = result.content[0]?.text ?? "";
+	const text = firstText(result);
 	assert.match(text, /Team: review/);
 	assert.match(text, /Suggested tool call/);
 });
+

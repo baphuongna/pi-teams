@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
 import { readCrewAgentEventsCursor } from "../../src/runtime/crew-agent-records.ts";
 import { appendEvent, readEventsCursor } from "../../src/state/event-log.ts";
+import { firstText } from "../fixtures/tool-result-helpers.ts";
 
 function restoreEnv(name: string, previous: string | undefined): void {
 	if (previous === undefined) delete process.env[name];
@@ -42,33 +43,34 @@ test("observability API supports event cursors, agent output tail, and dashboard
 		const runId = run.details.runId!;
 
 		const events = await handleTeamTool({ action: "api", runId, config: { operation: "read-events", sinceSeq: 1, limit: 2 } }, { cwd });
-		const eventPayload = JSON.parse(events.content[0]!.text);
+		const eventPayload = JSON.parse(firstText(events));
 		assert.equal(eventPayload.events.length, 2);
 		assert.ok(eventPayload.nextSeq >= 3);
 
 		const agentsResult = await handleTeamTool({ action: "api", runId, config: { operation: "list-agents" } }, { cwd });
-		const agents = JSON.parse(agentsResult.content[0]!.text);
+		const agents = JSON.parse(firstText(agentsResult));
 		const first = agents[0];
 
 		const agentCursor = readCrewAgentEventsCursor(JSON.parse(fs.readFileSync(path.join(cwd, ".pi", "teams", "state", "runs", runId, "manifest.json"), "utf-8")), first.taskId, { sinceSeq: 0, limit: 1 });
 		assert.equal(agentCursor.events.length, 1);
 
 		const agentEvents = await handleTeamTool({ action: "api", runId, config: { operation: "read-agent-events", agentId: first.taskId, sinceSeq: 0, limit: 1 } }, { cwd });
-		const agentEventPayload = JSON.parse(agentEvents.content[0]!.text);
+		const agentEventPayload = JSON.parse(firstText(agentEvents));
 		assert.equal(agentEventPayload.events.length, 1);
 		assert.ok(agentEventPayload.nextSeq >= 1);
 
 		const output = await handleTeamTool({ action: "api", runId, config: { operation: "read-agent-output", agentId: first.taskId, maxBytes: 10_000 } }, { cwd });
-		const outputPayload = JSON.parse(output.content[0]!.text);
+		const outputPayload = JSON.parse(firstText(output));
 		assert.equal(outputPayload.truncated, false);
 		assert.match(outputPayload.text, /success|mock/i);
 
 		const dashboard = await handleTeamTool({ action: "api", runId, config: { operation: "agent-dashboard" } }, { cwd });
-		assert.match(dashboard.content[0]!.text, /Crew agents/);
-		assert.match(dashboard.content[0]!.text, /Recent/);
+		assert.match(firstText(dashboard), /Crew agents/);
+		assert.match(firstText(dashboard), /Recent/);
 	} finally {
 		restoreEnv("PI_TEAMS_MOCK_CHILD_PI", previousMock);
 		restoreEnv("PI_TEAMS_EXECUTE_WORKERS", previousExecute);
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}
 });
+

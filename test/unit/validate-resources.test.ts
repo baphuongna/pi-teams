@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
 import { validateResources } from "../../src/extension/validate-resources.ts";
+import { firstText } from "../fixtures/tool-result-helpers.ts";
 
 test("validateResources reports broken team references", async () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-validate-test-"));
@@ -16,8 +17,9 @@ test("validateResources reports broken team references", async () => {
 		assert.ok(report.issues.some((issue) => issue.message.includes("unknown workflow 'missing-flow'")));
 		const tool = await handleTeamTool({ action: "validate" }, { cwd });
 		assert.equal(tool.isError, true);
-		assert.match(tool.content[0]?.text ?? "", /ERROR team:broken/);
+		assert.match(firstText(tool), /ERROR team:broken/);
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}
 });
+

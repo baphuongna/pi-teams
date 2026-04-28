@@ -1,6 +1,9 @@
+import { Type, type Static, type TSchema } from "typebox";
+import { Value } from "typebox/value";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { PiTeamsAutonomyProfileSchema, PiTeamsConfigSchema } from "../schema/config-schema.ts";
 
 export type PiTeamsAutonomyProfile = "manual" | "suggested" | "assisted" | "aggressive";
 
@@ -93,6 +96,12 @@ export interface LoadedPiTeamsConfig {
 	path: string;
 	paths: string[];
 	error?: string;
+	warnings?: string[];
+}
+
+export interface ConfigValidationResult {
+	config: PiTeamsConfig;
+	warnings: string[];
 }
 
 export interface SavedPiTeamsConfig {
@@ -117,6 +126,24 @@ export function projectConfigPath(cwd: string): string {
 
 function withoutUndefined<T extends Record<string, unknown>>(value: T): Partial<T> {
 	return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as Partial<T>;
+}
+
+function errorPathFromValidation(error: unknown): string {
+	if (error && typeof error === "object") {
+		if (typeof (error as { path?: unknown }).path === "string") return (error as { path: string }).path;
+		if (typeof (error as { instancePath?: unknown }).instancePath === "string") return (error as { instancePath: string }).instancePath;
+		if (typeof (error as { keyword?: unknown }).keyword === "string" && typeof (error as { schemaPath?: unknown }).schemaPath === "string") return (error as { schemaPath: string }).schemaPath;
+	}
+	return "config";
+}
+
+function validateConfigWithWarnings(raw: unknown): string[] {
+	if (!Value.Check(PiTeamsConfigSchema, raw)) {
+		return [...Value.Errors(PiTeamsConfigSchema, raw)].map((error) => {
+			return `${errorPathFromValidation(error)}: ${(error as { message?: unknown }).message ?? "invalid value"}`;
+		});
+	}
+	return [];
 }
 
 function mergeConfig(base: PiTeamsConfig, override: PiTeamsConfig): PiTeamsConfig {
@@ -171,8 +198,47 @@ function mergeConfig(base: PiTeamsConfig, override: PiTeamsConfig): PiTeamsConfi
 	return merged;
 }
 
-function parseAutonomyProfile(value: unknown): PiTeamsAutonomyProfile | undefined {
-	return value === "manual" || value === "suggested" || value === "assisted" || value === "aggressive" ? value : undefined;
+const LIMIT_CEILINGS = {
+	maxConcurrentWorkers: 1024,
+	maxTaskDepth: 100,
+	maxChildrenPerTask: 1000,
+	maxRunMinutes: 1440,
+	maxRetriesPerTask: 100,
+	maxTasksPerRun: 10_000,
+	heartbeatStaleMs: 24 * 60 * 60 * 1000,
+	runtimeMaxTurns: 10_000,
+	runtimeGraceTurns: 1_000,
+} as const;
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	return value as Record<string, unknown>;
+}
+
+function parseWithSchema<T extends TSchema>(schema: T, value: unknown): Static<T> | undefined {
+	if (!Value.Check(schema, value)) return undefined;
+	return Value.Decode(schema, value);
+}
+
+function parsePositiveInteger(value: unknown, max = Number.MAX_SAFE_INTEGER): number | undefined {
+	return parseWithSchema(Type.Integer({ minimum: 1, maximum: max }), value);
+}
+
+function parseProfile(value: unknown): PiTeamsAutonomyProfile | undefined {
+	return parseWithSchema(PiTeamsAutonomyProfileSchema, value);
+}
+
+function parseStringList(value: unknown): string[] | undefined {
+	const items = parseWithSchema(Type.Array(Type.String()), value);
+	if (!items || items.length === 0) return undefined;
+	const normalized = items.map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+	return normalized.length > 0 ? normalized : undefined;
+}
+
+function parseStringArrayOrFalse(value: unknown): string[] | false | undefined {
+	if (value === false) return false;
+	if (typeof value === "string") return parseStringList(value.split(","));
+	return parseStringList(value);
 }
 
 export function effectiveAutonomousConfig(config: PiTeamsAutonomousConfig | undefined): Required<Pick<PiTeamsAutonomousConfig, "profile" | "enabled" | "injectPolicy" | "preferAsyncForLongTasks" | "allowWorktreeSuggestion">> & Pick<PiTeamsAutonomousConfig, "magicKeywords"> {
@@ -195,48 +261,33 @@ export function effectiveAutonomousConfig(config: PiTeamsAutonomousConfig | unde
 }
 
 function parseStringArrayRecord(value: unknown): Record<string, string[]> | undefined {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const record = parseWithSchema(Type.Record(Type.String({ minLength: 1 }), Type.Array(Type.String())), value);
+	if (!record) return undefined;
 	const result: Record<string, string[]> = {};
-	for (const [key, rawValues] of Object.entries(value)) {
-		if (!Array.isArray(rawValues)) continue;
-		const values = rawValues.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).map((entry) => entry.trim());
-		if (values.length > 0) result[key] = values;
+	for (const [key, rawValues] of Object.entries(record)) {
+		const parsed = parseStringList(rawValues);
+		if (parsed && parsed.length > 0) result[key] = parsed;
 	}
 	return Object.keys(result).length > 0 ? result : undefined;
 }
 
 function parseAutonomousConfig(value: unknown): PiTeamsAutonomousConfig | undefined {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-	const obj = value as Record<string, unknown>;
-	return {
-		profile: parseAutonomyProfile(obj.profile),
-		enabled: typeof obj.enabled === "boolean" ? obj.enabled : undefined,
-		injectPolicy: typeof obj.injectPolicy === "boolean" ? obj.injectPolicy : undefined,
-		preferAsyncForLongTasks: typeof obj.preferAsyncForLongTasks === "boolean" ? obj.preferAsyncForLongTasks : undefined,
-		allowWorktreeSuggestion: typeof obj.allowWorktreeSuggestion === "boolean" ? obj.allowWorktreeSuggestion : undefined,
+	const obj = asRecord(value);
+	if (!obj) return undefined;
+	const config: PiTeamsAutonomousConfig = {
+		profile: parseProfile(obj.profile),
+		enabled: parseWithSchema(Type.Boolean(), obj.enabled),
+		injectPolicy: parseWithSchema(Type.Boolean(), obj.injectPolicy),
+		preferAsyncForLongTasks: parseWithSchema(Type.Boolean(), obj.preferAsyncForLongTasks),
+		allowWorktreeSuggestion: parseWithSchema(Type.Boolean(), obj.allowWorktreeSuggestion),
 		magicKeywords: parseStringArrayRecord(obj.magicKeywords),
 	};
-}
-
-const LIMIT_CEILINGS = {
-	maxConcurrentWorkers: 1024,
-	maxTaskDepth: 100,
-	maxChildrenPerTask: 1000,
-	maxRunMinutes: 1440,
-	maxRetriesPerTask: 100,
-	maxTasksPerRun: 10_000,
-	heartbeatStaleMs: 24 * 60 * 60 * 1000,
-	runtimeMaxTurns: 10_000,
-	runtimeGraceTurns: 1_000,
-} as const;
-
-function parsePositiveInteger(value: unknown, max = Number.MAX_SAFE_INTEGER): number | undefined {
-	return typeof value === "number" && Number.isInteger(value) && value > 0 && value <= max ? value : undefined;
+	return Object.values(config).some((entry) => entry !== undefined) ? config : undefined;
 }
 
 function parseLimitsConfig(value: unknown): CrewLimitsConfig | undefined {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-	const obj = value as Record<string, unknown>;
+	const obj = asRecord(value);
+	if (!obj) return undefined;
 	const limits: CrewLimitsConfig = {
 		maxConcurrentWorkers: parsePositiveInteger(obj.maxConcurrentWorkers, LIMIT_CEILINGS.maxConcurrentWorkers),
 		maxTaskDepth: parsePositiveInteger(obj.maxTaskDepth, LIMIT_CEILINGS.maxTaskDepth),
@@ -249,111 +300,104 @@ function parseLimitsConfig(value: unknown): CrewLimitsConfig | undefined {
 	return Object.values(limits).some((entry) => entry !== undefined) ? limits : undefined;
 }
 
-function parseRuntimeMode(value: unknown): CrewRuntimeMode | undefined {
-	return value === "auto" || value === "scaffold" || value === "child-process" || value === "live-session" ? value : undefined;
-}
-
 function parseRuntimeConfig(value: unknown): CrewRuntimeConfig | undefined {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-	const obj = value as Record<string, unknown>;
+	const obj = asRecord(value);
+	if (!obj) return undefined;
 	const runtime: CrewRuntimeConfig = {
-		mode: parseRuntimeMode(obj.mode),
-		preferLiveSession: typeof obj.preferLiveSession === "boolean" ? obj.preferLiveSession : undefined,
-		allowChildProcessFallback: typeof obj.allowChildProcessFallback === "boolean" ? obj.allowChildProcessFallback : undefined,
+		mode: parseWithSchema(Type.Union([Type.Literal("auto"), Type.Literal("scaffold"), Type.Literal("child-process"), Type.Literal("live-session")]), obj.mode),
+		preferLiveSession: parseWithSchema(Type.Boolean(), obj.preferLiveSession),
+		allowChildProcessFallback: parseWithSchema(Type.Boolean(), obj.allowChildProcessFallback),
 		maxTurns: parsePositiveInteger(obj.maxTurns, LIMIT_CEILINGS.runtimeMaxTurns),
 		graceTurns: parsePositiveInteger(obj.graceTurns, LIMIT_CEILINGS.runtimeGraceTurns),
-		inheritContext: typeof obj.inheritContext === "boolean" ? obj.inheritContext : undefined,
-		promptMode: obj.promptMode === "replace" || obj.promptMode === "append" ? obj.promptMode : undefined,
-		groupJoin: obj.groupJoin === "off" || obj.groupJoin === "group" || obj.groupJoin === "smart" ? obj.groupJoin : undefined,
+		inheritContext: parseWithSchema(Type.Boolean(), obj.inheritContext),
+		promptMode: parseWithSchema(Type.Union([Type.Literal("replace"), Type.Literal("append")]), obj.promptMode),
+		groupJoin: parseWithSchema(Type.Union([Type.Literal("off"), Type.Literal("group"), Type.Literal("smart")]), obj.groupJoin),
 	};
 	return Object.values(runtime).some((entry) => entry !== undefined) ? runtime : undefined;
 }
 
 function parseControlConfig(value: unknown): CrewControlConfig | undefined {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-	const obj = value as Record<string, unknown>;
+	const obj = asRecord(value);
+	if (!obj) return undefined;
 	const control: CrewControlConfig = {
-		enabled: typeof obj.enabled === "boolean" ? obj.enabled : undefined,
+		enabled: parseWithSchema(Type.Boolean(), obj.enabled),
 		needsAttentionAfterMs: parsePositiveInteger(obj.needsAttentionAfterMs),
 	};
 	return Object.values(control).some((entry) => entry !== undefined) ? control : undefined;
 }
 
 function parseWorktreeConfig(value: unknown): CrewWorktreeConfig | undefined {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-	const obj = value as Record<string, unknown>;
+	const obj = asRecord(value);
+	if (!obj) return undefined;
+	const rawSetupHook = parseWithSchema(Type.String(), obj.setupHook);
+	const setupHook = rawSetupHook?.trim();
 	const worktree: CrewWorktreeConfig = {
-		setupHook: typeof obj.setupHook === "string" && obj.setupHook.trim() ? obj.setupHook.trim() : undefined,
+		setupHook: setupHook ? setupHook : undefined,
 		setupHookTimeoutMs: parsePositiveInteger(obj.setupHookTimeoutMs, 300_000),
-		linkNodeModules: typeof obj.linkNodeModules === "boolean" ? obj.linkNodeModules : undefined,
+		linkNodeModules: parseWithSchema(Type.Boolean(), obj.linkNodeModules),
 	};
 	return Object.values(worktree).some((entry) => entry !== undefined) ? worktree : undefined;
 }
 
-function parseStringArrayOrFalse(value: unknown): string[] | false | undefined {
-	if (value === false) return false;
-	if (typeof value === "string") return value.split(",").map((entry) => entry.trim()).filter(Boolean);
-	if (Array.isArray(value)) return value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).map((entry) => entry.trim());
-	return undefined;
-}
-
 function parseAgentOverride(value: unknown): AgentOverrideConfig | undefined {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-	const obj = value as Record<string, unknown>;
+	const obj = asRecord(value);
+	if (!obj) return undefined;
 	const override: AgentOverrideConfig = {
-		disabled: typeof obj.disabled === "boolean" ? obj.disabled : undefined,
-		model: typeof obj.model === "string" || obj.model === false ? obj.model : undefined,
+		disabled: parseWithSchema(Type.Boolean(), obj.disabled),
+		model: parseWithSchema(Type.Union([Type.String(), Type.Literal(false)]), obj.model),
 		fallbackModels: parseStringArrayOrFalse(obj.fallbackModels),
-		thinking: typeof obj.thinking === "string" || obj.thinking === false ? obj.thinking : undefined,
+		thinking: parseWithSchema(Type.Union([Type.String(), Type.Literal(false)]), obj.thinking),
 		tools: parseStringArrayOrFalse(obj.tools),
 	};
 	return Object.values(override).some((entry) => entry !== undefined) ? override : undefined;
 }
 
 function parseUiConfig(value: unknown): CrewUiConfig | undefined {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-	const obj = value as Record<string, unknown>;
+	const obj = asRecord(value);
+	if (!obj) return undefined;
+	const rawWidgetPlacement = parseWithSchema(Type.Union([Type.Literal("aboveEditor"), Type.Literal("belowEditor")]), obj.widgetPlacement);
+	const rawDashboardPlacement = parseWithSchema(Type.Union([Type.Literal("center"), Type.Literal("right")]), obj.dashboardPlacement);
 	const ui: CrewUiConfig = {
-		widgetPlacement: obj.widgetPlacement === "aboveEditor" || obj.widgetPlacement === "belowEditor" ? obj.widgetPlacement : undefined,
+		widgetPlacement: rawWidgetPlacement,
 		widgetMaxLines: parsePositiveInteger(obj.widgetMaxLines, 50),
-		powerbar: typeof obj.powerbar === "boolean" ? obj.powerbar : undefined,
-		dashboardPlacement: obj.dashboardPlacement === "center" || obj.dashboardPlacement === "right" ? obj.dashboardPlacement : undefined,
+		powerbar: parseWithSchema(Type.Boolean(), obj.powerbar),
+		dashboardPlacement: rawDashboardPlacement,
 		dashboardWidth: parsePositiveInteger(obj.dashboardWidth, 120),
 		dashboardLiveRefreshMs: parsePositiveInteger(obj.dashboardLiveRefreshMs, 60_000),
-		autoOpenDashboard: typeof obj.autoOpenDashboard === "boolean" ? obj.autoOpenDashboard : undefined,
-		autoOpenDashboardForForegroundRuns: typeof obj.autoOpenDashboardForForegroundRuns === "boolean" ? obj.autoOpenDashboardForForegroundRuns : undefined,
-		showModel: typeof obj.showModel === "boolean" ? obj.showModel : undefined,
-		showTokens: typeof obj.showTokens === "boolean" ? obj.showTokens : undefined,
-		showTools: typeof obj.showTools === "boolean" ? obj.showTools : undefined,
+		autoOpenDashboard: parseWithSchema(Type.Boolean(), obj.autoOpenDashboard),
+		autoOpenDashboardForForegroundRuns: parseWithSchema(Type.Boolean(), obj.autoOpenDashboardForForegroundRuns),
+		showModel: parseWithSchema(Type.Boolean(), obj.showModel),
+		showTokens: parseWithSchema(Type.Boolean(), obj.showTokens),
+		showTools: parseWithSchema(Type.Boolean(), obj.showTools),
 	};
 	return Object.values(ui).some((entry) => entry !== undefined) ? ui : undefined;
 }
 
 function parseAgentsConfig(value: unknown): CrewAgentsConfig | undefined {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-	const obj = value as Record<string, unknown>;
+	const obj = asRecord(value);
+	if (!obj) return undefined;
 	const overrides: Record<string, AgentOverrideConfig> = {};
 	if (obj.overrides && typeof obj.overrides === "object" && !Array.isArray(obj.overrides)) {
-		for (const [name, rawOverride] of Object.entries(obj.overrides)) {
+		for (const [name, rawOverride] of Object.entries(obj.overrides as Record<string, unknown>)) {
 			const parsed = parseAgentOverride(rawOverride);
-			if (parsed) overrides[name] = parsed;
+			if (parsed && name.trim()) overrides[name.trim()] = parsed;
 		}
 	}
 	const agents: CrewAgentsConfig = {
-		disableBuiltins: typeof obj.disableBuiltins === "boolean" ? obj.disableBuiltins : undefined,
+		disableBuiltins: parseWithSchema(Type.Boolean(), obj.disableBuiltins),
 		overrides: Object.keys(overrides).length > 0 ? overrides : undefined,
 	};
 	return Object.values(agents).some((entry) => entry !== undefined) ? agents : undefined;
 }
 
-function parseConfig(raw: unknown): PiTeamsConfig {
-	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-	const obj = raw as Record<string, unknown>;
+export function parseConfig(raw: unknown): PiTeamsConfig {
+	const obj = asRecord(raw);
+	if (!obj) return {};
 	return {
-		asyncByDefault: typeof obj.asyncByDefault === "boolean" ? obj.asyncByDefault : undefined,
-		executeWorkers: typeof obj.executeWorkers === "boolean" ? obj.executeWorkers : undefined,
-		notifierIntervalMs: typeof obj.notifierIntervalMs === "number" && Number.isFinite(obj.notifierIntervalMs) && obj.notifierIntervalMs >= 1000 ? obj.notifierIntervalMs : undefined,
-		requireCleanWorktreeLeader: typeof obj.requireCleanWorktreeLeader === "boolean" ? obj.requireCleanWorktreeLeader : undefined,
+		asyncByDefault: parseWithSchema(Type.Boolean(), obj.asyncByDefault),
+		executeWorkers: parseWithSchema(Type.Boolean(), obj.executeWorkers),
+		notifierIntervalMs: parseWithSchema(Type.Number({ minimum: 1_000 }), obj.notifierIntervalMs),
+		requireCleanWorktreeLeader: parseWithSchema(Type.Boolean(), obj.requireCleanWorktreeLeader),
 		autonomous: parseAutonomousConfig(obj.autonomous),
 		limits: parseLimitsConfig(obj.limits),
 		runtime: parseRuntimeConfig(obj.runtime),
@@ -363,6 +407,14 @@ function parseConfig(raw: unknown): PiTeamsConfig {
 		ui: parseUiConfig(obj.ui),
 	};
 }
+
+export function parseConfigWithWarnings(raw: unknown): ConfigValidationResult {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { config: {}, warnings: [] };
+	const parsed = parseConfig(raw);
+	const warnings = validateConfigWithWarnings(raw as Record<string, unknown>);
+	return { config: parsed, warnings };
+}
+
 
 function unsetPath(record: Record<string, unknown>, dottedPath: string): void {
 	const parts = dottedPath.split(".").filter(Boolean);
@@ -387,9 +439,17 @@ export function loadConfig(cwd?: string): LoadedPiTeamsConfig {
 	const filePath = configPath();
 	const paths = cwd ? [filePath, projectConfigPath(cwd)] : [filePath];
 	try {
-		let config = parseConfig(readConfigRecord(filePath));
-		if (cwd) config = mergeConfig(config, parseConfig(readConfigRecord(projectConfigPath(cwd))));
-		return { path: filePath, paths, config };
+		const userRaw = readConfigRecord(filePath);
+		const userConfig = parseConfigWithWarnings(userRaw);
+		let config = userConfig.config;
+		const warnings: string[] = userConfig.warnings.map((warning) => `${filePath}: ${warning}`);
+		if (cwd) {
+			const projectPath = projectConfigPath(cwd);
+			const projectConfig = parseConfigWithWarnings(readConfigRecord(projectPath));
+			warnings.push(...projectConfig.warnings.map((warning) => `${projectPath}: ${warning}`));
+			config = mergeConfig(config, projectConfig.config);
+		}
+		return { path: filePath, paths, config, warnings: warnings.length > 0 ? warnings : undefined };
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return { path: filePath, paths, config: {}, error: message };

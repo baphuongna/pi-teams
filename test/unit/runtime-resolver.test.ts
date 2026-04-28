@@ -33,6 +33,15 @@ test("runtime resolver can request live-session with safe fallback", async () =>
 	assert.equal(runtime.requestedMode, "live-session");
 });
 
+test("runtime resolver uses mock live-session when enabled", async () => {
+	const runtime = await resolveCrewRuntime(
+		{ runtime: { mode: "live-session" }, executeWorkers: true },
+		{ PI_CREW_ENABLE_EXPERIMENTAL_LIVE_SESSION: "1", PI_CREW_MOCK_LIVE_SESSION: "success" } as NodeJS.ProcessEnv,
+	);
+	assert.equal(runtime.kind, "live-session");
+	assert.equal(runtime.requestedMode, "live-session");
+});
+
 test("live session probe returns a stable envelope", async () => {
 	const probe = await probeLiveSessionRuntime();
 	assert.equal(typeof probe.available, "boolean");

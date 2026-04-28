@@ -6,12 +6,12 @@ import { writeArtifact } from "../state/artifact-store.ts";
 import { appendEvent } from "../state/event-log.ts";
 import type { TeamConfig } from "../teams/team-config.ts";
 import type { ArtifactDescriptor, PolicyDecision, TeamRunManifest, TeamTaskState } from "../state/types.ts";
-import { saveRunManifest, saveRunTasks, updateRunStatus } from "../state/state-store.ts";
+import { saveRunManifestAsync, saveRunTasksAsync, updateRunStatus } from "../state/state-store.ts";
 import { aggregateUsage, formatUsage } from "../state/usage.ts";
 import type { WorkflowConfig, WorkflowStep } from "../workflows/workflow-config.ts";
 import { evaluateCrewPolicy, summarizePolicyDecisions } from "./policy-engine.ts";
 import { buildRecoveryLedger } from "./recovery-recipes.ts";
-import { getReadyTasks, refreshTaskGraphQueues, taskGraphSnapshot } from "./task-graph-scheduler.ts";
+import { buildTaskGraphIndex, getReadyTasks, refreshTaskGraphQueues, taskGraphSnapshot } from "./task-graph-scheduler.ts";
 import { checkBranchFreshness } from "../worktree/branch-freshness.ts";
 import { aggregateTaskOutputs } from "./task-output-context.ts";
 import { saveCrewAgents } from "./crew-agent-records.ts";
@@ -19,6 +19,7 @@ import { recordsForMaterializedTasks } from "./task-display.ts";
 import { deliverGroupJoin, resolveGroupJoinMode } from "./group-join.ts";
 import { runTeamTask } from "./task-runner.ts";
 import { resolveBatchConcurrency } from "./concurrency.ts";
+import { mapConcurrent } from "./parallel-utils.ts";
 
 export interface ExecuteTeamRunInput {
 	manifest: TeamRunManifest;
@@ -281,28 +282,36 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 	let workflow = input.workflow;
 	let manifest = updateRunStatus(input.manifest, "running", input.executeWorkers ? "Executing team workflow." : "Creating workflow prompts and placeholder results.");
 	let tasks = refreshTaskGraphQueues(input.tasks);
-	const initialAdaptive = injectAdaptivePlanIfReady({ manifest, tasks, workflow, team: input.team });
-	if (initialAdaptive.missingPlan) {
+	let queueIndex = buildTaskGraphIndex(tasks);
+	const canInjectAdaptivePlan = workflow.name === "implementation";
+	let adaptivePlanInjected = false;
+	let adaptivePlanMissing = false;
+	const attemptAdaptivePlan = () => {
+		if (!canInjectAdaptivePlan || adaptivePlanInjected || adaptivePlanMissing) return { injected: false, missing: false };
+		const adaptivePlan = injectAdaptivePlanIfReady({ manifest, tasks, workflow, team: input.team });
+		adaptivePlanInjected = adaptivePlanInjected || adaptivePlan.injected;
+		adaptivePlanMissing = adaptivePlan.missingPlan;
+		workflow = adaptivePlan.workflow;
+		if (adaptivePlan.injected) tasks = adaptivePlan.tasks;
+		return { injected: adaptivePlan.injected, missing: adaptivePlan.missingPlan };
+	};
+	const initialAdaptive = attemptAdaptivePlan();
+	if (initialAdaptive.missing) {
 		tasks = markBlocked(tasks, "Adaptive planner did not produce a valid subagent plan.");
-		saveRunTasks(manifest, tasks);
+		await saveRunTasksAsync(manifest, tasks);
 		manifest = updateRunStatus(manifest, "blocked", "Adaptive planner did not produce a valid subagent plan.");
 		return { manifest, tasks };
 	}
-	if (initialAdaptive.injected) {
-		tasks = initialAdaptive.tasks;
-		workflow = initialAdaptive.workflow;
-	} else {
-		workflow = initialAdaptive.workflow;
-	}
+	if (initialAdaptive.injected) queueIndex = buildTaskGraphIndex(tasks);
 	manifest = writeProgress(manifest, tasks, "team-runner");
-	saveRunManifest(manifest);
+	await saveRunManifestAsync(manifest);
 	const runtimeKind = input.runtime?.kind ?? (input.executeWorkers ? "child-process" : "scaffold");
 	saveCrewAgents(manifest, recordsForMaterializedTasks(manifest, tasks, runtimeKind));
 
 	while (tasks.some((task) => task.status === "queued")) {
 		if (input.signal?.aborted) {
 			tasks = tasks.map((task) => task.status === "queued" || task.status === "running" ? { ...task, status: "cancelled", finishedAt: new Date().toISOString(), error: "Run cancelled." } : task);
-			saveRunTasks(manifest, tasks);
+			await saveRunTasksAsync(manifest, tasks);
 			manifest = updateRunStatus(manifest, "cancelled", "Run cancelled.");
 			return { manifest, tasks };
 		}
@@ -310,63 +319,49 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 		const failed = tasks.find((task) => task.status === "failed");
 		if (failed) {
 			tasks = markBlocked(tasks, `Blocked by failed task '${failed.id}'.`);
-			saveRunTasks(manifest, tasks);
+			await saveRunTasksAsync(manifest, tasks);
 			saveCrewAgents(manifest, recordsForMaterializedTasks(manifest, tasks, runtimeKind));
 			manifest = updateRunStatus(manifest, "failed", `Failed at task '${failed.id}'.`);
 			return { manifest, tasks };
 		}
 
-		const injectedPlan = injectAdaptivePlanIfReady({ manifest, tasks, workflow, team: input.team });
-		if (injectedPlan.missingPlan) {
-			tasks = markBlocked(tasks, "Adaptive planner did not produce a valid subagent plan.");
-			saveRunTasks(manifest, tasks);
-			saveCrewAgents(manifest, recordsForMaterializedTasks(manifest, tasks, runtimeKind));
-			manifest = updateRunStatus(manifest, "blocked", "Adaptive planner did not produce a valid subagent plan.");
-			return { manifest, tasks };
-		}
-		if (injectedPlan.injected) {
-			tasks = injectedPlan.tasks;
-			workflow = injectedPlan.workflow;
-			saveRunTasks(manifest, tasks);
-			saveCrewAgents(manifest, recordsForMaterializedTasks(manifest, tasks, runtimeKind));
-		} else {
-			workflow = injectedPlan.workflow;
-		}
-		const snapshot = taskGraphSnapshot(tasks);
+		const snapshot = taskGraphSnapshot(tasks, queueIndex);
 		const readyRoles = snapshot.ready.map((taskId) => tasks.find((task) => task.id === taskId)?.role).filter((role): role is string => Boolean(role));
-		const concurrency = resolveBatchConcurrency({ workflowName: workflow.name, teamMaxConcurrency: input.team.maxConcurrency, limitMaxConcurrentWorkers: input.limits?.maxConcurrentWorkers, readyCount: snapshot.ready.length, workspaceMode: manifest.workspaceMode, readyRoles });
-		const readyBatch = getReadyTasks(tasks, concurrency.selectedCount);
+		const concurrency = resolveBatchConcurrency({ workflowName: workflow.name, workflowMaxConcurrency: workflow.maxConcurrency, teamMaxConcurrency: input.team.maxConcurrency, limitMaxConcurrentWorkers: input.limits?.maxConcurrentWorkers, readyCount: snapshot.ready.length, workspaceMode: manifest.workspaceMode, readyRoles });
+		const readyBatch = getReadyTasks(tasks, concurrency.selectedCount, queueIndex);
 		if (readyBatch.length === 0) {
 			tasks = markBlocked(tasks, "No ready queued task; dependency graph may be invalid.");
-			saveRunTasks(manifest, tasks);
+			await saveRunTasksAsync(manifest, tasks);
 			saveCrewAgents(manifest, recordsForMaterializedTasks(manifest, tasks, runtimeKind));
 			manifest = updateRunStatus(manifest, "blocked", "No ready queued task.");
 			return { manifest, tasks };
 		}
 
 		appendEvent(manifest.eventsPath, { type: "task.progress", runId: manifest.runId, message: `Starting ready batch with ${readyBatch.length} task(s).`, data: { taskIds: readyBatch.map((task) => task.id), readyCount: snapshot.ready.length, blockedCount: snapshot.blocked.length, runningCount: snapshot.running.length, doneCount: snapshot.done.length, selectedCount: readyBatch.length, maxConcurrent: concurrency.maxConcurrent, defaultConcurrency: concurrency.defaultConcurrency, concurrencyReason: concurrency.reason } });
-		const results = await Promise.all(readyBatch.map((task) => {
-			const step = findStep(workflow, task);
-			const agent = findAgent(input.agents, task);
-			return runTeamTask({ manifest, tasks, task, step, agent, signal: input.signal, executeWorkers: input.executeWorkers, runtimeKind: input.runtime?.kind, runtimeConfig: input.runtimeConfig, parentContext: input.parentContext, parentModel: input.parentModel, modelRegistry: input.modelRegistry, modelOverride: input.modelOverride, limits: input.limits });
-		}));
+		const results = await mapConcurrent(
+			readyBatch,
+			concurrency.selectedCount,
+			(task) => {
+				const step = findStep(workflow, task);
+				const agent = findAgent(input.agents, task);
+				return runTeamTask({ manifest, tasks, task, step, agent, signal: input.signal, executeWorkers: input.executeWorkers, runtimeKind: input.runtime?.kind, runtimeConfig: input.runtimeConfig, parentContext: input.parentContext, parentModel: input.parentModel, modelRegistry: input.modelRegistry, modelOverride: input.modelOverride, limits: input.limits });
+			},
+		);
 		manifest = { ...results.at(-1)!.manifest, artifacts: mergeArtifacts([manifest.artifacts, ...results.map((item) => item.manifest.artifacts)].flat()) };
 		tasks = __test__mergeTaskUpdates(tasks, results);
-		const injectedAfterBatch = injectAdaptivePlanIfReady({ manifest, tasks, workflow, team: input.team });
-		if (injectedAfterBatch.missingPlan) {
+		queueIndex = buildTaskGraphIndex(tasks);
+		const injectedAfterBatch = attemptAdaptivePlan();
+		if (injectedAfterBatch.missing) {
 			tasks = markBlocked(tasks, "Adaptive planner did not produce a valid subagent plan.");
-			saveRunTasks(manifest, tasks);
+			await saveRunTasksAsync(manifest, tasks);
 			saveCrewAgents(manifest, recordsForMaterializedTasks(manifest, tasks, runtimeKind));
 			manifest = updateRunStatus(manifest, "blocked", "Adaptive planner did not produce a valid subagent plan.");
 			return { manifest, tasks };
 		}
 		if (injectedAfterBatch.injected) {
-			tasks = injectedAfterBatch.tasks;
-			workflow = injectedAfterBatch.workflow;
-		} else {
-			workflow = injectedAfterBatch.workflow;
+			queueIndex = buildTaskGraphIndex(tasks);
 		}
-		saveRunTasks(manifest, tasks);
+		await saveRunTasksAsync(manifest, tasks);
 		saveCrewAgents(manifest, recordsForMaterializedTasks(manifest, tasks, runtimeKind));
 		const completedBatch = readyBatch.map((task) => tasks.find((item) => item.id === task.id) ?? task);
 		const batchArtifact = writeArtifact(manifest.artifactsRoot, {
@@ -378,7 +373,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 		const groupDelivery = deliverGroupJoin({ manifest, mode: resolveGroupJoinMode(input.runtimeConfig), batch: readyBatch, allTasks: tasks });
 		manifest = { ...manifest, artifacts: mergeArtifacts([...manifest.artifacts, batchArtifact, ...(groupDelivery?.artifact ? [groupDelivery.artifact] : [])]) };
 		manifest = writeProgress(manifest, tasks, "team-runner");
-		saveRunManifest(manifest);
+		await saveRunManifestAsync(manifest);
 	}
 
 	const failed = tasks.find((task) => task.status === "failed");
@@ -392,7 +387,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 		manifest = updateRunStatus(manifest, "completed", input.executeWorkers ? "Team workflow completed." : "Team workflow scaffold completed without launching child workers.");
 	}
 	manifest = writeProgress(manifest, tasks, "team-runner");
-	saveRunManifest(manifest);
+	await saveRunManifestAsync(manifest);
 	const usage = aggregateUsage(tasks);
 	const summaryArtifact = writeArtifact(manifest.artifactsRoot, {
 		kind: "summary",
@@ -416,7 +411,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 		].join("\n"),
 	});
 	manifest = { ...manifest, updatedAt: new Date().toISOString(), artifacts: [...manifest.artifacts, summaryArtifact] };
-	saveRunManifest(manifest);
-	saveRunTasks(manifest, tasks);
+	await saveRunManifestAsync(manifest);
+	await saveRunTasksAsync(manifest, tasks);
 	return { manifest, tasks };
 }

@@ -5,15 +5,26 @@ import { readCrewAgents } from "../runtime/crew-agent-records.ts";
 import type { TeamTaskState } from "../state/types.ts";
 import { aggregateUsage } from "../state/usage.ts";
 import { isDisplayActiveRun } from "../runtime/process-status.ts";
+import { logInternalError } from "../utils/internal-error.ts";
 
 type EventBus = { emit?: (event: string, data: unknown) => void } | undefined;
 
 function safeEmit(events: EventBus, event: string, data: unknown): void {
-	try { events?.emit?.(event, data); } catch {}
+	try {
+		events?.emit?.(event, data);
+	} catch (error) {
+		logInternalError("powerbar.safeEmit", error, `event=${event}`);
+	}
 }
 
 function readTasks(tasksPath: string): TeamTaskState[] {
-	try { const parsed = JSON.parse(fs.readFileSync(tasksPath, "utf-8")); return Array.isArray(parsed) ? parsed as TeamTaskState[] : []; } catch { return []; }
+	try {
+		const parsed = JSON.parse(fs.readFileSync(tasksPath, "utf-8"));
+		return Array.isArray(parsed) ? parsed as TeamTaskState[] : [];
+	} catch (error) {
+		logInternalError("powerbar.readTasks", error, tasksPath);
+		return [];
+	}
 }
 
 export function compactTokens(total: number): string {
@@ -30,7 +41,11 @@ export function updatePiCrewPowerbar(events: EventBus, cwd: string, config?: Cre
 	if (config?.powerbar === false) return;
 	const active = listRecentRuns(cwd, 20).map((run) => {
 		let agents = [] as ReturnType<typeof readCrewAgents>;
-		try { agents = readCrewAgents(run); } catch {}
+		try {
+			agents = readCrewAgents(run);
+		} catch (error) {
+			logInternalError("powerbar.readCrewAgents", error, run.runId);
+		}
 		return { run, agents };
 	}).filter((item) => isDisplayActiveRun(item.run, item.agents));
 	if (!active.length) {

@@ -6,6 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
 import { loadRunManifestById } from "../../src/state/state-store.ts";
+import { firstText } from "../fixtures/tool-result-helpers.ts";
 
 function hasGit(): boolean {
 	try {
@@ -77,12 +78,13 @@ test("worktree mode creates task worktrees and exposes them", async (t) => {
 
 		const worktrees = await handleTeamTool({ action: "worktrees", runId }, { cwd });
 		assert.equal(worktrees.isError, false);
-		assert.match(worktrees.content[0]?.text ?? "", /branch=pi-crew\//);
+		assert.match(firstText(worktrees), /branch=pi-crew\//);
 
 		const cleanup = await handleTeamTool({ action: "cleanup", runId }, { cwd });
 		assert.equal(cleanup.isError, false);
-		assert.match(cleanup.content[0]?.text ?? "", /Removed:/);
+		assert.match(firstText(cleanup), /Removed:/);
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}
 });
+

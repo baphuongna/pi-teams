@@ -1,5 +1,8 @@
+import { DEFAULT_CONCURRENCY } from "../config/defaults.ts";
+
 export interface ResolveBatchConcurrencyInput {
 	workflowName: string;
+	workflowMaxConcurrency?: number;
 	teamMaxConcurrency?: number;
 	limitMaxConcurrentWorkers?: number;
 	readyCount: number;
@@ -14,11 +17,12 @@ export interface BatchConcurrencyDecision {
 	reason: string;
 }
 
-export function defaultWorkflowConcurrency(workflowName: string): number {
-	if (workflowName === "parallel-research") return 4;
-	if (workflowName === "research") return 2;
-	if (workflowName === "implementation" || workflowName === "review" || workflowName === "default") return 2;
-	return 1;
+export function defaultWorkflowConcurrency(workflowName: string, workflowMaxConcurrency?: number): number {
+	if (workflowMaxConcurrency !== undefined) return workflowMaxConcurrency;
+	if (workflowName === "parallel-research") return DEFAULT_CONCURRENCY.workflow.parallelResearch;
+	if (workflowName === "research") return DEFAULT_CONCURRENCY.workflow.research;
+	if (workflowName === "implementation" || workflowName === "review" || workflowName === "default") return DEFAULT_CONCURRENCY.workflow.implementation;
+	return DEFAULT_CONCURRENCY.fallback;
 }
 
 function positiveInteger(value: number | undefined): number | undefined {
@@ -27,11 +31,15 @@ function positiveInteger(value: number | undefined): number | undefined {
 }
 
 export function resolveBatchConcurrency(input: ResolveBatchConcurrencyInput): BatchConcurrencyDecision {
-	const defaultConcurrency = defaultWorkflowConcurrency(input.workflowName);
+	const workflowMax = positiveInteger(input.workflowMaxConcurrency);
+	const defaultConcurrency = defaultWorkflowConcurrency(input.workflowName, workflowMax);
 	const limitMax = positiveInteger(input.limitMaxConcurrentWorkers);
 	const teamMax = positiveInteger(input.teamMaxConcurrency);
-	const requested = limitMax ?? teamMax ?? defaultConcurrency;
-	const source = limitMax !== undefined ? "limit" : teamMax !== undefined ? "team" : "workflow";
+	const requested = limitMax ?? teamMax ?? workflowMax ?? defaultWorkflowConcurrency(input.workflowName);
+	let source: "limit" | "team" | "workflow";
+	if (limitMax !== undefined) source = "limit";
+	else if (teamMax !== undefined) source = "team";
+	else source = "workflow";
 	const readyCount = Math.max(0, Math.trunc(input.readyCount));
 	return {
 		maxConcurrent: requested,

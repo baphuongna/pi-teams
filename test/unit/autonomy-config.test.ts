@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
+import { firstText } from "../fixtures/tool-result-helpers.ts";
 
 test("autonomy action shows and toggles autonomous config", async () => {
 	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-autonomy-"));
@@ -16,15 +17,15 @@ test("autonomy action shows and toggles autonomous config", async () => {
 	try {
 		const status = await handleTeamTool({ action: "autonomy" }, { cwd: tmp });
 		assert.equal(status.isError, false);
-		assert.match(status.content[0]?.text ?? "", /Enabled: true/);
+		assert.match(firstText(status), /Enabled: true/);
 
 		const off = await handleTeamTool({ action: "autonomy", config: { enabled: false } }, { cwd: tmp });
 		assert.equal(off.isError, false);
-		assert.match(off.content[0]?.text ?? "", /Enabled: false/);
+		assert.match(firstText(off), /Enabled: false/);
 
 		const on = await handleTeamTool({ action: "autonomy", config: { enabled: true, injectPolicy: true, preferAsyncForLongTasks: true, allowWorktreeSuggestion: false } }, { cwd: tmp });
 		assert.equal(on.isError, false);
-		const text = on.content[0]?.text ?? "";
+		const text = firstText(on);
 		assert.match(text, /Enabled: true/);
 		assert.match(text, /Prefer async for long tasks: true/);
 		assert.match(text, /Allow worktree suggestion: false/);
@@ -42,3 +43,4 @@ test("autonomy action shows and toggles autonomous config", async () => {
 		fs.rmSync(tmp, { recursive: true, force: true });
 	}
 });
+

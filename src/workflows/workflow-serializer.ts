@@ -23,6 +23,7 @@ export function serializeWorkflow(workflow: WorkflowConfig): string {
 		"---",
 		`name: ${workflow.name}`,
 		`description: ${workflow.description}`,
+		...(workflow.maxConcurrency !== undefined ? [`maxConcurrency: ${workflow.maxConcurrency}`] : []),
 		"---",
 		"",
 		...workflow.steps.flatMap(serializeStep),

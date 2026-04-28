@@ -21,4 +21,5 @@ export interface WorkflowConfig {
 	source: ResourceSource;
 	filePath: string;
 	steps: WorkflowStep[];
+	maxConcurrency?: number;
 }

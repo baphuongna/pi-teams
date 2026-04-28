@@ -4,16 +4,21 @@ import * as path from "node:path";
 import type { AgentConfig } from "../agents/agent-config.ts";
 import { buildPiWorkerArgs, checkCrewDepth, cleanupTempDir } from "./pi-args.ts";
 import { getPiSpawnCommand } from "./pi-spawn.ts";
+import { DEFAULT_CHILD_PI } from "../config/defaults.ts";
+import { logInternalError } from "../utils/internal-error.ts";
+import { attachPostExitStdioGuard, trySignalChild } from "./post-exit-stdio-guard.ts";
 
-const POST_EXIT_STDIO_GUARD_MS = 3000;
-const FINAL_DRAIN_MS = 5000;
-const HARD_KILL_MS = 3000;
-const MAX_CAPTURE_BYTES = 256 * 1024;
-const MAX_ASSISTANT_TEXT_CHARS = 8192;
-const MAX_TOOL_RESULT_CHARS = 1024;
-const MAX_TOOL_INPUT_CHARS = 2048;
-const MAX_COMPACT_CONTENT_CHARS = 4096;
+const POST_EXIT_STDIO_GUARD_MS = DEFAULT_CHILD_PI.postExitStdioGuardMs;
+const FINAL_DRAIN_MS = DEFAULT_CHILD_PI.finalDrainMs;
+const HARD_KILL_MS = DEFAULT_CHILD_PI.hardKillMs;
+const RESPONSE_TIMEOUT_MS = DEFAULT_CHILD_PI.responseTimeoutMs;
+const MAX_CAPTURE_BYTES = DEFAULT_CHILD_PI.maxCaptureBytes;
+const MAX_ASSISTANT_TEXT_CHARS = DEFAULT_CHILD_PI.maxAssistantTextChars;
+const MAX_TOOL_RESULT_CHARS = DEFAULT_CHILD_PI.maxToolResultChars;
+const MAX_TOOL_INPUT_CHARS = DEFAULT_CHILD_PI.maxToolInputChars;
+const MAX_COMPACT_CONTENT_CHARS = DEFAULT_CHILD_PI.maxCompactContentChars;
 const activeChildProcesses = new Map<number, ChildProcess>();
+const childHardKillTimers = new Map<number, NodeJS.Timeout>();
 
 function appendBoundedTail(current: string, chunk: string, maxBytes = MAX_CAPTURE_BYTES): string {
 	const combined = current + chunk;
@@ -23,26 +28,58 @@ function appendBoundedTail(current: string, chunk: string, maxBytes = MAX_CAPTUR
 	return `[pi-crew captured output truncated to last ${Math.round(maxBytes / 1024)} KiB]\n${tail}`;
 }
 
-function killProcessTree(pid: number | undefined): void {
+function clearHardKillTimer(pid: number | undefined): void {
+	if (!pid) return;
+	const timer = childHardKillTimers.get(pid);
+	if (!timer) return;
+	clearTimeout(timer);
+	childHardKillTimers.delete(pid);
+}
+
+function killProcessTree(pid: number | undefined, child?: ChildProcess): void {
 	if (!pid || !Number.isInteger(pid) || pid <= 0) return;
+	if (child && child.exitCode !== null) return;
 	try {
 		if (process.platform === "win32") {
 			spawn("taskkill", ["/pid", String(pid), "/t", "/f"], { stdio: "ignore", windowsHide: true });
 			return;
 		}
-		try { process.kill(-pid, "SIGTERM"); } catch { process.kill(pid, "SIGTERM"); }
-		setTimeout(() => {
-			try { process.kill(-pid, "SIGKILL"); } catch { try { process.kill(pid, "SIGKILL"); } catch {} }
-		}, HARD_KILL_MS).unref?.();
-	} catch {
-		// Ignore shutdown races.
+		try {
+			process.kill(-pid, "SIGTERM");
+		} catch (error) {
+			logInternalError("child-pi.sigterm", error, `pid=${pid}`);
+			try {
+				process.kill(pid, "SIGTERM");
+			} catch (fallbackError) {
+				logInternalError("child-pi.sigterm-absolute", fallbackError, `pid=${pid}`);
+			}
+		}
+		clearHardKillTimer(pid);
+		const hardKillTimer = setTimeout(() => {
+			try {
+				process.kill(-pid, "SIGKILL");
+			} catch (error) {
+				logInternalError("child-pi.sigkill", error, `pid=${pid}`);
+				try {
+					process.kill(pid, "SIGKILL");
+				} catch (fallbackError) {
+					logInternalError("child-pi.sigkill-absolute", fallbackError, `pid=${pid}`);
+				}
+			}
+			childHardKillTimers.delete(pid);
+		}, HARD_KILL_MS);
+		hardKillTimer.unref?.();
+		child?.once("exit", () => clearHardKillTimer(pid));
+		childHardKillTimers.set(pid, hardKillTimer);
+	} catch (error) {
+		logInternalError("child-pi.kill-process-tree", error, `pid=${pid}`);
 	}
 }
 
 export function terminateActiveChildPiProcesses(): number {
-	const pids = [...activeChildProcesses.keys()];
-	for (const pid of pids) killProcessTree(pid);
-	return pids.length;
+	const entries = [...activeChildProcesses.entries()];
+	for (const [pid, child] of entries) killProcessTree(pid, child);
+	return entries.length;
 }
 
 export interface ChildPiRunInput {
@@ -57,6 +94,7 @@ export interface ChildPiRunInput {
 	maxDepth?: number;
 	finalDrainMs?: number;
 	hardKillMs?: number;
+	responseTimeoutMs?: number;
 }
 
 export interface ChildPiRunResult {
@@ -183,11 +221,19 @@ export class ChildPiLineObserver {
 		if (!line.trim()) return;
 		const compact = compactChildPiLine(line);
 		if (compact.event !== undefined) {
-			try { this.input.onJsonEvent?.(compact.event); } catch {}
+			try {
+				this.input.onJsonEvent?.(compact.event);
+			} catch (error) {
+				logInternalError("child-pi.on-json-event", error, `line=${compact.persistedLine ?? compact.displayLine ?? ""}`);
+			}
 		}
 		if (compact.persistedLine) appendTranscript(this.input, compact.persistedLine);
 		if (compact.displayLine?.trim()) {
-			try { this.input.onStdoutLine?.(compact.displayLine); } catch {}
+			try {
+				this.input.onStdoutLine?.(compact.displayLine);
+			} catch (error) {
+				logInternalError("child-pi.on-stdout-line", error, `line=${compact.displayLine}`);
+			}
 		}
 	}
 }
@@ -245,28 +291,61 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 			let stderr = "";
 			let settled = false;
 			let childExited = false;
-			let postExitGuard: NodeJS.Timeout | undefined;
+			let postExitGuardCleanup: (() => void) | undefined;
 			let finalDrainTimer: NodeJS.Timeout | undefined;
 			let hardKillTimer: NodeJS.Timeout | undefined;
+			let noResponseTimer: NodeJS.Timeout | undefined;
 			const finalDrainMs = input.finalDrainMs ?? FINAL_DRAIN_MS;
 			const hardKillMs = input.hardKillMs ?? HARD_KILL_MS;
+			const responseTimeoutEnv = Number.parseInt(process.env.PI_TEAMS_CHILD_RESPONSE_TIMEOUT_MS ?? "", 10);
+			const responseTimeoutMs = Number.isFinite(responseTimeoutEnv) && responseTimeoutEnv >= 0 ? responseTimeoutEnv : input.responseTimeoutMs ?? RESPONSE_TIMEOUT_MS;
+			let responseTimeoutHit = false;
 			let forcedFinalDrain = false;
+			const restartNoResponseTimer = (): void => {
+				if (responseTimeoutMs <= 0) return;
+				if (noResponseTimer) clearTimeout(noResponseTimer);
+				noResponseTimer = setTimeout(() => {
+					responseTimeoutHit = true;
+					killProcessTree(child.pid, child);
+					try {
+						child.kill(process.platform === "win32" ? undefined : "SIGTERM");
+					} catch (error) {
+						logInternalError("child-pi.response-timeout-term", error, `pid=${child.pid}`);
+					}
+				}, responseTimeoutMs);
+				noResponseTimer.unref?.();
+			};
+			const clearNoResponseTimer = (): void => {
+				if (noResponseTimer) clearTimeout(noResponseTimer);
+				noResponseTimer = undefined;
+			};
+			restartNoResponseTimer();
 			const lineObserver = new ChildPiLineObserver({
 				...input,
 				onStdoutLine: (line) => {
+					restartNoResponseTimer();
 					stdout = appendBoundedTail(stdout, `${line}\n`);
 					input.onStdoutLine?.(line);
 				},
 				onJsonEvent: (event) => {
+					restartNoResponseTimer();
 					input.onJsonEvent?.(event);
 					if (!isFinalAssistantEvent(event) || childExited || settled || finalDrainTimer) return;
 					finalDrainTimer = setTimeout(() => {
 						if (settled || childExited) return;
 						forcedFinalDrain = true;
-						try { child.kill(process.platform === "win32" ? undefined : "SIGTERM"); } catch {}
+						try {
+							child.kill(process.platform === "win32" ? undefined : "SIGTERM");
+						} catch (error) {
+							logInternalError("child-pi.final-drain-term", error, `pid=${child.pid}`);
+						}
 						hardKillTimer = setTimeout(() => {
 							if (settled || childExited) return;
-							try { child.kill(process.platform === "win32" ? undefined : "SIGKILL"); } catch {}
+							try {
+								child.kill(process.platform === "win32" ? undefined : "SIGKILL");
+							} catch (error) {
+								logInternalError("child-pi.final-drain-kill", error, `pid=${child.pid}`);
+							}
 						}, hardKillMs);
 						hardKillTimer.unref?.();
 					}, finalDrainMs);
@@ -280,12 +359,22 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 				finalDrainTimer = undefined;
 				hardKillTimer = undefined;
 			};
+			const clearPostExitGuard = (): void => {
+				if (postExitGuardCleanup) {
+					postExitGuardCleanup();
+					postExitGuardCleanup = undefined;
+				}
+			};
+			const clearChildPiTimeouts = (): void => {
+				clearNoResponseTimer();
+				clearFinalDrainTimers();
+				clearPostExitGuard();
+			};
 
 			const settle = (result: ChildPiRunResult): void => {
 				if (settled) return;
 				settled = true;
-				if (postExitGuard) clearTimeout(postExitGuard);
-				clearFinalDrainTimers();
+				clearChildPiTimeouts();
 				lineObserver.flush();
 				input.signal?.removeEventListener("abort", abort);
 				cleanupTempDir(built.tempDir);
@@ -293,7 +382,10 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 			};
 
 			const abort = (): void => {
-				killProcessTree(child.pid);
+				killProcessTree(child.pid, child);
+				if (process.platform !== "win32") {
+					trySignalChild(child, "SIGTERM");
+				}
 				try {
 					child.kill(process.platform === "win32" ? undefined : "SIGTERM");
 				} catch {
@@ -306,24 +398,34 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 				lineObserver.observe(chunk.toString("utf-8"));
 			});
 			child.stderr?.on("data", (chunk: Buffer) => {
+				restartNoResponseTimer();
 				stderr = appendBoundedTail(stderr, chunk.toString("utf-8"));
 			});
 			child.on("error", (error) => {
 				settle({ exitCode: null, stdout, stderr, error: error.message });
 			});
 			child.on("exit", () => {
-				if (child.pid) activeChildProcesses.delete(child.pid);
+				if (child.pid) {
+					activeChildProcesses.delete(child.pid);
+					clearHardKillTimer(child.pid);
+				}
 				childExited = true;
+				clearNoResponseTimer();
 				clearFinalDrainTimers();
-				postExitGuard = setTimeout(() => {
-					child.stdout?.destroy();
-					child.stderr?.destroy();
-				}, POST_EXIT_STDIO_GUARD_MS);
-				postExitGuard.unref?.();
+				if (!postExitGuardCleanup) {
+					postExitGuardCleanup = attachPostExitStdioGuard(child, {
+						idleMs: POST_EXIT_STDIO_GUARD_MS,
+						hardMs: HARD_KILL_MS,
+					});
+				}
 			});
 			child.on("close", (exitCode) => {
-				if (child.pid) activeChildProcesses.delete(child.pid);
-				settle({ exitCode, stdout, stderr, ...(forcedFinalDrain && !stderr.trim() ? { error: `Child Pi did not exit within ${finalDrainMs}ms after final assistant message; termination was requested.` } : {}) });
+				if (child.pid) {
+					activeChildProcesses.delete(child.pid);
+					clearHardKillTimer(child.pid);
+				}
+				const timeoutError = responseTimeoutHit && !stderr.trim() ? { error: `Child Pi did not produce output for ${responseTimeoutMs}ms; process was terminated as unresponsive.` } : undefined;
+				settle({ exitCode, stdout, stderr, ...(forcedFinalDrain && !stderr.trim() ? { error: `Child Pi did not exit within ${finalDrainMs}ms after final assistant message; termination was requested.` } : {}), ...(timeoutError ? { error: timeoutError.error } : {}) });
 			});
 		});
 	} finally {

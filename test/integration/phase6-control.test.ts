@@ -7,6 +7,7 @@ import { handleTeamTool } from "../../src/extension/team-tool.ts";
 import { saveCrewAgents } from "../../src/runtime/crew-agent-records.ts";
 import { readForegroundControlStatus, writeForegroundInterruptRequest } from "../../src/runtime/foreground-control.ts";
 import type { TeamRunManifest, TeamTaskState } from "../../src/state/types.ts";
+import { firstText } from "../fixtures/tool-result-helpers.ts";
 
 function manifest(root: string): TeamRunManifest {
 	return {
@@ -69,14 +70,15 @@ test("team api exposes foreground status and interrupt request", async () => {
 		assert.equal(started.isError, false);
 		const runId = started.details.runId!;
 		const status = await handleTeamTool({ action: "api", runId, config: { operation: "foreground-status" } }, { cwd });
-		const statusPayload = JSON.parse(status.content[0]!.text);
+		const statusPayload = JSON.parse(firstText(status));
 		assert.equal(statusPayload.runId, runId);
 		assert.ok(statusPayload.controlPath.includes("foreground-control.json"));
 		const interrupt = await handleTeamTool({ action: "api", runId, config: { operation: "foreground-interrupt", reason: "phase6 test" } }, { cwd });
-		const request = JSON.parse(interrupt.content[0]!.text);
+		const request = JSON.parse(firstText(interrupt));
 		assert.equal(request.type, "interrupt");
 		assert.equal(request.reason, "phase6 test");
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}
 });
+

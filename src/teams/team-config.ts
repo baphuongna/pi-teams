@@ -19,4 +19,8 @@ export interface TeamConfig {
 	workspaceMode?: "single" | "worktree";
 	maxConcurrency?: number;
 	routing?: RoutingMetadata;
+	/**
+	 * Optional git-based source URL when this team config is sourced from a remote URL.
+	 */
+	sourceUrl?: string;
 }

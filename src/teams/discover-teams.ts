@@ -3,6 +3,7 @@ import * as path from "node:path";
 import type { ResourceSource } from "../agents/agent-config.ts";
 import type { TeamConfig, TeamRole } from "./team-config.ts";
 import { parseCsv, parseFrontmatter } from "../utils/frontmatter.ts";
+import { parseGitUrl } from "../utils/git.ts";
 import { packageRoot, projectPiRoot, userPiRoot } from "../utils/paths.ts";
 
 export interface TeamDiscoveryResult {
@@ -31,6 +32,13 @@ function parseCost(value: string | undefined): "free" | "cheap" | "expensive" | 
 	return value === "free" || value === "cheap" || value === "expensive" ? value : undefined;
 }
 
+function parseTeamSource(rawSource: string | undefined, fallback: ResourceSource): { source: ResourceSource; sourceUrl: string | undefined } {
+	if (!rawSource) return { source: fallback, sourceUrl: undefined };
+	const parsed = parseGitUrl(rawSource);
+	if (!parsed) return { source: fallback, sourceUrl: undefined };
+	return { source: "git", sourceUrl: parsed.repo };
+}
+
 function parseTeamFile(filePath: string, source: ResourceSource): TeamConfig | undefined {
 	try {
 		const content = fs.readFileSync(filePath, "utf-8");
@@ -42,10 +50,12 @@ function parseTeamFile(filePath: string, source: ResourceSource): TeamConfig | u
 		const avoidWhen = parseCsv(frontmatter.avoidWhen);
 		const cost = parseCost(frontmatter.cost);
 		const category = frontmatter.category?.trim() || undefined;
+		const sourceInfo = parseTeamSource(frontmatter.source, source);
 		return {
 			name,
 			description: frontmatter.description?.trim() || "No description provided.",
-			source,
+			source: sourceInfo.source,
+			sourceUrl: sourceInfo.sourceUrl,
 			filePath,
 			roles,
 			defaultWorkflow: frontmatter.defaultWorkflow || frontmatter.workflow || undefined,

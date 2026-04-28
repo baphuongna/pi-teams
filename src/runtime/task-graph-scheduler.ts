@@ -1,4 +1,4 @@
-import type { TaskGraphNode, TeamTaskState } from "../state/types.ts";
+import type { TeamTaskState } from "../state/types.ts";
 
 export interface TaskGraphSchedulerSnapshot {
 	ready: string[];
@@ -9,16 +9,22 @@ export interface TaskGraphSchedulerSnapshot {
 	cancelled: string[];
 }
 
-function completedStepIds(tasks: TeamTaskState[]): Set<string> {
-	return new Set(tasks.filter((task) => task.status === "completed").map((task) => task.stepId).filter((id): id is string => id !== undefined));
+export interface TaskGraphIndex {
+	doneSteps: Set<string>;
+	idMap: Map<string, TeamTaskState>;
+	stepToTaskId: Map<string, string>;
+}
+
+export function buildTaskGraphIndex(tasks: TeamTaskState[]): TaskGraphIndex {
+	return {
+		doneSteps: new Set(tasks.filter((task) => task.status === "completed").map((task) => task.stepId).filter((id): id is string => id !== undefined)),
+		idMap: new Map(tasks.map((task) => [task.id, task])),
+		stepToTaskId: new Map(tasks.map((task) => [task.stepId, task.id]).filter((entry): entry is [string, string] => entry[0] !== undefined)),
+	};
 }
 
 function taskById(tasks: TeamTaskState[]): Map<string, TeamTaskState> {
 	return new Map(tasks.map((task) => [task.id, task]));
-}
-
-function stepIdToTaskId(tasks: TeamTaskState[]): Map<string, string> {
-	return new Map(tasks.map((task) => [task.stepId, task.id]).filter((entry): entry is [string, string] => entry[0] !== undefined));
 }
 
 function dependencySatisfied(task: TeamTaskState, doneStepIds: Set<string>, idMap: Map<string, TeamTaskState>, stepMap: Map<string, string>): boolean {
@@ -29,32 +35,41 @@ function dependencySatisfied(task: TeamTaskState, doneStepIds: Set<string>, idMa
 	});
 }
 
-function withQueue(task: TeamTaskState, queue: TaskGraphNode["queue"]): TeamTaskState {
-	return task.graph ? { ...task, graph: { ...task.graph, queue } } : task;
+function withQueue(task: TeamTaskState, index: TaskGraphIndex): TeamTaskState {
+	if (task.status === "queued") {
+		const isReady = dependencySatisfied(task, index.doneSteps, index.idMap, index.stepToTaskId);
+		return { ...task, graph: task.graph ? { ...task.graph, queue: isReady ? "ready" : "blocked" } : task.graph };
+	}
+	if (task.status === "running") {
+		return { ...task, graph: task.graph ? { ...task.graph, queue: "running" } : task.graph };
+	}
+	if (task.status === "completed" || task.status === "skipped") {
+		return { ...task, graph: task.graph ? { ...task.graph, queue: "done" } : task.graph };
+	}
+	return { ...task, graph: task.graph ? { ...task.graph, queue: "blocked" } : task.graph };
 }
 
-export function refreshTaskGraphQueues(tasks: TeamTaskState[]): TeamTaskState[] {
-	const doneSteps = completedStepIds(tasks);
-	const ids = taskById(tasks);
-	const steps = stepIdToTaskId(tasks);
-	return tasks.map((task) => {
-		if (task.status === "queued") return withQueue(task, dependencySatisfied(task, doneSteps, ids, steps) ? "ready" : "blocked");
-		if (task.status === "running") return withQueue(task, "running");
-		if (task.status === "completed" || task.status === "skipped") return withQueue(task, "done");
-		return withQueue(task, "blocked");
-	});
+function ensureIndex(tasks: TeamTaskState[], index?: TaskGraphIndex): TaskGraphIndex {
+	return index ?? buildTaskGraphIndex(tasks);
 }
 
-export function getReadyTasks(tasks: TeamTaskState[], maxCount = 1): TeamTaskState[] {
-	return refreshTaskGraphQueues(tasks).filter((task) => task.status === "queued" && task.graph?.queue === "ready").slice(0, Math.max(0, maxCount));
+export function refreshTaskGraphQueues(tasks: TeamTaskState[], index?: TaskGraphIndex): TeamTaskState[] {
+	const resolved = ensureIndex(tasks, index);
+	return tasks.map((task) => withQueue(task, resolved));
 }
 
-export function markTaskRunning(tasks: TeamTaskState[], taskId: string, now = new Date()): TeamTaskState[] {
-	return refreshTaskGraphQueues(tasks).map((task) => task.id === taskId ? withQueue({ ...task, status: "running", startedAt: task.startedAt ?? now.toISOString() }, "running") : task);
+export function getReadyTasks(tasks: TeamTaskState[], maxCount = 1, index?: TaskGraphIndex): TeamTaskState[] {
+	return refreshTaskGraphQueues(tasks, index).filter((task) => task.status === "queued" && task.graph?.queue === "ready").slice(0, Math.max(0, maxCount));
 }
 
-export function markTaskDone(tasks: TeamTaskState[], taskId: string, now = new Date()): TeamTaskState[] {
-	return refreshTaskGraphQueues(tasks.map((task) => task.id === taskId ? { ...task, status: "completed", finishedAt: task.finishedAt ?? now.toISOString() } : task));
+export function markTaskRunning(tasks: TeamTaskState[], taskId: string, now = new Date(), index?: TaskGraphIndex): TeamTaskState[] {
+	const resolved = ensureIndex(tasks, index);
+	return refreshTaskGraphQueues(tasks, resolved).map((task) => task.id === taskId ? withQueue({ ...task, status: "running", startedAt: task.startedAt ?? now.toISOString() }, resolved) : task);
+}
+
+export function markTaskDone(tasks: TeamTaskState[], taskId: string, now = new Date(), index?: TaskGraphIndex): TeamTaskState[] {
+	const resolved = ensureIndex(tasks, index);
+	return refreshTaskGraphQueues(tasks.map((task) => task.id === taskId ? { ...task, status: "completed", finishedAt: task.finishedAt ?? now.toISOString() } : task), resolved);
 }
 
 export function cancelTaskSubtree(tasks: TeamTaskState[], rootTaskId: string, reason = "Cancelled by task graph scheduler.", now = new Date()): TeamTaskState[] {
@@ -94,8 +109,8 @@ export function failTaskAndBlockChildren(tasks: TeamTaskState[], rootTaskId: str
 	}));
 }
 
-export function taskGraphSnapshot(tasks: TeamTaskState[]): TaskGraphSchedulerSnapshot {
-	const refreshed = refreshTaskGraphQueues(tasks);
+export function taskGraphSnapshot(tasks: TeamTaskState[], index?: TaskGraphIndex): TaskGraphSchedulerSnapshot {
+	const refreshed = refreshTaskGraphQueues(tasks, index);
 	return {
 		ready: refreshed.filter((task) => task.status === "queued" && task.graph?.queue === "ready").map((task) => task.id),
 		blocked: refreshed.filter((task) => task.status === "queued" && task.graph?.queue === "blocked").map((task) => task.id),

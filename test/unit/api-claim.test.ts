@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
 import { loadRunManifestById } from "../../src/state/state-store.ts";
+import { firstText } from "../fixtures/tool-result-helpers.ts";
 
 test("api supports claim, transition, and release task claim", async () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-api-claim-"));
@@ -17,7 +18,7 @@ test("api supports claim, transition, and release task claim", async () => {
 		assert.ok(taskId);
 		const claim = await handleTeamTool({ action: "api", runId, config: { operation: "claim-task", taskId, owner: "tester" } }, { cwd });
 		assert.equal(claim.isError, false);
-		const token = JSON.parse(claim.content[0]?.text ?? "{}").token as string;
+		const token = JSON.parse(firstText(claim) || "{}").token as string;
 		assert.ok(token);
 		const transition = await handleTeamTool({ action: "api", runId, config: { operation: "transition-task-status", taskId, owner: "tester", token, status: "queued" } }, { cwd });
 		assert.equal(transition.isError, false);
@@ -27,3 +28,4 @@ test("api supports claim, transition, and release task claim", async () => {
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}
 });
+

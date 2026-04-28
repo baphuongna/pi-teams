@@ -40,3 +40,26 @@ test("result watcher dedupes duplicate completion payloads within ttl", async ()
 		fs.rmSync(dir, { recursive: true, force: true });
 	}
 });
+
+test("result watcher restarts after watch error", async () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-result-watcher-restart-"));
+	let watchCalls = 0;
+	const emitted: unknown[] = [];
+	try {
+		const watcher = createResultWatcher({ emit: (_event, data) => emitted.push(data) }, dir, {
+			watch: (_resultsDir, _listener, onError) => {
+				watchCalls += 1;
+				onError();
+				return null;
+			},
+		});
+		watcher.start();
+		await wait(50);
+		assert.equal(watchCalls, 1);
+		await wait(3500);
+		assert.equal(watchCalls >= 2, true);
+		watcher.stop();
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});

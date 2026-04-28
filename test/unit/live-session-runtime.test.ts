@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
+import { firstText } from "../fixtures/tool-result-helpers.ts";
 
 function restoreEnv(name: string, previous: string | undefined): void {
 	if (previous === undefined) delete process.env[name];
@@ -20,16 +21,16 @@ test("run can use experimental live-session runtime with durable transcript hook
 		fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
 		const run = await handleTeamTool({ action: "run", team: "fast-fix", goal: "live session smoke", config: { runtime: { mode: "live-session" } } }, { cwd });
 		assert.equal(run.isError, false);
-		assert.match(run.content[0]!.text, /Experimental live-session worker execution was enabled/);
+		assert.match(firstText(run), /Experimental live-session worker execution was enabled/);
 		const runId = run.details.runId!;
 		const agentsResult = await handleTeamTool({ action: "api", runId, config: { operation: "list-agents" } }, { cwd });
-		const agents = JSON.parse(agentsResult.content[0]!.text);
+		const agents = JSON.parse(firstText(agentsResult));
 		assert.equal(agents[0].runtime, "live-session");
 		assert.equal(agents[0].status, "completed");
 		const transcript = await handleTeamTool({ action: "api", runId, config: { operation: "read-agent-transcript", agentId: agents[0].taskId } }, { cwd });
-		assert.match(transcript.content[0]!.text, /Mock live-session success/);
+		assert.match(firstText(transcript), /Mock live-session success/);
 		const liveAgents = await handleTeamTool({ action: "api", runId, config: { operation: "list-live-agents" } }, { cwd });
-		assert.match(liveAgents.content[0]!.text, /team_/);
+		assert.match(firstText(liveAgents), /team_/);
 		const steer = await handleTeamTool({ action: "api", runId, config: { operation: "steer-agent", agentId: agents[0].taskId, message: "wrap up" } }, { cwd });
 		assert.equal(steer.isError, false);
 		const sidechainPath = path.join(cwd, ".pi", "teams", "state", "runs", runId, "agents", agents[0].taskId, "sidechain.output.jsonl");
@@ -40,3 +41,4 @@ test("run can use experimental live-session runtime with durable transcript hook
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}
 });
+

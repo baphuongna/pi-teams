@@ -34,7 +34,9 @@ test("pi-crew event bus forwards realtime live-control messages", () => {
 	clearLiveControlRealtimeForTest();
 	const bus = new Bus();
 	const seen: unknown[] = [];
-	const unsubSeen = subscribeLiveControlRealtime((request) => seen.push(request));
+	const unsubSeen = subscribeLiveControlRealtime((request) => {
+		seen.push(request);
+	});
 	const handle = registerPiCrewRpc(bus, () => undefined as never)!;
 	const request = { id: "ctrl_rpc", runId: "run", taskId: "task", operation: "stop" as const, createdAt: "2026-04-27T00:00:00.000Z" };
 	try {

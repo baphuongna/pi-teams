@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
 import { loadRunManifestById } from "../../src/state/state-store.ts";
+import { firstText } from "../fixtures/tool-result-helpers.ts";
 
 test("team run writes progress artifacts and API exposes state", async () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-runtime-hardening-"));
@@ -25,12 +26,13 @@ test("team run writes progress artifacts and API exposes state", async () => {
 
 		const list = await handleTeamTool({ action: "api", runId, config: { operation: "list-tasks" } }, { cwd });
 		assert.equal(list.isError, false);
-		assert.match(list.content[0]?.text ?? "", /01_explore/);
+		assert.match(firstText(list), /01_explore/);
 
 		const heartbeat = await handleTeamTool({ action: "api", runId, config: { operation: "read-heartbeat", taskId: loaded.tasks[0]?.id } }, { cwd });
 		assert.equal(heartbeat.isError, false);
-		assert.match(heartbeat.content[0]?.text ?? "", /workerId/);
+		assert.match(firstText(heartbeat), /workerId/);
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}
 });
+

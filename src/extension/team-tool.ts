@@ -1,28 +1,13 @@
-import { execFileSync, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
-import * as path from "node:path";
-import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { allAgents, discoverAgents } from "../agents/discover-agents.ts";
 import { allTeams, discoverTeams } from "../teams/discover-teams.ts";
 import { allWorkflows, discoverWorkflows } from "../workflows/discover-workflows.ts";
-import type { WorkflowConfig } from "../workflows/workflow-config.ts";
-import { effectiveAutonomousConfig, loadConfig, updateAutonomousConfig, updateConfig, type PiTeamsAutonomousConfig, type PiTeamsConfig } from "../config/config.ts";
-import { projectPiRoot, userPiRoot } from "../utils/paths.ts";
+import { loadConfig, updateAutonomousConfig, updateConfig } from "../config/config.ts";
 import type { TeamToolParamsValue } from "../schema/team-tool-schema.ts";
-import { writeArtifact } from "../state/artifact-store.ts";
-import { createRunManifest, loadRunManifestById, saveRunTasks, updateRunStatus } from "../state/state-store.ts";
+import { loadRunManifestById, saveRunTasks, updateRunStatus } from "../state/state-store.ts";
 import { withRunLock, withRunLockSync } from "../state/locks.ts";
-import { canTransitionTaskStatus, isTeamTaskStatus } from "../state/contracts.ts";
-import { claimTask, releaseTaskClaim, transitionClaimedTaskStatus } from "../state/task-claims.ts";
-import { acknowledgeMailboxMessage, appendMailboxMessage, readDeliveryState, readMailbox, validateMailbox, type MailboxDirection } from "../state/mailbox.ts";
 import { aggregateUsage, formatUsage } from "../state/usage.ts";
-import { atomicWriteJson } from "../state/atomic-write.ts";
-import { validateWorkflowForTeam } from "../workflows/validate-workflow.ts";
-import { getPiSpawnCommand } from "../runtime/pi-spawn.ts";
-import { executeTeamRun } from "../runtime/team-runner.ts";
-import { spawnBackgroundTeamRun } from "../runtime/async-runner.ts";
-import { checkProcessLiveness, isActiveRunStatus } from "../runtime/process-status.ts";
-import { appendEvent, readEvents, readEventsCursor } from "../state/event-log.ts";
+import { appendEvent, readEvents } from "../state/event-log.ts";
 import { cleanupRunWorktrees } from "../worktree/cleanup.ts";
 import { piTeamsHelp } from "./help.ts";
 import { initializeProject } from "./project-init.ts";
@@ -32,69 +17,30 @@ import { exportRunBundle } from "./run-export.ts";
 import { importRunBundle } from "./run-import.ts";
 import { listImportedRuns } from "./import-index.ts";
 import { listRuns } from "./run-index.ts";
+import { validateWorkflowForTeam } from "../workflows/validate-workflow.ts";
 import { formatValidationReport, validateResources } from "./validate-resources.ts";
 import { formatRecommendation, recommendTeam } from "./team-recommendation.ts";
-import { toolResult, type PiTeamsToolResult } from "./tool-result.ts";
-import { touchWorkerHeartbeat } from "../runtime/worker-heartbeat.ts";
-import { agentEventsPath, agentOutputPath, readCrewAgentEvents, readCrewAgentEventsCursor, readCrewAgentStatus, readCrewAgents, recordFromTask, saveCrewAgents } from "../runtime/crew-agent-records.ts";
+import type { PiTeamsToolResult } from "./tool-result.ts";
+import { executeTeamRun } from "../runtime/team-runner.ts";
+import { checkProcessLiveness, isActiveRunStatus } from "../runtime/process-status.ts";
+import { saveCrewAgents, readCrewAgents, recordFromTask } from "../runtime/crew-agent-records.ts";
 import { resolveCrewRuntime } from "../runtime/runtime-resolver.ts";
-import { probeLiveSessionRuntime } from "../runtime/live-session-runtime.ts";
 import { applyAttentionState, formatActivityAge, resolveCrewControlConfig } from "../runtime/agent-control.ts";
-import { buildAgentDashboard, readAgentOutput } from "../runtime/agent-observability.ts";
-import { readForegroundControlStatus, writeForegroundInterruptRequest } from "../runtime/foreground-control.ts";
-import { listLiveAgents, resumeLiveAgent, steerLiveAgent, stopLiveAgent } from "../runtime/live-agent-manager.ts";
-import { appendLiveAgentControlRequest } from "../runtime/live-agent-control.ts";
-import { liveControlRealtimeMessage, publishLiveControlRealtime } from "../runtime/live-control-realtime.ts";
+import { writeForegroundInterruptRequest } from "../runtime/foreground-control.ts";
 import { formatTaskGraphLines, waitingReason } from "../runtime/task-display.ts";
 import { directTeamAndWorkflowFromRun } from "../runtime/direct-run.ts";
-import { expandParallelResearchWorkflow } from "../runtime/parallel-research.ts";
+import { buildParentContext, configRecord, formatScoped, result, type TeamContext } from "./team-tool/context.ts";
+import { autonomousPatchFromConfig, configPatchFromConfig, formatAutonomyStatus } from "./team-tool/config-patch.ts";
+import { handleApi } from "./team-tool/api.ts";
+import { handleRun } from "./team-tool/run.ts";
+import { handleDoctor } from "./team-tool/doctor.ts";
+import { logInternalError } from "../utils/internal-error.ts";
 
-export interface TeamToolDetails {
-	action: string;
-	status: "ok" | "error" | "planned";
-	runId?: string;
-	artifactsRoot?: string;
-}
-
-type TeamContext = Pick<ExtensionContext, "cwd"> & Partial<Pick<ExtensionContext, "model">> & {
-	modelRegistry?: unknown;
-	sessionManager?: { getBranch?: () => unknown[] };
-	events?: { emit?: (event: string, data: unknown) => void };
-	signal?: AbortSignal;
-	startForegroundRun?: (runner: (signal?: AbortSignal) => Promise<void>, runId?: string) => void;
-	onRunStarted?: (runId: string) => void;
-};
-
-function result(text: string, details: TeamToolDetails, isError = false): PiTeamsToolResult {
-	return toolResult(text, details, isError);
-}
-
-function formatScoped(name: string, source: string, description: string): string {
-	return `- ${name} (${source}): ${description}`;
-}
-
-function extractTextContent(content: unknown): string {
-	if (typeof content === "string") return content;
-	if (!Array.isArray(content)) return "";
-	return content.map((part) => part && typeof part === "object" && !Array.isArray(part) && typeof (part as { text?: unknown }).text === "string" ? (part as { text: string }).text : "").filter(Boolean).join("\n");
-}
-
-function buildParentContext(ctx: TeamContext): string | undefined {
-	const branch = ctx.sessionManager?.getBranch?.();
-	if (!Array.isArray(branch) || branch.length === 0) return undefined;
-	const parts: string[] = [];
-	for (const entry of branch.slice(-20)) {
-		if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-		const record = entry as { type?: unknown; message?: unknown; summary?: unknown };
-		if (record.type === "compaction" && typeof record.summary === "string") parts.push(`[Summary]: ${record.summary}`);
-		const message = record.message && typeof record.message === "object" && !Array.isArray(record.message) ? record.message as { role?: unknown; content?: unknown } : undefined;
-		if (!message || (message.role !== "user" && message.role !== "assistant")) continue;
-		const text = extractTextContent(message.content).trim();
-		if (text) parts.push(`[${message.role === "user" ? "User" : "Assistant"}]: ${text}`);
-	}
-	if (!parts.length) return undefined;
-	return [`# Parent Conversation Context`, "The following context was inherited from the parent Pi session. Treat it as reference-only.", "", parts.join("\n\n")].join("\n");
-}
+export type { TeamToolDetails } from "./team-tool-types.ts";
+export type { TeamContext } from "./team-tool/context.ts";
+export { handleRun } from "./team-tool/run.ts";
+export { handleDoctor } from "./team-tool/doctor.ts";
+export { handleApi } from "./team-tool/api.ts";
 
 export function handleList(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
 	const resource = params.resource;
@@ -160,213 +106,6 @@ export function handleGet(params: TeamToolParamsValue, ctx: TeamContext): PiTeam
 		return result(lines.join("\n"), { action: "get", status: "ok" });
 	}
 	return result("Specify team, workflow, or agent for get.", { action: "get", status: "error" }, true);
-}
-
-function firstOutputLine(stdout: string | null | undefined, stderr: string | null | undefined): string {
-	const output = `${stdout ?? ""}\n${stderr ?? ""}`.trim();
-	return output.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() ?? "available";
-}
-
-function commandExists(command: string, args: string[]): { ok: boolean; detail: string } {
-	const output = spawnSync(command, args, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
-	if (!output.error && output.status === 0) return { ok: true, detail: firstOutputLine(output.stdout, output.stderr) };
-	return { ok: false, detail: output.error?.message ?? firstOutputLine(output.stdout, output.stderr) };
-}
-
-function effectiveRunConfig(base: PiTeamsConfig, rawOverride: unknown): PiTeamsConfig {
-	const patch = configPatchFromConfig(rawOverride);
-	return {
-		...base,
-		...patch,
-		limits: patch.limits ? { ...(base.limits ?? {}), ...patch.limits } : base.limits,
-		runtime: patch.runtime ? { ...(base.runtime ?? {}), ...patch.runtime } : base.runtime,
-		control: patch.control ? { ...(base.control ?? {}), ...patch.control } : base.control,
-		worktree: patch.worktree ? { ...(base.worktree ?? {}), ...patch.worktree } : base.worktree,
-	};
-}
-
-function piCommandExists(): { ok: boolean; detail: string } {
-	const spec = getPiSpawnCommand(["--version"]);
-	const output = spawnSync(spec.command, spec.args, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
-	if (!output.error && output.status === 0) {
-		const executable = spec.command === "pi" ? "pi" : `${spec.command} ${spec.args[0] ?? ""}`.trim();
-		return { ok: true, detail: `${firstOutputLine(output.stdout, output.stderr)} (${executable})` };
-	}
-	return { ok: false, detail: output.error?.message ?? firstOutputLine(output.stdout, output.stderr) };
-}
-
-function checkWritableDir(dir: string): { ok: boolean; detail: string } {
-	try {
-		fs.mkdirSync(dir, { recursive: true });
-		const probe = path.join(dir, `.pi-crew-write-${process.pid}-${Date.now()}`);
-		fs.writeFileSync(probe, "ok", "utf-8");
-		fs.unlinkSync(probe);
-		return { ok: true, detail: dir };
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		return { ok: false, detail: `${dir}: ${message}` };
-	}
-}
-
-export function handleDoctor(ctx: TeamContext, params: TeamToolParamsValue = {}): PiTeamsToolResult {
-	const discoveredAgents = allAgents(discoverAgents(ctx.cwd));
-	const agentCount = discoveredAgents.length;
-	const teamCount = allTeams(discoverTeams(ctx.cwd)).length;
-	const workflowCount = allWorkflows(discoverWorkflows(ctx.cwd)).length;
-	const git = commandExists("git", ["--version"]);
-	const pi = piCommandExists();
-	const loadedConfig = loadConfig(ctx.cwd);
-	const userWritable = checkWritableDir(path.join(userPiRoot(), "extensions", "pi-crew"));
-	const projectWritable = checkWritableDir(path.join(projectPiRoot(ctx.cwd), "teams"));
-	const validation = validateResources(ctx.cwd);
-	const validationErrors = validation.issues.filter((issue) => issue.level === "error").length;
-	const validationWarnings = validation.issues.filter((issue) => issue.level === "warning").length;
-	let smokeChildPi: { ok: boolean; detail: string } | undefined;
-	const doctorCfg = configRecord(params.config);
-	if (doctorCfg.smokeChildPi === true) {
-		try {
-			const spec = getPiSpawnCommand(["--mode", "json", "-p", "Reply with exactly PI-TEAMS-SMOKE-OK"]);
-			const output = execFileSync(spec.command, spec.args, { cwd: ctx.cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 15_000 }).trim();
-			smokeChildPi = { ok: output.includes("PI-TEAMS-SMOKE-OK"), detail: output.split("\n").slice(-1)[0] ?? "completed" };
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			smokeChildPi = { ok: false, detail: message };
-		}
-	}
-	const checks = [
-		{ label: "cwd", ok: fs.existsSync(ctx.cwd), detail: ctx.cwd },
-		{ label: "platform", ok: true, detail: `${process.platform}/${process.arch} node=${process.version}` },
-		{ label: "pi command", ok: pi.ok, detail: pi.detail },
-		{ label: "git command", ok: git.ok, detail: git.detail },
-		{ label: "user state writable", ok: userWritable.ok, detail: userWritable.detail },
-		{ label: "project state writable", ok: projectWritable.ok, detail: projectWritable.detail },
-		{ label: "config", ok: !loadedConfig.error, detail: loadedConfig.error ? `${loadedConfig.path}: ${loadedConfig.error}` : loadedConfig.path },
-		{ label: "current model", ok: true, detail: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "not available in this context" },
-		{ label: "resource model hints", ok: true, detail: `${discoveredAgents.filter((agent) => agent.model || agent.fallbackModels?.length).length} agents declare model/fallback preferences` },
-		{ label: "agents", ok: agentCount > 0, detail: `${agentCount} discovered` },
-		{ label: "teams", ok: teamCount > 0, detail: `${teamCount} discovered` },
-		{ label: "workflows", ok: workflowCount > 0, detail: `${workflowCount} discovered` },
-		{ label: "resource validation", ok: validationErrors === 0, detail: `${validationErrors} errors, ${validationWarnings} warnings` },
-		...(smokeChildPi ? [{ label: "child Pi smoke", ok: smokeChildPi.ok, detail: smokeChildPi.detail }] : []),
-	];
-	const text = ["pi-crew doctor:", ...checks.map((check) => `- ${check.ok ? "OK" : "FAIL"} ${check.label}: ${check.detail}`)].join("\n");
-	return result(text, { action: "doctor", status: checks.every((check) => check.ok) ? "ok" : "error" }, checks.some((check) => !check.ok));
-}
-
-export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): Promise<PiTeamsToolResult> {
-	const goal = params.goal ?? params.task;
-	if (!goal) return result("Run requires goal or task.", { action: "run", status: "error" }, true);
-
-	const teams = allTeams(discoverTeams(ctx.cwd));
-	const workflows = allWorkflows(discoverWorkflows(ctx.cwd));
-	const agents = allAgents(discoverAgents(ctx.cwd));
-	const directAgent = params.agent ? agents.find((item) => item.name === params.agent) : undefined;
-	if (params.agent && !directAgent) return result(`Agent '${params.agent}' not found.`, { action: "run", status: "error" }, true);
-	const teamName = params.team ?? "default";
-	const team = directAgent ? {
-		name: `direct-${directAgent.name}`,
-		description: `Direct subagent run for ${directAgent.name}`,
-		source: "builtin" as const,
-		filePath: "<generated>",
-		roles: [{ name: params.role ?? "agent", agent: directAgent.name, description: directAgent.description }],
-		defaultWorkflow: "direct-agent",
-		workspaceMode: params.workspaceMode,
-	} : teams.find((item) => item.name === teamName);
-	if (!team) return result(`Team '${teamName}' not found.`, { action: "run", status: "error" }, true);
-	const workflowName = directAgent ? "direct-agent" : params.workflow ?? team.defaultWorkflow ?? "default";
-	const baseWorkflow = directAgent ? {
-		name: "direct-agent",
-		description: `Direct task for ${directAgent.name}`,
-		source: "builtin" as const,
-		filePath: "<generated>",
-		steps: [{ id: "01_agent", role: params.role ?? "agent", task: "{goal}", model: params.model }],
-	} : workflows.find((item) => item.name === workflowName);
-	if (!baseWorkflow) return result(`Workflow '${workflowName}' not found.`, { action: "run", status: "error" }, true);
-	const workflow = directAgent ? baseWorkflow : expandParallelResearchWorkflow(baseWorkflow, ctx.cwd);
-
-	const validationErrors = validateWorkflowForTeam(workflow, team);
-	if (validationErrors.length > 0) {
-		return result([`Workflow '${workflow.name}' is not valid for team '${team.name}':`, ...validationErrors.map((error) => `- ${error}`)].join("\n"), { action: "run", status: "error" }, true);
-	}
-
-	const { manifest, tasks, paths } = createRunManifest({
-		cwd: ctx.cwd,
-		team,
-		workflow,
-		goal,
-		workspaceMode: params.workspaceMode,
-	});
-	const goalArtifact = writeArtifact(paths.artifactsRoot, {
-		kind: "prompt",
-		relativePath: "goal.md",
-		content: `${goal}\n`,
-		producer: "team-tool",
-	});
-	const updatedManifest = { ...manifest, artifacts: [goalArtifact], summary: "Run manifest created; worker execution is not implemented yet." };
-	atomicWriteJson(paths.manifestPath, updatedManifest);
-
-	const loadedConfig = loadConfig(ctx.cwd);
-	const runAsync = params.async ?? loadedConfig.config.asyncByDefault ?? false;
-	if (runAsync) {
-		const spawned = spawnBackgroundTeamRun(updatedManifest);
-		const asyncManifest = { ...updatedManifest, async: { pid: spawned.pid, logPath: spawned.logPath, spawnedAt: new Date().toISOString() } };
-		atomicWriteJson(paths.manifestPath, asyncManifest);
-		appendEvent(updatedManifest.eventsPath, { type: "async.spawned", runId: updatedManifest.runId, data: { pid: spawned.pid, logPath: spawned.logPath } });
-		const text = [
-			`Started async pi-crew run ${updatedManifest.runId}.`,
-			`Team: ${team.name}`,
-			`Workflow: ${workflow.name}`,
-			`Status: ${updatedManifest.status}`,
-			`Tasks: ${tasks.length}`,
-			`State: ${updatedManifest.stateRoot}`,
-			`Artifacts: ${updatedManifest.artifactsRoot}`,
-			`Background log: ${spawned.logPath}`,
-			"",
-			`Check status with: team status runId=${updatedManifest.runId}`,
-		].join("\n");
-		return result(text, { action: "run", status: "ok", runId: updatedManifest.runId, artifactsRoot: updatedManifest.artifactsRoot });
-	}
-
-	const runtime = await resolveCrewRuntime(effectiveRunConfig(loadedConfig.config, params.config));
-	const executeWorkers = runtime.kind !== "scaffold";
-	const executedConfig = effectiveRunConfig(loadedConfig.config, params.config);
-	if (executeWorkers && ctx.startForegroundRun) {
-		ctx.onRunStarted?.(updatedManifest.runId);
-		ctx.startForegroundRun(async (signal) => {
-			await executeTeamRun({ manifest: updatedManifest, tasks, team, workflow, agents, executeWorkers, limits: executedConfig.limits, runtime, runtimeConfig: executedConfig.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, signal });
-		}, updatedManifest.runId);
-		const text = [
-			`Started foreground pi-crew run ${updatedManifest.runId}.`,
-			`Team: ${team.name}`,
-			`Workflow: ${workflow.name}`,
-			"Status: running",
-			`Tasks: ${tasks.length}`,
-			`Runtime: ${runtime.kind}`,
-			`State: ${updatedManifest.stateRoot}`,
-			`Artifacts: ${updatedManifest.artifactsRoot}`,
-			"",
-			"The run continues in this Pi session without blocking the chat. It will be interrupted on session shutdown. Use /team-dashboard or /team-status to watch it.",
-		].join("\n");
-		return result(text, { action: "run", status: "ok", runId: updatedManifest.runId, artifactsRoot: updatedManifest.artifactsRoot });
-	}
-	const executed = await executeTeamRun({ manifest: updatedManifest, tasks, team, workflow, agents, executeWorkers, limits: executedConfig.limits, runtime, runtimeConfig: executedConfig.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, signal: ctx.signal });
-	const text = [
-		`Created pi-crew run ${executed.manifest.runId}.`,
-		`Team: ${team.name}`,
-		`Workflow: ${workflow.name}`,
-		`Status: ${executed.manifest.status}`,
-		`Tasks: ${executed.tasks.length}`,
-		`State: ${executed.manifest.stateRoot}`,
-		`Artifacts: ${executed.manifest.artifactsRoot}`,
-		"",
-		`Runtime: ${runtime.kind}${runtime.fallback ? ` (fallback from ${runtime.requestedMode})` : ""}${runtime.reason ? ` - ${runtime.reason}` : ""}`,
-		runtime.kind === "child-process"
-			? "Child Pi worker execution is enabled by default; each task is launched as a separate Pi process. Set runtime.mode=scaffold or executeWorkers=false only for dry runs."
-			: runtime.kind === "live-session"
-				? "Experimental live-session worker execution was enabled."
-				: "Safe scaffold mode: child Pi workers were not launched because runtime.mode=scaffold or executeWorkers=false was configured.",
-	].join("\n");
-	return result(text, { action: "run", status: executed.manifest.status === "failed" ? "error" : "ok", runId: executed.manifest.runId, artifactsRoot: executed.manifest.artifactsRoot }, executed.manifest.status === "failed");
 }
 
 export function handleStatus(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
@@ -461,8 +200,16 @@ export function handleCancel(params: TeamToolParamsValue, ctx: TeamContext): PiT
 		}
 		const tasks = loaded.tasks.map((task) => task.status === "queued" || task.status === "running" ? { ...task, status: "cancelled" as const, finishedAt: new Date().toISOString(), error: "Run cancelled by user request." } : task);
 		saveRunTasks(loaded.manifest, tasks);
-		try { saveCrewAgents(loaded.manifest, tasks.map((task) => recordFromTask(loaded.manifest, task, "child-process"))); } catch {}
-		try { writeForegroundInterruptRequest(loaded.manifest, "Run cancelled by user request."); } catch {}
+		try {
+			saveCrewAgents(loaded.manifest, tasks.map((task) => recordFromTask(loaded.manifest, task, "child-process")));
+		} catch (error) {
+			logInternalError("team-tool.handleCancel.crewAgents", error, `runId=${loaded.manifest.runId}`);
+		}
+		try {
+			writeForegroundInterruptRequest(loaded.manifest, "Run cancelled by user request.");
+		} catch (error) {
+			logInternalError("team-tool.handleCancel.interruptRequest", error, `runId=${loaded.manifest.runId}`);
+		}
 		const updated = updateRunStatus(loaded.manifest, "cancelled", "Run cancelled by user request. Already-finished worker processes are not retroactively changed.");
 		return result(`Cancelled run ${updated.runId}.`, { action: "cancel", status: "ok", runId: updated.runId, artifactsRoot: updated.artifactsRoot });
 	});
@@ -538,89 +285,6 @@ export function handleWorktrees(params: TeamToolParamsValue, ctx: TeamContext): 
 	return result(lines.join("\n"), { action: "worktrees", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
 }
 
-function configRecord(config: unknown): Record<string, unknown> {
-	if (!config || typeof config !== "object" || Array.isArray(config)) return {};
-	return config as Record<string, unknown>;
-}
-
-function autonomousPatchFromConfig(config: unknown): PiTeamsAutonomousConfig {
-	const cfg = configRecord(config);
-	const profile = cfg.profile === "manual" || cfg.profile === "suggested" || cfg.profile === "assisted" || cfg.profile === "aggressive" ? cfg.profile : undefined;
-	const magicKeywords = cfg.magicKeywords && typeof cfg.magicKeywords === "object" && !Array.isArray(cfg.magicKeywords)
-		? Object.fromEntries(Object.entries(cfg.magicKeywords as Record<string, unknown>).filter((entry): entry is [string, string[]] => Array.isArray(entry[1]) && entry[1].every((item) => typeof item === "string")))
-		: undefined;
-	return {
-		profile,
-		enabled: typeof cfg.enabled === "boolean" ? cfg.enabled : undefined,
-		injectPolicy: typeof cfg.injectPolicy === "boolean" ? cfg.injectPolicy : undefined,
-		preferAsyncForLongTasks: typeof cfg.preferAsyncForLongTasks === "boolean" ? cfg.preferAsyncForLongTasks : undefined,
-		allowWorktreeSuggestion: typeof cfg.allowWorktreeSuggestion === "boolean" ? cfg.allowWorktreeSuggestion : undefined,
-		magicKeywords,
-	};
-}
-
-function configPatchFromConfig(config: unknown): PiTeamsConfig {
-	const cfg = configRecord(config);
-	const control = configRecord(cfg.control);
-	const runtime = configRecord(cfg.runtime);
-	const limits = configRecord(cfg.limits);
-	const worktree = configRecord(cfg.worktree);
-	const ui = configRecord(cfg.ui);
-	return {
-		asyncByDefault: typeof cfg.asyncByDefault === "boolean" ? cfg.asyncByDefault : undefined,
-		executeWorkers: typeof cfg.executeWorkers === "boolean" ? cfg.executeWorkers : undefined,
-		notifierIntervalMs: typeof cfg.notifierIntervalMs === "number" && Number.isFinite(cfg.notifierIntervalMs) ? cfg.notifierIntervalMs : undefined,
-		requireCleanWorktreeLeader: typeof cfg.requireCleanWorktreeLeader === "boolean" ? cfg.requireCleanWorktreeLeader : undefined,
-		autonomous: typeof cfg.autonomous === "object" && cfg.autonomous !== null && !Array.isArray(cfg.autonomous) ? autonomousPatchFromConfig(cfg.autonomous) : undefined,
-		limits: Object.keys(limits).length > 0 ? {
-			maxConcurrentWorkers: typeof limits.maxConcurrentWorkers === "number" && Number.isInteger(limits.maxConcurrentWorkers) && limits.maxConcurrentWorkers > 0 ? limits.maxConcurrentWorkers : undefined,
-			maxTaskDepth: typeof limits.maxTaskDepth === "number" && Number.isInteger(limits.maxTaskDepth) && limits.maxTaskDepth > 0 ? limits.maxTaskDepth : undefined,
-			maxChildrenPerTask: typeof limits.maxChildrenPerTask === "number" && Number.isInteger(limits.maxChildrenPerTask) && limits.maxChildrenPerTask > 0 ? limits.maxChildrenPerTask : undefined,
-			maxRunMinutes: typeof limits.maxRunMinutes === "number" && Number.isInteger(limits.maxRunMinutes) && limits.maxRunMinutes > 0 ? limits.maxRunMinutes : undefined,
-			maxRetriesPerTask: typeof limits.maxRetriesPerTask === "number" && Number.isInteger(limits.maxRetriesPerTask) && limits.maxRetriesPerTask > 0 ? limits.maxRetriesPerTask : undefined,
-			maxTasksPerRun: typeof limits.maxTasksPerRun === "number" && Number.isInteger(limits.maxTasksPerRun) && limits.maxTasksPerRun > 0 ? limits.maxTasksPerRun : undefined,
-			heartbeatStaleMs: typeof limits.heartbeatStaleMs === "number" && Number.isInteger(limits.heartbeatStaleMs) && limits.heartbeatStaleMs > 0 ? limits.heartbeatStaleMs : undefined,
-		} : undefined,
-		runtime: Object.keys(runtime).length > 0 ? {
-			mode: runtime.mode === "auto" || runtime.mode === "scaffold" || runtime.mode === "child-process" || runtime.mode === "live-session" ? runtime.mode : undefined,
-			preferLiveSession: typeof runtime.preferLiveSession === "boolean" ? runtime.preferLiveSession : undefined,
-			allowChildProcessFallback: typeof runtime.allowChildProcessFallback === "boolean" ? runtime.allowChildProcessFallback : undefined,
-			maxTurns: typeof runtime.maxTurns === "number" && Number.isInteger(runtime.maxTurns) && runtime.maxTurns > 0 ? runtime.maxTurns : undefined,
-			graceTurns: typeof runtime.graceTurns === "number" && Number.isInteger(runtime.graceTurns) && runtime.graceTurns > 0 ? runtime.graceTurns : undefined,
-			inheritContext: typeof runtime.inheritContext === "boolean" ? runtime.inheritContext : undefined,
-			promptMode: runtime.promptMode === "replace" || runtime.promptMode === "append" ? runtime.promptMode : undefined,
-			groupJoin: runtime.groupJoin === "off" || runtime.groupJoin === "group" || runtime.groupJoin === "smart" ? runtime.groupJoin : undefined,
-		} : undefined,
-		worktree: Object.keys(worktree).length > 0 ? {
-			setupHook: typeof worktree.setupHook === "string" && worktree.setupHook.trim() ? worktree.setupHook.trim() : undefined,
-			setupHookTimeoutMs: typeof worktree.setupHookTimeoutMs === "number" && Number.isInteger(worktree.setupHookTimeoutMs) && worktree.setupHookTimeoutMs > 0 ? worktree.setupHookTimeoutMs : undefined,
-			linkNodeModules: typeof worktree.linkNodeModules === "boolean" ? worktree.linkNodeModules : undefined,
-		} : undefined,
-		control: Object.keys(control).length > 0 ? {
-			enabled: typeof control.enabled === "boolean" ? control.enabled : undefined,
-			needsAttentionAfterMs: typeof control.needsAttentionAfterMs === "number" && Number.isInteger(control.needsAttentionAfterMs) && control.needsAttentionAfterMs > 0 ? control.needsAttentionAfterMs : undefined,
-		} : undefined,
-		ui: Object.keys(ui).length > 0 ? {
-			widgetPlacement: ui.widgetPlacement === "aboveEditor" || ui.widgetPlacement === "belowEditor" ? ui.widgetPlacement : undefined,
-			widgetMaxLines: typeof ui.widgetMaxLines === "number" && Number.isInteger(ui.widgetMaxLines) && ui.widgetMaxLines > 0 ? ui.widgetMaxLines : undefined,
-			powerbar: typeof ui.powerbar === "boolean" ? ui.powerbar : undefined,
-		} : undefined,
-	};
-}
-
-function formatAutonomyStatus(config: PiTeamsAutonomousConfig | undefined, pathValue: string, updated: boolean): string {
-	const effective = effectiveAutonomousConfig(config);
-	return [
-		updated ? "Updated pi-crew autonomous mode." : "pi-crew autonomous mode:",
-		`Path: ${pathValue}`,
-		`Profile: ${effective.profile}`,
-		`Enabled: ${effective.enabled}`,
-		`Inject policy: ${effective.injectPolicy}`,
-		`Prefer async for long tasks: ${effective.preferAsyncForLongTasks}`,
-		`Allow worktree suggestion: ${effective.allowWorktreeSuggestion}`,
-	].join("\n");
-}
-
 export function handleImports(_params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
 	const imports = listImportedRuns(ctx.cwd);
 	const lines = [
@@ -691,262 +355,6 @@ export function handleCleanup(params: TeamToolParamsValue, ctx: TeamContext): Pi
 		...(cleanup.artifactPaths.length ? cleanup.artifactPaths.map((item) => `- ${item}`) : ["- (none)"]),
 	];
 	return result(lines.join("\n"), { action: "cleanup", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-}
-
-export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): Promise<PiTeamsToolResult> {
-	if (!params.runId) return result("API requires runId.", { action: "api", status: "error" }, true);
-	const loaded = loadRunManifestById(ctx.cwd, params.runId);
-	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "api", status: "error" }, true);
-	const cfg = configRecord(params.config);
-	const operation = typeof cfg.operation === "string" ? cfg.operation : "read-manifest";
-	if (operation === "read-manifest") {
-		return result(JSON.stringify(loaded.manifest, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-	}
-	if (operation === "list-tasks") {
-		return result(JSON.stringify(loaded.tasks, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-	}
-	if (operation === "read-task") {
-		const taskId = typeof cfg.taskId === "string" ? cfg.taskId : undefined;
-		const task = loaded.tasks.find((item) => item.id === taskId || item.stepId === taskId);
-		if (!task) return result("API read-task requires config.taskId matching a task id or step id.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		return result(JSON.stringify(task, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-	}
-	if (operation === "read-events") {
-		const sinceSeq = typeof cfg.sinceSeq === "number" ? cfg.sinceSeq : undefined;
-		const limit = typeof cfg.limit === "number" ? cfg.limit : undefined;
-		const payload = sinceSeq !== undefined || limit !== undefined
-			? readEventsCursor(loaded.manifest.eventsPath, { sinceSeq, limit })
-			: { events: readEvents(loaded.manifest.eventsPath), nextSeq: undefined, total: undefined };
-		return result(JSON.stringify(payload, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-	}
-	if (operation === "runtime-capabilities") {
-		const loadedConfig = loadConfig(ctx.cwd);
-		return result(JSON.stringify(await resolveCrewRuntime(loadedConfig.config), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-	}
-	if (operation === "probe-live-session") {
-		return result(JSON.stringify(await probeLiveSessionRuntime(), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-	}
-	if (operation === "list-agents") {
-		return result(JSON.stringify(readCrewAgents(loaded.manifest), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-	}
-	if (operation === "get-agent-result") {
-		const agentId = typeof cfg.agentId === "string" ? cfg.agentId : undefined;
-		const agent = readCrewAgents(loaded.manifest).find((item) => item.id === agentId || item.taskId === agentId);
-		if (!agent) return result("API get-agent-result requires config.agentId matching an agent id or task id.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		const task = loaded.tasks.find((item) => item.id === agent.taskId);
-		const text = task?.resultArtifact && fs.existsSync(task.resultArtifact.path) ? fs.readFileSync(task.resultArtifact.path, "utf-8") : JSON.stringify(agent, null, 2);
-		return result(text, { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-	}
-	if (operation === "read-agent-status") {
-		const agentId = typeof cfg.agentId === "string" ? cfg.agentId : undefined;
-		const agent = agentId ? readCrewAgents(loaded.manifest).find((item) => item.id === agentId || item.taskId === agentId) : undefined;
-		const status = agent ? readCrewAgentStatus(loaded.manifest, agent.taskId) ?? agent : undefined;
-		if (!status) return result("API read-agent-status requires config.agentId matching an agent id or task id.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		return result(JSON.stringify(status, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-	}
-	if (operation === "read-agent-events") {
-		const agentId = typeof cfg.agentId === "string" ? cfg.agentId : undefined;
-		const agents = readCrewAgents(loaded.manifest);
-		const agent = agentId ? agents.find((item) => item.id === agentId || item.taskId === agentId) : agents[0];
-		if (!agent) return result("API read-agent-events requires config.agentId matching an agent id or task id, or at least one agent in the run.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		const sinceSeq = typeof cfg.sinceSeq === "number" ? cfg.sinceSeq : undefined;
-		const limit = typeof cfg.limit === "number" ? cfg.limit : undefined;
-		const payload = sinceSeq !== undefined || limit !== undefined
-			? readCrewAgentEventsCursor(loaded.manifest, agent.taskId, { sinceSeq, limit })
-			: { path: agentEventsPath(loaded.manifest, agent.taskId), events: readCrewAgentEvents(loaded.manifest, agent.taskId) };
-		return result(JSON.stringify(payload, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-	}
-	if (operation === "read-agent-transcript") {
-		const agentId = typeof cfg.agentId === "string" ? cfg.agentId : undefined;
-		const agents = readCrewAgents(loaded.manifest);
-		const agent = agentId ? agents.find((item) => item.id === agentId || item.taskId === agentId) : agents[0];
-		if (!agent) return result("API read-agent-transcript requires config.agentId matching an agent id or task id, or at least one agent in the run.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		const transcriptPath = agent.transcriptPath && fs.existsSync(agent.transcriptPath) ? agent.transcriptPath : agentOutputPath(loaded.manifest, agent.taskId);
-		const text = fs.existsSync(transcriptPath) ? fs.readFileSync(transcriptPath, "utf-8") : "";
-		return result(text || `(no transcript at ${transcriptPath})`, { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-	}
-	if (operation === "read-agent-output") {
-		const agentId = typeof cfg.agentId === "string" ? cfg.agentId : undefined;
-		const agents = readCrewAgents(loaded.manifest);
-		const agent = agentId ? agents.find((item) => item.id === agentId || item.taskId === agentId) : agents[0];
-		if (!agent) return result("API read-agent-output requires config.agentId matching an agent id or task id, or at least one agent in the run.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		const maxBytes = typeof cfg.maxBytes === "number" ? cfg.maxBytes : undefined;
-		return result(JSON.stringify(readAgentOutput(loaded.manifest, agent.taskId, maxBytes), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-	}
-	if (operation === "agent-dashboard") {
-		return result(buildAgentDashboard(loaded.manifest).text, { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-	}
-	if (operation === "foreground-status") {
-		return result(JSON.stringify(readForegroundControlStatus(loaded.manifest, loaded.tasks), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-	}
-	if (operation === "foreground-interrupt") {
-		const reason = typeof cfg.reason === "string" && cfg.reason.trim() ? cfg.reason.trim() : undefined;
-		return result(JSON.stringify(writeForegroundInterruptRequest(loaded.manifest, reason), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-	}
-	if (operation === "nudge-agent") {
-		const agentId = typeof cfg.agentId === "string" ? cfg.agentId : undefined;
-		const agent = readCrewAgents(loaded.manifest).find((item) => item.id === agentId || item.taskId === agentId);
-		if (!agent) return result("API nudge-agent requires config.agentId matching an agent id or task id.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		const messageText = typeof cfg.message === "string" && cfg.message.trim() ? cfg.message.trim() : "Please report your current status, blocker, or smallest next step.";
-		const message = appendMailboxMessage(loaded.manifest, { direction: "inbox", from: "leader", to: agent.taskId, taskId: agent.taskId, body: messageText });
-		appendEvent(loaded.manifest.eventsPath, { type: "agent.nudged", runId: loaded.manifest.runId, taskId: agent.taskId, message: messageText, data: { agentId: agent.id, mailboxMessageId: message.id } });
-		return result(JSON.stringify({ agentId: agent.id, mailboxMessage: message }, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-	}
-	if (operation === "list-live-agents") {
-		return result(JSON.stringify(listLiveAgents().filter((agent) => agent.runId === loaded.manifest.runId), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-	}
-	if (operation === "steer-agent" || operation === "stop-agent" || operation === "resume-agent" || operation === "interrupt-agent") {
-		const agentId = typeof cfg.agentId === "string" ? cfg.agentId : undefined;
-		if (!agentId) return result(`API ${operation} requires config.agentId.`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		const message = typeof cfg.message === "string" && cfg.message.trim() ? cfg.message.trim() : undefined;
-		const prompt = typeof cfg.prompt === "string" && cfg.prompt.trim() ? cfg.prompt.trim() : message;
-		try {
-			if (operation === "steer-agent") return result(JSON.stringify(await steerLiveAgent(agentId, message ?? "Please report current status and wrap up if possible."), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-			if (operation === "resume-agent") {
-				if (!prompt) return result("API resume-agent requires config.prompt or config.message.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-				return result(JSON.stringify(await resumeLiveAgent(agentId, prompt), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-			}
-			return result(JSON.stringify(await stopLiveAgent(agentId), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-		} catch (error) {
-			const agent = readCrewAgents(loaded.manifest).find((item) => item.id === agentId || item.taskId === agentId);
-			if (!agent) {
-				const err = error instanceof Error ? error.message : String(error);
-				return result(err, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-			}
-			if (operation === "resume-agent" && !prompt) return result("API resume-agent requires config.prompt or config.message.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-			const request = appendLiveAgentControlRequest(loaded.manifest, { taskId: agent.taskId, agentId: agent.id, operation: operation === "resume-agent" ? "resume" : operation === "steer-agent" ? "steer" : "stop", message: operation === "resume-agent" ? prompt : message });
-			publishLiveControlRealtime(request);
-			ctx.events?.emit?.("pi-crew:live-control", liveControlRealtimeMessage(request));
-			appendEvent(loaded.manifest.eventsPath, { type: "agent.control.queued", runId: loaded.manifest.runId, taskId: agent.taskId, message: `Queued ${request.operation} control request for live agent.`, data: { request, realtime: true } });
-			return result(JSON.stringify({ queued: true, request }, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-		}
-	}
-	if (operation === "read-mailbox") {
-		const direction = cfg.direction === "inbox" || cfg.direction === "outbox" ? cfg.direction as MailboxDirection : undefined;
-		const taskId = typeof cfg.taskId === "string" ? cfg.taskId : undefined;
-		return result(JSON.stringify(readMailbox(loaded.manifest, direction, taskId), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-	}
-	if (operation === "validate-mailbox") {
-		const report = validateMailbox(loaded.manifest, { repair: cfg.repair === true });
-		return result(JSON.stringify(report, null, 2), { action: "api", status: report.issues.some((issue) => issue.level === "error") && cfg.repair !== true ? "error" : "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot }, report.issues.some((issue) => issue.level === "error") && cfg.repair !== true);
-	}
-	if (operation === "read-delivery") {
-		return result(JSON.stringify(readDeliveryState(loaded.manifest), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-	}
-	if (operation === "send-message") {
-		const direction = cfg.direction === "outbox" ? "outbox" : "inbox";
-		const from = typeof cfg.from === "string" && cfg.from.trim() ? cfg.from.trim() : "api";
-		const to = typeof cfg.to === "string" && cfg.to.trim() ? cfg.to.trim() : "leader";
-		const body = typeof cfg.body === "string" && cfg.body.trim() ? cfg.body : undefined;
-		const taskId = typeof cfg.taskId === "string" && cfg.taskId.trim() ? cfg.taskId.trim() : undefined;
-		if (!body) return result("API send-message requires config.body.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		try {
-			return withRunLockSync(loaded.manifest, () => {
-				const message = appendMailboxMessage(loaded.manifest, { direction, from, to, body, taskId });
-				appendEvent(loaded.manifest.eventsPath, { type: "mailbox.message", runId: loaded.manifest.runId, data: { id: message.id, direction, from, to } });
-				return result(JSON.stringify(message, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return result(message, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		}
-	}
-	if (operation === "ack-message") {
-		const messageId = typeof cfg.messageId === "string" ? cfg.messageId : undefined;
-		if (!messageId) return result("API ack-message requires config.messageId.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		try {
-			return withRunLockSync(loaded.manifest, () => {
-				const delivery = acknowledgeMailboxMessage(loaded.manifest, messageId);
-				appendEvent(loaded.manifest.eventsPath, { type: "mailbox.acknowledged", runId: loaded.manifest.runId, data: { messageId } });
-				return result(JSON.stringify(delivery, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return result(message, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		}
-	}
-	if (operation === "read-heartbeat") {
-		const taskId = typeof cfg.taskId === "string" ? cfg.taskId : undefined;
-		const task = loaded.tasks.find((item) => item.id === taskId || item.stepId === taskId);
-		if (!task) return result("API read-heartbeat requires config.taskId matching a task id or step id.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		return result(JSON.stringify(task.heartbeat ?? null, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-	}
-	if (operation === "claim-task") {
-		const taskId = typeof cfg.taskId === "string" ? cfg.taskId : undefined;
-		const owner = typeof cfg.owner === "string" ? cfg.owner : "api";
-		const task = loaded.tasks.find((item) => item.id === taskId || item.stepId === taskId);
-		if (!task) return result("API claim-task requires config.taskId matching a task id or step id.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		try {
-			return withRunLockSync(loaded.manifest, () => {
-				const updatedTask = claimTask(task, owner);
-				const tasks = loaded.tasks.map((item) => item.id === task.id ? updatedTask : item);
-				saveRunTasks(loaded.manifest, tasks);
-				appendEvent(loaded.manifest.eventsPath, { type: "task.claimed", runId: loaded.manifest.runId, taskId: task.id, data: { owner, token: updatedTask.claim?.token, leasedUntil: updatedTask.claim?.leasedUntil } });
-				return result(JSON.stringify(updatedTask.claim, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return result(message, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		}
-	}
-	if (operation === "release-task-claim") {
-		const taskId = typeof cfg.taskId === "string" ? cfg.taskId : undefined;
-		const owner = typeof cfg.owner === "string" ? cfg.owner : undefined;
-		const token = typeof cfg.token === "string" ? cfg.token : undefined;
-		const task = loaded.tasks.find((item) => item.id === taskId || item.stepId === taskId);
-		if (!task || !owner || !token) return result("API release-task-claim requires config.taskId, config.owner, and config.token.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		try {
-			return withRunLockSync(loaded.manifest, () => {
-				const updatedTask = releaseTaskClaim(task, owner, token);
-				const tasks = loaded.tasks.map((item) => item.id === task.id ? updatedTask : item);
-				saveRunTasks(loaded.manifest, tasks);
-				appendEvent(loaded.manifest.eventsPath, { type: "task.claim_released", runId: loaded.manifest.runId, taskId: task.id, data: { owner } });
-				return result(JSON.stringify(updatedTask, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return result(message, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		}
-	}
-	if (operation === "transition-task-status") {
-		const taskId = typeof cfg.taskId === "string" ? cfg.taskId : undefined;
-		const owner = typeof cfg.owner === "string" ? cfg.owner : undefined;
-		const token = typeof cfg.token === "string" ? cfg.token : undefined;
-		const to = cfg.status;
-		const task = loaded.tasks.find((item) => item.id === taskId || item.stepId === taskId);
-		if (!task || !owner || !token || !isTeamTaskStatus(to)) return result("API transition-task-status requires config.taskId, config.owner, config.token, and valid config.status.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		if (!canTransitionTaskStatus(task.status, to)) return result(`Invalid task status transition: ${task.status} -> ${to}`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		try {
-			return withRunLockSync(loaded.manifest, () => {
-				const updatedTask = transitionClaimedTaskStatus(task, owner, token, to);
-				const tasks = loaded.tasks.map((item) => item.id === task.id ? updatedTask : item);
-				saveRunTasks(loaded.manifest, tasks);
-				appendEvent(loaded.manifest.eventsPath, { type: "task.status_transitioned", runId: loaded.manifest.runId, taskId: task.id, data: { owner, status: to } });
-				return result(JSON.stringify(updatedTask, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return result(message, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		}
-	}
-	if (operation === "write-heartbeat") {
-		const taskId = typeof cfg.taskId === "string" ? cfg.taskId : undefined;
-		const task = loaded.tasks.find((item) => item.id === taskId || item.stepId === taskId);
-		if (!task) return result("API write-heartbeat requires config.taskId matching a task id or step id.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		try {
-			return withRunLockSync(loaded.manifest, () => {
-				const heartbeat = touchWorkerHeartbeat(task.heartbeat ?? { workerId: task.id, lastSeenAt: new Date().toISOString() }, { alive: typeof cfg.alive === "boolean" ? cfg.alive : undefined });
-				const tasks = loaded.tasks.map((item) => item.id === task.id ? { ...item, heartbeat } : item);
-				saveRunTasks(loaded.manifest, tasks);
-				appendEvent(loaded.manifest.eventsPath, { type: "worker.heartbeat", runId: loaded.manifest.runId, taskId: task.id, data: { ...heartbeat } });
-				return result(JSON.stringify(heartbeat, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
-			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return result(message, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		}
-	}
-	return result(`Unknown API operation: ${operation}`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
 }
 
 export async function handleTeamTool(params: TeamToolParamsValue, ctx: TeamContext): Promise<PiTeamsToolResult> {

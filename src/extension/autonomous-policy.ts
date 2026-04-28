@@ -68,7 +68,7 @@ export function buildAutonomousPolicy(prompt: string, config: PiTeamsAutonomousC
 
 function sourcePriority(source: string): number {
 	if (source === "project") return 0;
-	if (source === "user") return 1;
+	if (source === "user" || source === "git") return 1;
 	return 2;
 }
 

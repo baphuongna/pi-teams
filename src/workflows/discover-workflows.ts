@@ -48,6 +48,13 @@ function parseStepSection(id: string, body: string): WorkflowStep | undefined {
 	};
 }
 
+const parseOptionalInteger = (value: string | undefined): number | undefined => {
+	if (!value) return undefined;
+	const parsed = Number.parseInt(value, 10);
+	if (!Number.isFinite(parsed) || parsed < 1) return undefined;
+	return Math.trunc(parsed);
+};
+
 function parseWorkflowFile(filePath: string, source: ResourceSource): WorkflowConfig | undefined {
 	try {
 		const content = fs.readFileSync(filePath, "utf-8");
@@ -68,6 +75,7 @@ function parseWorkflowFile(filePath: string, source: ResourceSource): WorkflowCo
 			description: frontmatter.description?.trim() || "No description provided.",
 			source,
 			filePath,
+			maxConcurrency: parseOptionalInteger(frontmatter.maxConcurrency),
 			steps,
 		};
 	} catch {

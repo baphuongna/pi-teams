@@ -1,4 +1,3 @@
-import * as fs from "node:fs";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
 import { loadConfig } from "../config/config.ts";
@@ -8,180 +7,68 @@ import { startAsyncRunNotifier, stopAsyncRunNotifier, type AsyncNotifierState } 
 import { notifyActiveRuns } from "./session-summary.ts";
 import { piTeamsHelp } from "./help.ts";
 import { handleTeamManagerCommand } from "./team-manager-command.ts";
-import { handleTeamTool, type TeamToolDetails } from "./team-tool.ts";
+import { handleTeamTool } from "./team-tool.ts";
 import { listRecentRuns } from "./run-index.ts";
 import { RunDashboard, type RunDashboardSelection } from "../ui/run-dashboard.ts";
 import { LiveRunSidebar } from "../ui/live-run-sidebar.ts";
 import { registerPiCrewRpc, type PiCrewRpcHandle } from "./cross-extension-rpc.ts";
 import { stopCrewWidget, updateCrewWidget, type CrewWidgetState } from "../ui/crew-widget.ts";
 import { clearPiCrewPowerbar, registerPiCrewPowerbarSegments, updatePiCrewPowerbar } from "../ui/powerbar-publisher.ts";
-import { DurableTextViewer, DurableTranscriptViewer } from "../ui/transcript-viewer.ts";
+import { DurableTextViewer } from "../ui/transcript-viewer.ts";
 import { loadRunManifestById, updateRunStatus } from "../state/state-store.ts";
 import { readCrewAgents } from "../runtime/crew-agent-records.ts";
 import { terminateActiveChildPiProcesses } from "../runtime/child-pi.ts";
-import { readPersistedSubagentRecord, savePersistedSubagentRecord, SubagentManager, type SubagentRecord, type SubagentSpawnOptions } from "../runtime/subagent-manager.ts";
+import { readPersistedSubagentRecord, savePersistedSubagentRecord, SubagentManager, type SubagentSpawnOptions } from "../runtime/subagent-manager.ts";
+import { commandText, notifyCommandResult, parseRunArgs, parseScalar, pushUnset, setNestedConfig } from "./registration/command-utils.ts";
+import { __test__subagentSpawnParams, formatSubagentRecord, readSubagentRunResult, refreshPersistedSubagentRecord, sendFollowUp, subagentToolResult } from "./registration/subagent-helpers.ts";
+import { DEFAULT_ARTIFACT_CLEANUP, DEFAULT_UI } from "../config/defaults.ts";
+import { CLEANUP_MARKER_FILE, cleanupOldArtifacts } from "../state/artifact-store.ts";
+import { openTranscriptViewer, selectAgentTask } from "./registration/viewers.ts";
+import { logInternalError } from "../utils/internal-error.ts";
+import { printTimings, resetTimings, time } from "../utils/timings.ts";
+import * as path from "node:path";
+import { projectPiRoot, userPiRoot } from "../utils/paths.ts";
 
-function parseRunArgs(args: string): TeamToolParamsValue {
-	const tokens = args.match(/"[^"]*"|'[^']*'|\S+/g)?.map((token) => token.replace(/^['"]|['"]$/g, "")) ?? [];
-	const params: TeamToolParamsValue = { action: "run" };
-	const goalParts: string[] = [];
-	for (const token of tokens) {
-		if (token === "--async") params.async = true;
-		else if (token === "--worktree") params.workspaceMode = "worktree";
-		else if (token.startsWith("--team=")) params.team = token.slice("--team=".length);
-		else if (token.startsWith("--workflow=")) params.workflow = token.slice("--workflow=".length);
-		else if (token.startsWith("--agent=")) params.agent = token.slice("--agent=".length);
-		else if (token.startsWith("--role=")) params.role = token.slice("--role=".length);
-		else if (!params.team && goalParts.length === 0 && !token.startsWith("--")) params.team = token;
-		else goalParts.push(token);
-	}
-	params.goal = goalParts.join(" ").trim() || undefined;
-	return params;
-}
-
-function commandText(result: { content?: Array<{ type: string; text?: string }> }): string {
-	return result.content?.map((item) => item.text ?? "").join("\n") ?? "";
-}
-
-async function notifyCommandResult(ctx: ExtensionCommandContext, text: string): Promise<void> {
-	ctx.ui.notify(text.length > 800 ? `${text.slice(0, 797)}...` : text, "info");
-}
-
-function parseScalar(raw: string): unknown {
-	if (raw === "true") return true;
-	if (raw === "false") return false;
-	if (/^-?\d+$/.test(raw)) return Number(raw);
-	if (raw.includes(",")) return raw.split(",").map((entry) => entry.trim()).filter(Boolean);
-	return raw;
-}
-
-async function selectAgentTask(ctx: ExtensionCommandContext, runId: string | undefined, taskId?: string): Promise<{ runId: string; taskId?: string } | undefined> {
-	if (!runId) return undefined;
-	if (taskId) return { runId, taskId };
-	const loaded = loadRunManifestById(ctx.cwd, runId);
-	if (!loaded) return { runId };
-	const agents = readCrewAgents(loaded.manifest);
-	if (ctx.hasUI && agents.length > 1) {
-		const choice = await ctx.ui.select("Select pi-crew agent", agents.map((agent) => `${agent.taskId} ${agent.role}→${agent.agent} [${agent.status}]`));
-		return { runId, taskId: choice?.split(" ")[0] };
-	}
-	return { runId, taskId: agents[0]?.taskId };
-}
-
-async function openTranscriptViewer(ctx: ExtensionCommandContext, runId: string | undefined, taskId?: string): Promise<boolean> {
-	const selected = await selectAgentTask(ctx, runId, taskId);
-	if (!selected) return false;
-	// eslint-disable-next-line no-param-reassign
-	runId = selected.runId;
-	// eslint-disable-next-line no-param-reassign
-	taskId = selected.taskId;
-	if (!runId || !ctx.hasUI) return false;
-	const loaded = loadRunManifestById(ctx.cwd, runId);
-	if (!loaded) return false;
-	await ctx.ui.custom<undefined>((_tui, theme, _keybindings, done) => new DurableTranscriptViewer(loaded.manifest, theme, done, taskId), {
-		overlay: true,
-		overlayOptions: { width: "90%", maxHeight: "85%", anchor: "center" },
-	});
-	return true;
-}
-
-function pushUnset(config: Record<string, unknown>, key: string): void {
-	const current = Array.isArray(config.unset) ? config.unset : [];
-	current.push(key);
-	config.unset = current;
-}
-
-function setNestedConfig(config: Record<string, unknown>, key: string, value: unknown): void {
-	const parts = key.split(".").filter(Boolean);
-	if (parts.length === 0) return;
-	let target = config;
-	for (const part of parts.slice(0, -1)) {
-		const current = target[part];
-		if (!current || typeof current !== "object" || Array.isArray(current)) target[part] = {};
-		target = target[part] as Record<string, unknown>;
-	}
-	target[parts[parts.length - 1]!] = value;
-}
-
-function sendFollowUp(pi: ExtensionAPI, content: string): void {
-	const sender = (pi as unknown as { sendMessage?: (message: unknown, options?: unknown) => void }).sendMessage;
-	if (typeof sender !== "function") return;
-	sender.call(pi, { customType: "pi-crew-subagent-notification", content, display: true }, { deliverAs: "followUp", triggerTurn: true });
-}
-
-function refreshPersistedSubagentRecord(ctx: ExtensionContext | ExtensionCommandContext, record: SubagentRecord): SubagentRecord {
-	if (!record.runId) return record;
-	const loaded = loadRunManifestById(ctx.cwd, record.runId);
-	if (!loaded) return record;
-	if (loaded.manifest.status === "completed" || loaded.manifest.status === "failed" || loaded.manifest.status === "cancelled" || loaded.manifest.status === "blocked") {
-		const refreshed = { ...record, status: loaded.manifest.status === "completed" ? "completed" as const : loaded.manifest.status === "cancelled" ? "cancelled" as const : "failed" as const, error: loaded.manifest.status === "completed" ? undefined : loaded.manifest.summary, completedAt: record.completedAt ?? Date.now() };
-		savePersistedSubagentRecord(ctx.cwd, refreshed);
-		return refreshed;
-	}
-	return record;
-}
-
-function formatSubagentRecord(record: SubagentRecord): string {
-	const duration = record.completedAt ? `${Math.round((record.completedAt - record.startedAt) / 1000)}s` : "running";
-	return [
-		`Agent: ${record.id}`,
-		`Type: ${record.type}`,
-		`Status: ${record.status}`,
-		record.runId ? `Run: ${record.runId}` : undefined,
-		`Description: ${record.description}`,
-		record.model ? `Model: ${record.model}` : undefined,
-		`Duration: ${duration}`,
-		record.error ? `Error: ${record.error}` : undefined,
-	].filter((line): line is string => Boolean(line)).join("\n");
-}
-
-function readSubagentRunResult(ctx: ExtensionContext | ExtensionCommandContext, record: SubagentRecord): string | undefined {
-	if (!record.runId) return record.result;
-	const loaded = loadRunManifestById(ctx.cwd, record.runId);
-	const task = loaded?.tasks.find((item) => item.resultArtifact) ?? loaded?.tasks[0];
-	const path = task?.resultArtifact?.path;
-	if (!path) return undefined;
-	try {
-		return fs.readFileSync(path, "utf-8").trim();
-	} catch {
-		return undefined;
-	}
-}
-
-function subagentToolResult(text: string, details: Record<string, unknown> = {}, isError = false) {
-	return { content: [{ type: "text" as const, text }], details, isError };
-}
-
-export function __test__subagentSpawnParams(params: Record<string, unknown>, ctx: Pick<ExtensionContext, "cwd">): SubagentSpawnOptions {
-	return {
-		cwd: ctx.cwd,
-		type: typeof params.subagent_type === "string" && params.subagent_type.trim() ? params.subagent_type.trim() : "executor",
-		description: typeof params.description === "string" && params.description.trim() ? params.description.trim() : "pi-crew subagent",
-		prompt: typeof params.prompt === "string" ? params.prompt : "",
-		background: params.run_in_background === true,
-		model: typeof params.model === "string" && params.model.trim() ? params.model.trim() : undefined,
-		maxTurns: typeof params.max_turns === "number" && Number.isFinite(params.max_turns) ? params.max_turns : undefined,
-	};
-}
+export { __test__subagentSpawnParams };
 
 export function registerPiTeams(pi: ExtensionAPI): void {
+	resetTimings();
+	time("register:start");
 	const globalStore = globalThis as Record<string, unknown>;
 	const runtimeCleanupStoreKey = "__piCrewRuntimeCleanup";
 	const previousRuntimeCleanup = globalStore[runtimeCleanupStoreKey];
+	time("register:init");
 	if (typeof previousRuntimeCleanup === "function") {
-		try { previousRuntimeCleanup(); } catch {}
+		try {
+			previousRuntimeCleanup();
+		} catch (error) {
+			logInternalError("register.prev-cleanup", error);
+		}
 	}
 	const notifierState: AsyncNotifierState = { seenFinishedRunIds: new Set() };
 	let currentCtx: ExtensionContext | undefined;
 	let rpcHandle: PiCrewRpcHandle | undefined;
 	let cleanedUp = false;
 	const widgetState: CrewWidgetState = { frame: 0 };
-	const subagentManager = new SubagentManager(4, (record) => {
-		if (!record.background || record.resultConsumed) return;
-		if (record.status === "completed" || record.status === "failed" || record.status === "cancelled" || record.status === "error") {
-			sendFollowUp(pi, [`pi-crew subagent ${record.id} ${record.status}.`, record.runId ? `Run: ${record.runId}` : undefined, `Use get_subagent_result with agent_id=${record.id} for output.`].filter((line): line is string => Boolean(line)).join("\n"));
-		}
-	});
+	const subagentManager = new SubagentManager(
+		4,
+		(record) => {
+			if (!record.background || record.resultConsumed) return;
+			if (record.status === "completed" || record.status === "failed" || record.status === "cancelled" || record.status === "blocked" || record.status === "error") {
+				sendFollowUp(pi, [`pi-crew subagent ${record.id} ${record.status}.`, record.runId ? `Run: ${record.runId}` : undefined, `Use get_subagent_result with agent_id=${record.id} for output.`].filter((line): line is string => Boolean(line)).join("\n"));
+			}
+		},
+		1000,
+		(event, payload) => {
+			if (event === "subagent.stuck-blocked") {
+				const id = typeof payload.id === "string" ? payload.id : "unknown";
+				const runId = typeof payload.runId === "string" ? payload.runId : "unknown";
+				const durationMs = typeof payload.durationMs === "number" ? payload.durationMs : 0;
+				sendFollowUp(pi, [`pi-crew subagent ${id} may be stuck in blocked state for ${Math.max(1, Math.round(durationMs / 1000))}s.`, `Run: ${runId}`, `Use team status runId=${runId} and investigate.`, "Subagent may need manual intervention."].filter((line): line is string => Boolean(line)).join("\n"));
+			}
+			pi.events?.emit?.(event, payload);
+		},
+	);
 	const foregroundControllers = new Set<AbortController>();
 	let liveSidebarRunId: string | undefined;
 	let liveSidebarTimer: ReturnType<typeof setInterval> | undefined;
@@ -208,7 +95,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		ctx.ui.setWidget("pi-crew", undefined, { placement: uiConfig?.widgetPlacement ?? "aboveEditor" });
 		ctx.ui.setWidget("pi-crew-active", undefined, { placement: uiConfig?.widgetPlacement ?? "aboveEditor" });
 		const width = Math.min(90, Math.max(40, uiConfig?.dashboardWidth ?? 56));
-		liveSidebarTimer = setInterval(() => requestRender(ctx), uiConfig?.dashboardLiveRefreshMs ?? 1000);
+		liveSidebarTimer = setInterval(() => requestRender(ctx), uiConfig?.dashboardLiveRefreshMs ?? DEFAULT_UI.refreshMs);
 		liveSidebarTimer.unref?.();
 		void ctx.ui.custom<undefined>((_tui, theme, _keybindings, done) => new LiveRunSidebar({ cwd: ctx.cwd, runId, done, theme, config: uiConfig }), {
 			overlay: true,
@@ -231,7 +118,9 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 						try {
 							const loaded = loadRunManifestById(ctx.cwd, runId);
 							if (loaded && loaded.manifest.status !== "completed" && loaded.manifest.status !== "failed" && loaded.manifest.status !== "cancelled" && loaded.manifest.status !== "blocked") updateRunStatus(loaded.manifest, "failed", message);
-						} catch {}
+						} catch (statusError) {
+							logInternalError("register.foreground-run-failure", statusError, `runId=${runId}`);
+						}
 					}
 					ctx.ui.notify(`pi-crew foreground run failed: ${message}`, "error");
 				})
@@ -251,8 +140,25 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 				});
 		});
 	};
+	time("register.policy");
 	registerAutonomousPolicy(pi);
+	time("register.rpc");
 	rpcHandle = registerPiCrewRpc((pi as unknown as { events?: Parameters<typeof registerPiCrewRpc>[0] }).events, () => currentCtx);
+const runArtifactCleanup = (cwd: string): void => {
+		try {
+			cleanupOldArtifacts(path.join(userPiRoot(), "extensions", "pi-crew", "artifacts"), {
+				maxAgeDays: DEFAULT_ARTIFACT_CLEANUP.maxAgeDays,
+				markerFile: CLEANUP_MARKER_FILE,
+			});
+			cleanupOldArtifacts(path.join(projectPiRoot(cwd), "artifacts"), {
+				maxAgeDays: DEFAULT_ARTIFACT_CLEANUP.maxAgeDays,
+				markerFile: CLEANUP_MARKER_FILE,
+			});
+		} catch (error) {
+			logInternalError("register.artifact-cleanup", error, `cwd=${cwd}`);
+		}
+	};
+
 	const cleanupRuntime = (): void => {
 		if (cleanedUp) return;
 		cleanedUp = true;
@@ -268,6 +174,8 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	globalStore[runtimeCleanupStoreKey] = cleanupRuntime;
 
 	pi.on("session_start", (_event, ctx) => {
+		runArtifactCleanup(ctx.cwd);
+		time("register.session-start");
 		cleanedUp = false;
 		currentCtx = ctx;
 		if (widgetState.interval) clearInterval(widgetState.interval);
@@ -275,7 +183,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		notifyActiveRuns(ctx);
 		const loadedConfig = loadConfig(ctx.cwd);
 		registerPiCrewPowerbarSegments(pi.events, loadedConfig.config.ui);
-		startAsyncRunNotifier(ctx, notifierState, loadedConfig.config.notifierIntervalMs ?? 5000);
+		startAsyncRunNotifier(ctx, notifierState, loadedConfig.config.notifierIntervalMs ?? DEFAULT_UI.notifierIntervalMs);
 		updateCrewWidget(ctx, widgetState, loadedConfig.config.ui);
 		updatePiCrewPowerbar(pi.events, ctx.cwd, loadedConfig.config.ui);
 		widgetState.interval = setInterval(() => {
@@ -288,7 +196,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 				updateCrewWidget(currentCtx, widgetState, config);
 			}
 			updatePiCrewPowerbar(pi.events, currentCtx.cwd, config);
-		}, 1000);
+		}, DEFAULT_UI.widgetDefaultFrameMs);
 		widgetState.interval.unref?.();
 	});
 	pi.on("session_before_switch", () => {
@@ -445,8 +353,13 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	};
 	for (const extraTool of [crewAgentTool, crewAgentResultTool, crewAgentSteerTool]) pi.registerTool(extraTool);
 	for (const extraTool of [agentTool, getSubagentResultTool, steerSubagentTool]) {
-		try { pi.registerTool(extraTool); } catch {}
+		try {
+			pi.registerTool(extraTool);
+		} catch (error) {
+			logInternalError("register.duplicate-tool", error, `tool=${extraTool.name}`);
+		}
 	}
+	time("register.tools");
 
 	pi.registerCommand("teams", {
 		description: "List pi-crew teams, workflows, and agents",
@@ -747,4 +660,6 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 			await notifyCommandResult(ctx, commandText(result));
 		},
 	});
+	time("register.commands");
+	printTimings();
 }

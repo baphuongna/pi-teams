@@ -50,15 +50,23 @@ function deliveryPath(manifest: TeamRunManifest): string {
 	return path.join(mailboxDir(manifest), "delivery.json");
 }
 
-function ensureMailbox(manifest: TeamRunManifest, taskId?: string): void {
-	fs.mkdirSync(taskId ? taskMailboxDir(manifest, taskId) : mailboxDir(manifest), { recursive: true });
+function ensureRunMailbox(manifest: TeamRunManifest): void {
+	fs.mkdirSync(mailboxDir(manifest), { recursive: true });
+	for (const direction of ["inbox", "outbox"] as const) {
+		const filePath = mailboxPath(manifest, direction);
+		if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, "", "utf-8");
+	}
+	const delivery = deliveryPath(manifest);
+	if (!fs.existsSync(delivery)) fs.writeFileSync(delivery, `${JSON.stringify({ messages: {}, updatedAt: new Date().toISOString() }, null, 2)}\n`, "utf-8");
+}
+
+function ensureTaskMailbox(manifest: TeamRunManifest, taskId: string): void {
+	ensureRunMailbox(manifest);
+	fs.mkdirSync(taskMailboxDir(manifest, taskId), { recursive: true });
 	for (const direction of ["inbox", "outbox"] as const) {
 		const filePath = mailboxPath(manifest, direction, taskId);
 		if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, "", "utf-8");
 	}
-	fs.mkdirSync(mailboxDir(manifest), { recursive: true });
-	const delivery = deliveryPath(manifest);
-	if (!fs.existsSync(delivery)) fs.writeFileSync(delivery, `${JSON.stringify({ messages: {}, updatedAt: new Date().toISOString() }, null, 2)}\n`, "utf-8");
 }
 
 function isDirection(value: unknown): value is MailboxDirection {
@@ -92,15 +100,18 @@ function readMailboxFile(filePath: string, direction: MailboxDirection): Mailbox
 	return messages;
 }
 
+function safeReadMailboxFile(filePath: string, direction: MailboxDirection): MailboxMessage[] {
+	if (!fs.existsSync(filePath)) return [];
+	return readMailboxFile(filePath, direction);
+}
+
 export function readMailbox(manifest: TeamRunManifest, direction?: MailboxDirection, taskId?: string): MailboxMessage[] {
-	ensureMailbox(manifest, taskId);
 	const directions = direction ? [direction] : ["inbox", "outbox"] as const;
-	const messages = directions.flatMap((item) => readMailboxFile(mailboxPath(manifest, item, taskId), item));
-	return messages.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+	return directions.flatMap((item) => safeReadMailboxFile(mailboxPath(manifest, item, taskId), item)).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 export function readDeliveryState(manifest: TeamRunManifest): MailboxDeliveryState {
-	ensureMailbox(manifest);
+	ensureRunMailbox(manifest);
 	try {
 		const raw = JSON.parse(fs.readFileSync(deliveryPath(manifest), "utf-8")) as unknown;
 		if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("Invalid delivery state.");
@@ -116,12 +127,13 @@ export function readDeliveryState(manifest: TeamRunManifest): MailboxDeliverySta
 }
 
 function writeDeliveryState(manifest: TeamRunManifest, state: MailboxDeliveryState): void {
-	ensureMailbox(manifest);
+	ensureRunMailbox(manifest);
 	fs.writeFileSync(deliveryPath(manifest), `${JSON.stringify(state, null, 2)}\n`, "utf-8");
 }
 
 export function appendMailboxMessage(manifest: TeamRunManifest, message: Omit<MailboxMessage, "id" | "runId" | "createdAt" | "status"> & { id?: string; status?: MailboxMessageStatus }): MailboxMessage {
-	ensureMailbox(manifest, message.taskId);
+	if (message.taskId) ensureTaskMailbox(manifest, message.taskId);
+	else ensureRunMailbox(manifest);
 	const createdAt = new Date().toISOString();
 	const complete: MailboxMessage = {
 		id: message.id ?? `msg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
@@ -152,7 +164,7 @@ export function acknowledgeMailboxMessage(manifest: TeamRunManifest, messageId: 
 }
 
 export function validateMailbox(manifest: TeamRunManifest, options: { repair?: boolean } = {}): MailboxValidationReport {
-	ensureMailbox(manifest);
+	ensureRunMailbox(manifest);
 	const issues: MailboxValidationIssue[] = [];
 	const repaired: string[] = [];
 	for (const direction of ["inbox", "outbox"] as const) {

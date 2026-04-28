@@ -1,6 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { buildCompletionKey, getGlobalSeenMap, markSeenWithTtl } from "../utils/completion-dedupe.ts";
+import { closeWatcher, watchWithErrorHandler } from "../utils/fs-watch.ts";
 import { createFileCoalescer } from "../utils/file-coalescer.ts";
+import { logInternalError } from "../utils/internal-error.ts";
 
 export interface ResultWatcherEvents {
 	emit(event: string, data: unknown): void;
@@ -12,76 +15,82 @@ export interface ResultWatcherHandle {
 	stop(): void;
 }
 
-export interface ResultWatcherOptions {
+interface ResultWatcherDependencies {
+	watch?: typeof watchWithErrorHandler;
+}
+
+export interface ResultWatcherOptions extends ResultWatcherDependencies {
 	eventName?: string;
 	completionTtlMs?: number;
 }
 
+const RESULT_WATCHER_RESTART_MS = 3000;
+
 function readJson(filePath: string): unknown | undefined {
 	try {
 		return JSON.parse(fs.readFileSync(filePath, "utf-8")) as unknown;
-	} catch {
+	} catch (error) {
+		logInternalError("result-watcher.parse", error, `filePath=${filePath}`);
 		return undefined;
 	}
 }
 
-function completionKey(payload: unknown, file: string): string {
-	if (!payload || typeof payload !== "object" || Array.isArray(payload)) return `file:${file}`;
-	const obj = payload as Record<string, unknown>;
-	const id = [obj.runId, obj.sessionId, obj.id, obj.status].filter((entry): entry is string => typeof entry === "string" && entry.length > 0).join(":");
-	return id || `file:${file}`;
-}
-
 export function createResultWatcher(events: ResultWatcherEvents, resultsDir: string, eventNameOrOptions: string | ResultWatcherOptions = "pi-crew:run-result"): ResultWatcherHandle {
-	const options = typeof eventNameOrOptions === "string" ? { eventName: eventNameOrOptions } : eventNameOrOptions;
+	const options: ResultWatcherOptions = typeof eventNameOrOptions === "string" ? { eventName: eventNameOrOptions } : eventNameOrOptions;
 	const eventName = options.eventName ?? "pi-crew:run-result";
 	const completionTtlMs = options.completionTtlMs ?? 5 * 60_000;
-	const seen = new Map<string, number>();
-	let watcher: fs.FSWatcher | undefined;
+	const watch = options.watch ?? watchWithErrorHandler;
+	const seen = getGlobalSeenMap("pi-crew.result-watcher");
+	let watcher: fs.FSWatcher | null | undefined;
 	let restartTimer: ReturnType<typeof setTimeout> | undefined;
 	const coalescer = createFileCoalescer((file) => {
 		const filePath = path.join(resultsDir, file);
 		if (!file.endsWith(".json") || !fs.existsSync(filePath)) return;
 		const payload = readJson(filePath);
 		if (payload !== undefined) {
-			const now = Date.now();
-			for (const [key, expiresAt] of seen) if (expiresAt <= now) seen.delete(key);
-			const key = completionKey(payload, file);
-			if (!seen.has(key)) {
-				seen.set(key, now + completionTtlMs);
+			const key = buildCompletionKey(payload as Record<string, unknown>, `file:${file}`);
+			if (!markSeenWithTtl(seen, key, Date.now(), completionTtlMs)) {
 				events.emit(eventName, payload);
 			}
 		}
-		try { fs.unlinkSync(filePath); } catch {}
+		try {
+			fs.unlinkSync(filePath);
+		} catch (error) {
+			logInternalError("result-watcher.unlink", error, `filePath=${filePath}`);
+		}
 	}, 50);
 	const scheduleRestart = () => {
 		if (restartTimer) clearTimeout(restartTimer);
 		restartTimer = setTimeout(() => {
 			restartTimer = undefined;
-			try { handle.start(); } catch {}
-		}, 3000);
+			try {
+				fs.mkdirSync(resultsDir, { recursive: true });
+				handle.start();
+			} catch (error) {
+				logInternalError("result-watcher.restart", error, `resultsDir=${resultsDir}`);
+			}
+		}, RESULT_WATCHER_RESTART_MS);
 		restartTimer.unref?.();
 	};
 	const handle: ResultWatcherHandle = {
 		start() {
 			fs.mkdirSync(resultsDir, { recursive: true });
-			watcher?.close();
-			watcher = fs.watch(resultsDir, (event, file) => {
-				if (event !== "rename" || !file) return;
-				coalescer.schedule(file.toString());
-			});
-			watcher.on("error", scheduleRestart);
-			watcher.unref?.();
+			if (watcher) closeWatcher(watcher);
+			watcher = watch(resultsDir, (event, fileName) => {
+				if (event !== "rename" || !fileName) return;
+				coalescer.schedule(fileName.toString());
+			}, scheduleRestart);
+			watcher?.unref?.();
 		},
 		prime() {
 			if (!fs.existsSync(resultsDir)) return;
 			for (const file of fs.readdirSync(resultsDir).filter((entry) => entry.endsWith(".json"))) coalescer.schedule(file, 0);
 		},
 		stop() {
-			watcher?.close();
-			watcher = undefined;
 			if (restartTimer) clearTimeout(restartTimer);
 			restartTimer = undefined;
+			closeWatcher(watcher);
+			watcher = undefined;
 			coalescer.clear();
 		},
 	};

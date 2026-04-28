@@ -4,6 +4,7 @@ import type { TeamRunManifest, TeamTaskState } from "../state/types.ts";
 import { atomicWriteJson, readJsonFile } from "../state/atomic-write.ts";
 import type { CrewAgentProgress, CrewAgentRecord, CrewRuntimeKind } from "./crew-agent-runtime.ts";
 import { taskStatusToAgentStatus } from "./crew-agent-runtime.ts";
+import { logInternalError } from "../utils/internal-error.ts";
 
 export function agentsPath(manifest: TeamRunManifest): string {
 	return path.join(manifest.stateRoot, "agents.json");
@@ -82,7 +83,9 @@ export function appendCrewAgentEvent(manifest: TeamRunManifest, taskId: string, 
 	try {
 		const stat = fs.statSync(filePath);
 		agentEventSeqCache.set(filePath, { size: stat.size, mtimeMs: stat.mtimeMs, seq });
-	} catch {}
+	} catch (error) {
+		logInternalError("crew-agent-records.stat", error, `filePath=${filePath}`);
+	}
 }
 
 export interface CrewAgentEventCursorOptions {

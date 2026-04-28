@@ -3,7 +3,7 @@ import * as path from "node:path";
 import type { AgentConfig, ResourceSource, RoutingMetadata } from "../agents/agent-config.ts";
 import { serializeAgent } from "../agents/agent-serializer.ts";
 import { allAgents, discoverAgents } from "../agents/discover-agents.ts";
-import type { TeamToolDetails } from "./team-tool.ts";
+import type { TeamToolDetails } from "./team-tool-types.ts";
 import { toolResult, type PiTeamsToolResult } from "./tool-result.ts";
 import type { TeamToolParamsValue } from "../schema/team-tool-schema.ts";
 import type { TeamConfig, TeamRole } from "../teams/team-config.ts";
@@ -116,6 +116,11 @@ function parseSteps(value: unknown): { steps?: WorkflowStep[]; error?: string } 
 		});
 	}
 	return { steps };
+}
+
+function parseWorkflowMaxConcurrency(value: unknown): number | undefined {
+	if (typeof value !== "number" || !Number.isInteger(value) || value < 1) return undefined;
+	return value;
 }
 
 function findResource(ctx: ManagementContext, resource: "agent" | "team" | "workflow", name: string, scope?: string): MutableResource[] {
@@ -232,7 +237,14 @@ export function handleCreate(params: TeamToolParamsValue, ctx: ManagementContext
 	} else {
 		const parsedSteps = parseSteps(cfg.steps);
 		if (parsedSteps.error) return result(parsedSteps.error, "error", true);
-		content = serializeWorkflow({ name, description: descriptionValue.value!, source: scope, filePath, steps: parsedSteps.steps! });
+		content = serializeWorkflow({
+			name,
+			description: descriptionValue.value!,
+			source: scope,
+			filePath,
+			maxConcurrency: parseWorkflowMaxConcurrency(cfg.maxConcurrency),
+			steps: parsedSteps.steps!,
+		});
 	}
 
 	if (params.dryRun) return result(`[dry-run] Would create ${params.resource} '${name}' at ${filePath}:\n\n${content}`);
@@ -305,6 +317,7 @@ export function handleUpdate(params: TeamToolParamsValue, ctx: ManagementContext
 			name: nextName,
 			filePath: nextPath,
 			description: typeof cfg.description === "string" && cfg.description.trim() ? cfg.description.trim() : workflow.description,
+			maxConcurrency: hasOwn(cfg, "maxConcurrency") ? parseWorkflowMaxConcurrency(cfg.maxConcurrency) : workflow.maxConcurrency,
 			steps,
 		});
 	}

@@ -9,6 +9,8 @@ test("default workflow concurrency preserves existing workflow defaults", () => 
 	assert.equal(defaultWorkflowConcurrency("review"), 2);
 	assert.equal(defaultWorkflowConcurrency("default"), 2);
 	assert.equal(defaultWorkflowConcurrency("unknown"), 1);
+	assert.equal(defaultWorkflowConcurrency("review", 6), 6);
+	assert.equal(defaultWorkflowConcurrency("unknown", 7), 7);
 });
 
 test("limits override team concurrency and ready count caps selected tasks", () => {
@@ -18,8 +20,16 @@ test("limits override team concurrency and ready count caps selected tasks", () 
 	assert.match(decision.reason, /^limit:1/);
 });
 
-test("team concurrency can raise workflow default when no limit is set", () => {
-	const decision = resolveBatchConcurrency({ workflowName: "implementation", teamMaxConcurrency: 4, readyCount: 10 });
+test("workflow maxConcurrency can replace built-in workflow default when provided", () => {
+	const decision = resolveBatchConcurrency({ workflowName: "implementation", workflowMaxConcurrency: 4, readyCount: 10 });
+	assert.equal(decision.defaultConcurrency, 4);
+	assert.equal(decision.maxConcurrent, 4);
+	assert.equal(decision.selectedCount, 4);
+	assert.match(decision.reason, /^workflow:4/);
+});
+
+test("team concurrency can raise workflow-constrained default when no limit is set", () => {
+	const decision = resolveBatchConcurrency({ workflowName: "implementation", workflowMaxConcurrency: 2, teamMaxConcurrency: 4, readyCount: 10 });
 	assert.equal(decision.defaultConcurrency, 2);
 	assert.equal(decision.maxConcurrent, 4);
 	assert.equal(decision.selectedCount, 4);

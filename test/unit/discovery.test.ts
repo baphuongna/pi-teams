@@ -14,6 +14,31 @@ test("builtin resources are discoverable", () => {
 	assert.equal(allWorkflows(discoverWorkflows(cwd)).length, 6);
 });
 
+test("workflow frontmatter can set maxConcurrency", () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-workflow-concurrency-"));
+	try {
+		const workflowsDir = path.join(cwd, ".pi", "workflows");
+		fs.mkdirSync(workflowsDir, { recursive: true });
+		fs.writeFileSync(path.join(workflowsDir, "workflow-max-concurrency.workflow.md"), [
+			"---",
+			"name: workflow-max-concurrency",
+			"description: Custom test workflow",
+			"maxConcurrency: 7",
+			"---",
+			"",
+			"## do-work",
+			"role: planner",
+			"",
+			"Complete the task.",
+			"",
+		].join("\n"), "utf-8");
+		const workflow = allWorkflows(discoverWorkflows(cwd)).find((entry) => entry.name === "workflow-max-concurrency");
+		assert.equal(workflow?.maxConcurrency, 7);
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
 test("agent config overrides builtin agents case-insensitively and can disable them", () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-agent-override-"));
 	try {
@@ -33,6 +58,29 @@ test("agent config overrides builtin agents case-insensitively and can disable t
 		assert.deepEqual(executor?.tools, ["read"]);
 		assert.equal(executor?.override?.source, "config");
 		assert.equal(allAgents(discovery).some((agent) => agent.name === "writer"), false);
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("team discovery supports git URL source in frontmatter", () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-team-git-source-"));
+	try {
+		const teamsDir = path.join(cwd, ".pi", "teams");
+		fs.mkdirSync(teamsDir, { recursive: true });
+		fs.writeFileSync(path.join(teamsDir, "remote.team.md"), [
+			"---",
+			"name: remote-team",
+			"description: Remote team from git",
+			"source: git+https://github.com/org/teams-repo.git#main",
+			"---",
+			"",
+			"- explorer: agent=explorer",
+			"",
+		].join("\n"), "utf-8");
+		const team = allTeams(discoverTeams(cwd)).find((candidate) => candidate.name === "remote-team");
+		assert.equal(team?.source, "git");
+		assert.equal(team?.sourceUrl, "https://github.com/org/teams-repo.git");
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}

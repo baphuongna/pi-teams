@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { DEFAULT_EVENT_LOG } from "../config/defaults.ts";
+import { atomicWriteFile } from "./atomic-write.ts";
+import { logInternalError } from "../utils/internal-error.ts";
 
 export type TeamEventProvenance = "live_worker" | "test" | "healthcheck" | "replay" | "api" | "background" | "team_runner";
 export type TeamWatcherAction = "act" | "observe" | "ignore";
@@ -40,15 +43,21 @@ export interface TeamEvent {
 
 export type AppendTeamEvent = Omit<TeamEvent, "time" | "metadata"> & { metadata?: Partial<TeamEventMetadata> };
 
-const TERMINAL_EVENT_TYPES = new Set(["run.blocked", "run.completed", "run.failed", "run.cancelled", "task.completed", "task.failed", "task.cancelled", "task.skipped"]);
+const TERMINAL_EVENT_TYPES = new Set<string>(DEFAULT_EVENT_LOG.terminalEventTypes);
+const MAX_EVENTS_BYTES = 50 * 1024 * 1024;
 
 const sequenceCache = new Map<string, { size: number; mtimeMs: number; seq: number }>();
 
-function nextSequence(eventsPath: string): number {
-	if (!fs.existsSync(eventsPath)) return 1;
-	const stat = fs.statSync(eventsPath);
-	const cached = sequenceCache.get(eventsPath);
-	if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) return cached.seq + 1;
+function sequencePath(eventsPath: string): string {
+	return `${eventsPath}.seq`;
+}
+
+function parseSequence(raw: string): number | undefined {
+	const value = Number.parseInt(raw.trim(), 10);
+	return Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
+function scanSequence(eventsPath: string): number {
 	let max = 0;
 	for (const line of fs.readFileSync(eventsPath, "utf-8").split("\n")) {
 		if (!line.trim()) continue;
@@ -59,8 +68,38 @@ function nextSequence(eventsPath: string): number {
 			max += 1;
 		}
 	}
-	sequenceCache.set(eventsPath, { size: stat.size, mtimeMs: stat.mtimeMs, seq: max });
-	return max + 1;
+	return max;
+}
+
+function readStoredSequence(eventsPath: string): number | undefined {
+	try {
+		return parseSequence(fs.readFileSync(sequencePath(eventsPath), "utf-8"));
+	} catch {
+		return undefined;
+	}
+}
+
+function nextSequence(eventsPath: string): number {
+	if (!fs.existsSync(eventsPath)) return 1;
+	const stat = fs.statSync(eventsPath);
+	const cached = sequenceCache.get(eventsPath);
+	if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
+		return cached.seq + 1;
+	}
+	let current = readStoredSequence(eventsPath);
+	if (current === undefined || (cached && stat.size < cached.size)) {
+		current = scanSequence(eventsPath);
+	}
+	sequenceCache.set(eventsPath, { size: stat.size, mtimeMs: stat.mtimeMs, seq: current });
+	return current + 1;
+}
+
+function persistSequence(eventsPath: string, seq: number): void {
+	try {
+		atomicWriteFile(sequencePath(eventsPath), String(seq));
+	} catch (error) {
+		logInternalError("event-log.persist-sequence-file", error, `eventsPath=${eventsPath}`);
+	}
 }
 
 export function computeEventFingerprint(event: Pick<TeamEvent, "type" | "runId" | "taskId" | "data">): string {
@@ -87,11 +126,23 @@ export function appendEvent(eventsPath: string, event: AppendTeamEvent): TeamEve
 		metadata = { ...metadata, fingerprint: baseMetadata?.fingerprint ?? computeEventFingerprint(fullEvent) };
 		fullEvent.metadata = metadata;
 	}
+	try {
+		if (fs.existsSync(eventsPath) && fs.statSync(eventsPath).size > MAX_EVENTS_BYTES) {
+			logInternalError("event-log.size-limit", new Error(`events file ${eventsPath} exceeds ${MAX_EVENTS_BYTES} bytes`), `eventsPath=${eventsPath}`);
+			return fullEvent;
+		}
+	} catch (error) {
+		logInternalError("event-log.size-check", error, `eventsPath=${eventsPath}`);
+	}
 	fs.appendFileSync(eventsPath, `${JSON.stringify(fullEvent)}\n`, "utf-8");
+	const seq = fullEvent.metadata?.seq ?? 0;
 	try {
 		const stat = fs.statSync(eventsPath);
-		sequenceCache.set(eventsPath, { size: stat.size, mtimeMs: stat.mtimeMs, seq: fullEvent.metadata?.seq ?? 0 });
-	} catch {}
+		sequenceCache.set(eventsPath, { size: stat.size, mtimeMs: stat.mtimeMs, seq });
+		persistSequence(eventsPath, seq);
+	} catch (error) {
+		logInternalError("event-log.persist-sequence", error, `eventsPath=${eventsPath}`);
+	}
 	return fullEvent;
 }
 

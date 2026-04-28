@@ -3,11 +3,11 @@ import assert from "node:assert/strict";
 import { getBackgroundRunnerCommand, buildBackgroundSpawnOptions } from "../../src/runtime/async-runner.ts";
 import type { TeamRunManifest } from "../../src/state/types.ts";
 
-test("background runner uses a TypeScript loader that can run from installed node_modules", () => {
+test("background runner uses the strip-types runtime loader", () => {
 	const command = getBackgroundRunnerCommand("/tmp/node_modules/pi-crew/src/runtime/background-runner.ts", "/tmp/project", "run_123");
-	assert.equal(command.loader, "jiti");
-	assert.equal(command.args.includes("--experimental-strip-types"), false);
-	assert.equal(command.args[0]?.endsWith("jiti-cli.mjs"), true);
+	assert.equal(command.loader, "strip-types");
+	assert.equal(command.args.includes("--experimental-strip-types"), true);
+	assert.equal(command.args[0], "--experimental-strip-types");
 	assert.equal(command.args[1], "/tmp/node_modules/pi-crew/src/runtime/background-runner.ts");
 	assert.deepEqual(command.args.slice(-4), ["--cwd", "/tmp/project", "--run-id", "run_123"]);
 });

@@ -4,6 +4,7 @@ import * as path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
+import { firstText } from "../fixtures/tool-result-helpers.ts";
 
 
 test("summary action and summary artifact are created for runs", async () => {
@@ -18,9 +19,10 @@ test("summary action and summary artifact are created for runs", async () => {
 		assert.match(fs.readFileSync(summaryPath, "utf-8"), /# pi-crew run/);
 		const summary = await handleTeamTool({ action: "summary", runId }, { cwd });
 		assert.equal(summary.isError, false);
-		assert.match(summary.content[0]?.text ?? "", /Summary for/);
-		assert.match(summary.content[0]?.text ?? "", /Usage:/);
+		assert.match(firstText(summary), /Summary for/);
+		assert.match(firstText(summary), /Usage:/);
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}
 });
+

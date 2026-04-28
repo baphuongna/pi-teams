@@ -15,7 +15,9 @@ const request = {
 test("live control realtime bus publishes control requests immediately", () => {
 	clearLiveControlRealtimeForTest();
 	const seen: unknown[] = [];
-	const unsub = subscribeLiveControlRealtime((item) => seen.push(item));
+	const unsub = subscribeLiveControlRealtime((item) => {
+		seen.push(item);
+	});
 	try {
 		publishLiveControlRealtime(request);
 		assert.deepEqual(seen, [request]);

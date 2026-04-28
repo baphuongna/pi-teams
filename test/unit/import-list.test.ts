@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
 import { listImportedRuns } from "../../src/extension/import-index.ts";
+import { firstText } from "../fixtures/tool-result-helpers.ts";
 
 test("imports action lists imported run bundles", async () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-import-list-test-"));
@@ -21,8 +22,9 @@ test("imports action lists imported run bundles", async () => {
 		assert.equal(imports[0]?.runId, runId);
 		const listed = await handleTeamTool({ action: "imports" }, { cwd });
 		assert.equal(listed.isError, false);
-		assert.match(listed.content[0]?.text ?? "", new RegExp(runId!));
+		assert.match(firstText(listed), new RegExp(runId!));
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}
 });
+

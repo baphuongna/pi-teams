@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
 import { loadRunManifestById } from "../../src/state/state-store.ts";
+import { firstText } from "../fixtures/tool-result-helpers.ts";
 
 test("mutating api operations respect run locks", async () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-api-locks-"));
@@ -19,8 +20,9 @@ test("mutating api operations respect run locks", async () => {
 		const taskId = loaded.tasks[0]?.id;
 		const locked = await handleTeamTool({ action: "api", runId, config: { operation: "claim-task", taskId, owner: "tester" } }, { cwd });
 		assert.equal(locked.isError, true);
-		assert.match(locked.content[0]?.text ?? "", /locked/);
+		assert.match(firstText(locked), /locked/);
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}
 });
+

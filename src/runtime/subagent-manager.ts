@@ -2,9 +2,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { loadRunManifestById } from "../state/state-store.ts";
 import type { PiTeamsToolResult } from "../extension/tool-result.ts";
+import { DEFAULT_SUBAGENT } from "../config/defaults.ts";
 import { projectPiRoot } from "../utils/paths.ts";
+import { logInternalError } from "../utils/internal-error.ts";
 
-export type SubagentStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "error" | "stopped";
+export type SubagentStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "error" | "blocked" | "stopped";
 
 export interface SubagentSpawnOptions {
 	cwd: string;
@@ -30,11 +32,14 @@ export interface SubagentRecord {
 	resultConsumed?: boolean;
 	model?: string;
 	background: boolean;
+	stuckNotified?: boolean;
+	blockedAt?: number;
 	promise?: Promise<void>;
 }
 
 type SpawnRunner = (options: SubagentSpawnOptions, signal?: AbortSignal) => Promise<PiTeamsToolResult>;
 type Notify = (record: SubagentRecord) => void;
+type NotifyEvent = (type: string, data: Record<string, unknown>) => void;
 
 interface QueuedSpawn {
 	record: SubagentRecord;
@@ -42,8 +47,6 @@ interface QueuedSpawn {
 	runner: SpawnRunner;
 	signal?: AbortSignal;
 }
-
-const TERMINAL_RUN_STATUS = new Set(["completed", "failed", "cancelled", "blocked"]);
 
 function persistedSubagentPath(cwd: string, id: string): string {
 	return path.join(projectPiRoot(cwd), "teams", "state", "subagents", `${id}.json`);
@@ -59,7 +62,9 @@ export function savePersistedSubagentRecord(cwd: string, record: SubagentRecord)
 		const filePath = persistedSubagentPath(cwd, record.id);
 		fs.mkdirSync(path.dirname(filePath), { recursive: true });
 		fs.writeFileSync(filePath, `${JSON.stringify(serializableRecord(record), null, 2)}\n`, "utf-8");
-	} catch {}
+	} catch (error) {
+		logInternalError("subagent-manager.save", error, `id=${record.id}`);
+	}
 }
 
 export function readPersistedSubagentRecord(cwd: string, id: string): SubagentRecord | undefined {
@@ -87,11 +92,13 @@ export class SubagentManager {
 	private counter = 0;
 	private maxConcurrent: number;
 	private readonly onComplete?: Notify;
+	private readonly onEvent?: NotifyEvent;
 	private readonly pollIntervalMs: number;
 
-	constructor(maxConcurrent = 4, onComplete?: Notify, pollIntervalMs = 1000) {
+	constructor(maxConcurrent = 4, onComplete?: Notify, pollIntervalMs = 1000, onEvent?: NotifyEvent) {
 		this.maxConcurrent = maxConcurrent;
 		this.onComplete = onComplete;
+		this.onEvent = onEvent;
 		this.pollIntervalMs = pollIntervalMs;
 	}
 
@@ -133,7 +140,7 @@ export class SubagentManager {
 			record.completedAt = Date.now();
 			return true;
 		}
-		if (record.status !== "running") return false;
+		if (record.status !== "running" && record.status !== "blocked") return false;
 		record.status = "stopped";
 		record.completedAt = Date.now();
 		return true;
@@ -148,7 +155,7 @@ export class SubagentManager {
 		}
 		this.queue = [];
 		for (const record of this.records.values()) {
-			if (record.status === "running") {
+			if (record.status === "running" || record.status === "blocked") {
 				record.status = "stopped";
 				record.completedAt = Date.now();
 				count++;
@@ -160,7 +167,7 @@ export class SubagentManager {
 	async waitForAll(): Promise<void> {
 		while (true) {
 			this.drainQueue();
-			const pending = this.listAgents().filter((record) => record.status === "running" || record.status === "queued").map((record) => record.promise).filter((promise): promise is Promise<void> => Boolean(promise));
+			const pending = this.listAgents().filter((record) => record.status === "running" || record.status === "blocked" || record.status === "queued").map((record) => record.promise).filter((promise): promise is Promise<void> => Boolean(promise));
 			if (!pending.length) break;
 			await Promise.allSettled(pending);
 		}
@@ -170,7 +177,7 @@ export class SubagentManager {
 		while (true) {
 			const record = this.records.get(id);
 			if (!record) return undefined;
-			if (record.status !== "running" && record.status !== "queued") return record;
+			if (record.status !== "running" && record.status !== "blocked" && record.status !== "queued") return record;
 			if (record.promise) await record.promise;
 			else await new Promise((resolve) => setTimeout(resolve, 100));
 		}
@@ -206,7 +213,9 @@ export class SubagentManager {
 				if (options.background) this.runningBackground = Math.max(0, this.runningBackground - 1);
 				record.completedAt = record.completedAt ?? Date.now();
 				savePersistedSubagentRecord(options.cwd, record);
-				this.onComplete?.(record);
+				if (record.status === "completed" || record.status === "failed" || record.status === "cancelled" || record.status === "error" || record.status === "stopped") {
+					this.onComplete?.(record);
+				}
 				this.drainQueue();
 			}
 		})();
@@ -221,16 +230,62 @@ export class SubagentManager {
 	}
 
 	private async pollRunToTerminal(cwd: string, record: SubagentRecord): Promise<void> {
-		while (record.runId && record.status === "running") {
+		while (record.runId && (record.status === "running" || record.status === "blocked")) {
 			const loaded = loadRunManifestById(cwd, record.runId);
-			if (loaded && TERMINAL_RUN_STATUS.has(loaded.manifest.status)) {
-				record.status = loaded.manifest.status === "completed" ? "completed" : loaded.manifest.status === "cancelled" ? "cancelled" : "failed";
-				record.error = record.status === "completed" ? undefined : loaded.manifest.summary;
+			if (!loaded) {
+				await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs));
+				continue;
+			}
+			if (loaded.manifest.status === "completed") {
+				record.status = "completed";
+				record.error = undefined;
 				record.completedAt = Date.now();
+				savePersistedSubagentRecord(cwd, record);
+				return;
+			}
+			if (loaded.manifest.status === "failed" || loaded.manifest.status === "cancelled") {
+				record.status = loaded.manifest.status;
+				record.error = loaded.manifest.summary;
+				record.completedAt = Date.now();
+				savePersistedSubagentRecord(cwd, record);
+				return;
+			}
+			if (loaded.manifest.status === "blocked") {
+				record.status = "blocked";
+				record.error = undefined;
+				if (!record.blockedAt) {
+					record.blockedAt = Date.now();
+					record.stuckNotified = false;
+					record.completedAt = undefined;
+					this.onComplete?.(record);
+					this.scheduleStuckBlockedNotify(cwd, record);
+				}
 				savePersistedSubagentRecord(cwd, record);
 				return;
 			}
 			await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs));
 		}
+	}
+
+	private scheduleStuckBlockedNotify(cwd: string, record: SubagentRecord): void {
+		const threshold = DEFAULT_SUBAGENT.stuckBlockedNotifyMs;
+		const fire = (): void => {
+			const current = this.records.get(record.id);
+			if (!current || current.status !== "blocked" || !current.blockedAt || current.stuckNotified) return;
+			current.stuckNotified = true;
+			this.onEvent?.("subagent.stuck-blocked", {
+				event: "subagent.stuck-blocked",
+				id: current.id,
+				runId: current.runId,
+				durationMs: Math.max(0, Date.now() - current.blockedAt),
+			});
+			savePersistedSubagentRecord(cwd, current);
+		};
+		if (threshold <= 0) {
+			fire();
+			return;
+		}
+		const timer = setTimeout(fire, threshold);
+		timer.unref?.();
 	}
 }

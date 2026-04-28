@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
 import { readCrewAgents } from "../../src/runtime/crew-agent-records.ts";
 import { loadRunManifestById } from "../../src/state/state-store.ts";
+import { firstText } from "../fixtures/tool-result-helpers.ts";
 
 function restore(name: string, value: string | undefined): void {
 	if (value === undefined) delete process.env[name];
@@ -27,7 +28,7 @@ test("queued dependency tasks are shown as waiting tasks, not materialized agent
 		const loadedBefore = loadRunManifestById(cwd, runId)!;
 		assert.deepEqual(readCrewAgents(loadedBefore.manifest), []);
 		const statusBefore = await handleTeamTool({ action: "status", runId }, { cwd });
-		assert.match(statusBefore.content[0]!.text, /- 02_analyze \[queued\].*waiting for 01_explore/);
+		assert.match(firstText(statusBefore), /- 02_analyze \[queued\].*waiting for 01_explore/);
 		assert.ok(scheduled);
 		await scheduled!();
 		const loadedAfter = loadRunManifestById(cwd, runId)!;
@@ -38,3 +39,4 @@ test("queued dependency tasks are shown as waiting tasks, not materialized agent
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}
 });
+
