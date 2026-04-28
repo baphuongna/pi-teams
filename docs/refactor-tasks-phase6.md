@@ -42,7 +42,7 @@ Tổng: **22 task / ~6.25 ngày**, có thể ship theo nhiều mini-release (0.1
 | T64 | 🟡 Partial | checkpoint phases + artifact-written resume recovery implemented; child-stdout transcript recovery still pending |
 | T65 | ✅ Done | async notifier marks quiet dead background runners failed with `async.died` |
 | T66 | ✅ Done | `5e495dc` — replay pending mailbox on resume |
-| T67 | ⏳ Pending | Adaptive planner repair/retry chưa triển khai |
+| T67 | ✅ Done | adaptive plan repair for malformed JSON, oversized plans, and role aliases |
 | T68 | ✅ Done | `1f92b8a` — persisted model routing metadata |
 | T69 | ✅ Done | `1f92b8a` — agent records carry routing metadata |
 | T70 | ⏳ Pending | `register.ts` modularization chưa triển khai |
@@ -55,7 +55,7 @@ Tổng: **22 task / ~6.25 ngày**, có thể ship theo nhiều mini-release (0.1
 | T77 | ✅ Done | `9e54acd` — self-contained architecture docs |
 | T78 | ✅ Done | `9e54acd` — runtime flow docs |
 | T79 | 🟡 Partial | `8f19596` — multi-shard + spawn smoke; async restart smoke còn pending T65 |
-| T80 | ⏳ Pending | package snapshot chi tiết hơn chưa triển khai |
+| T80 | ✅ Done | package snapshot guards docs/skills/jiti/pi manifest packaging |
 | T81 | 🟡 Partial | `3b00030`, `5e495dc` — changelog updated; final release notes pending |
 
 ---

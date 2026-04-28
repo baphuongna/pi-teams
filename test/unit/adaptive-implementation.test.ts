@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { __test__parseAdaptivePlan, executeTeamRun } from "../../src/runtime/team-runner.ts";
+import { __test__parseAdaptivePlan, __test__repairAdaptivePlan, executeTeamRun } from "../../src/runtime/team-runner.ts";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
 import { createRunManifest, loadRunManifestById, saveRunTasks } from "../../src/state/state-store.ts";
 import { allAgents, discoverAgents } from "../../src/agents/discover-agents.ts";
@@ -31,6 +31,20 @@ test("adaptive plan parser rejects partial or oversized invalid plans", () => {
 	assert.equal(__test__parseAdaptivePlan(`ADAPTIVE_PLAN_JSON_START\n{"phases":[{"name":"bad","tasks":[{"role":"executor","task":""}]}]}\nADAPTIVE_PLAN_JSON_END`, roles), undefined);
 	const tooMany = { phases: [{ name: "too-many", tasks: Array.from({ length: 13 }, () => ({ role: "executor", task: "x" })) }] };
 	assert.equal(__test__parseAdaptivePlan(`ADAPTIVE_PLAN_JSON_START\n${JSON.stringify(tooMany)}\nADAPTIVE_PLAN_JSON_END`, roles), undefined);
+});
+
+test("adaptive plan repair recovers malformed, oversized, and aliased-role plans", () => {
+	const malformed = __test__repairAdaptivePlan(`ADAPTIVE_PLAN_JSON_START\n{"phases":[{"name":"build","tasks":[{"role":"executor","task":"Implement"}]}]\nADAPTIVE_PLAN_JSON_END`, roles);
+	assert.ok(malformed.plan);
+	assert.equal(malformed.plan.phases[0]!.tasks[0]!.role, "executor");
+
+	const oversized = { phases: [{ name: "many", tasks: Array.from({ length: 15 }, (_, index) => ({ role: "executor", task: `Task ${index}` })) }] };
+	const trimmed = __test__repairAdaptivePlan(`ADAPTIVE_PLAN_JSON_START\n${JSON.stringify(oversized)}\nADAPTIVE_PLAN_JSON_END`, roles);
+	assert.equal(trimmed.plan?.phases[0]!.tasks.length, 12);
+
+	const aliased = __test__repairAdaptivePlan(`ADAPTIVE_PLAN_JSON_START\n${JSON.stringify({ phases: [{ name: "review", tasks: [{ role: "code-review", task: "Review" }, { role: "mystery", task: "Skip me" }] }] })}\nADAPTIVE_PLAN_JSON_END`, roles);
+	assert.equal(aliased.plan?.phases[0]!.tasks.length, 1);
+	assert.equal(aliased.plan?.phases[0]!.tasks[0]!.role, "reviewer");
 });
 
 test("adaptive implementation workflow is planner-assessed, not a fixed specialist template", () => {

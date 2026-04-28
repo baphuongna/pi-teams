@@ -11,6 +11,8 @@
 - Added mailbox replay on resume for pending inbox messages, including task-scoped messages.
 - Added task resume checkpoints and recovery for crash-after-artifact-write child-process tasks.
 - Added async notifier detection for quiet dead background runners with durable `async.died` events.
+- Added adaptive planner repair for malformed JSON, oversized task plans, and common role aliases before blocking implementation runs.
+- Added package snapshot coverage for Phase 6 docs, skills, Pi manifest entries, and the runtime `jiti` dependency.
 
 ### Changed
 

@@ -6,7 +6,7 @@ import { writeArtifact } from "../state/artifact-store.ts";
 import { appendEvent } from "../state/event-log.ts";
 import type { TeamConfig } from "../teams/team-config.ts";
 import type { ArtifactDescriptor, PolicyDecision, TeamRunManifest, TeamTaskState } from "../state/types.ts";
-import { saveRunManifestAsync, saveRunTasksAsync, updateRunStatus } from "../state/state-store.ts";
+import { saveRunManifest, saveRunManifestAsync, saveRunTasksAsync, updateRunStatus } from "../state/state-store.ts";
 import { aggregateUsage, formatUsage } from "../state/usage.ts";
 import type { WorkflowConfig, WorkflowStep } from "../workflows/workflow-config.ts";
 import { evaluateCrewPolicy, summarizePolicyDecisions } from "./policy-engine.ts";
@@ -109,10 +109,14 @@ function slug(value: string): string {
 	return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32) || "task";
 }
 
-export function __test__parseAdaptivePlan(text: string, allowedRoles: string[]): AdaptivePlan | undefined {
+function extractAdaptivePlanJson(text: string): string | undefined {
 	const markerMatch = text.match(/ADAPTIVE_PLAN_JSON_START\s*([\s\S]*?)\s*ADAPTIVE_PLAN_JSON_END/);
 	const fencedMatch = markerMatch ? undefined : text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-	const raw = markerMatch?.[1] ?? fencedMatch?.[1];
+	return markerMatch?.[1] ?? fencedMatch?.[1];
+}
+
+export function __test__parseAdaptivePlan(text: string, allowedRoles: string[]): AdaptivePlan | undefined {
+	const raw = extractAdaptivePlanJson(text);
 	if (!raw) return undefined;
 	let parsed: unknown;
 	try { parsed = JSON.parse(raw); } catch { return undefined; }
@@ -141,6 +145,98 @@ export function __test__parseAdaptivePlan(text: string, allowedRoles: string[]):
 	return phases.length ? { phases } : undefined;
 }
 
+function closeUnbalancedJson(raw: string): string {
+	let result = raw.trim();
+	const stack: string[] = [];
+	let inString = false;
+	let escaped = false;
+	for (const char of result) {
+		if (escaped) {
+			escaped = false;
+			continue;
+		}
+		if (char === "\\" && inString) {
+			escaped = true;
+			continue;
+		}
+		if (char === '"') {
+			inString = !inString;
+			continue;
+		}
+		if (inString) continue;
+		if (char === "{") stack.push("}");
+		else if (char === "[") stack.push("]");
+		else if ((char === "}" || char === "]") && stack.at(-1) === char) stack.pop();
+	}
+	while (stack.length) result += stack.pop();
+	return result;
+}
+
+function adaptiveRoleAlias(role: string, allowed: Set<string>): string | undefined {
+	if (allowed.has(role)) return role;
+	const normalized = slug(role);
+	const aliases: Record<string, string[]> = {
+		reviewer: ["code-reviewer", "review", "code-review", "critic"],
+		"security-reviewer": ["security", "security-review", "sec-review"],
+		"test-engineer": ["tester", "qa", "test"],
+		executor: ["developer", "implementer", "coder", "engineer"],
+		explorer: ["researcher", "scout"],
+		analyst: ["analysis", "analyzer"],
+	};
+	for (const [target, names] of Object.entries(aliases)) if (allowed.has(target) && names.includes(normalized)) return target;
+	return undefined;
+}
+
+export function __test__repairAdaptivePlan(text: string, allowedRoles: string[]): { plan?: AdaptivePlan; repaired: boolean; reason?: string } {
+	const raw = extractAdaptivePlanJson(text);
+	if (!raw) return { repaired: false, reason: "missing-json" };
+	const candidates = [raw, closeUnbalancedJson(raw)];
+	let parsed: unknown;
+	for (const candidate of candidates) {
+		try {
+			parsed = JSON.parse(candidate);
+			break;
+		} catch {
+			// Try the next repair candidate.
+		}
+	}
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { repaired: false, reason: "invalid-json" };
+	const phasesRaw = Array.isArray((parsed as { phases?: unknown }).phases) ? (parsed as { phases: unknown[] }).phases : Array.isArray((parsed as { tasks?: unknown }).tasks) ? [{ name: "adaptive", tasks: (parsed as { tasks: unknown[] }).tasks }] : undefined;
+	if (!phasesRaw) return { repaired: false, reason: "missing-phases" };
+	const allowed = new Set(allowedRoles);
+	const phases: AdaptivePlanPhase[] = [];
+	let total = 0;
+	let repaired = raw !== closeUnbalancedJson(raw);
+	for (const [phaseIndex, phaseRaw] of phasesRaw.entries()) {
+		if (!phaseRaw || typeof phaseRaw !== "object" || Array.isArray(phaseRaw)) continue;
+		const phaseObj = phaseRaw as { name?: unknown; tasks?: unknown };
+		if (!Array.isArray(phaseObj.tasks)) continue;
+		const tasks: AdaptivePlanTask[] = [];
+		for (const taskRaw of phaseObj.tasks) {
+			if (total >= MAX_ADAPTIVE_TASKS) {
+				repaired = true;
+				break;
+			}
+			if (!taskRaw || typeof taskRaw !== "object" || Array.isArray(taskRaw)) {
+				repaired = true;
+				continue;
+			}
+			const taskObj = taskRaw as { role?: unknown; title?: unknown; task?: unknown };
+			const role = typeof taskObj.role === "string" ? adaptiveRoleAlias(taskObj.role, allowed) : undefined;
+			const taskText = typeof taskObj.task === "string" ? taskObj.task.trim() : "";
+			if (!role || !taskText) {
+				repaired = true;
+				continue;
+			}
+			tasks.push({ role, title: typeof taskObj.title === "string" ? taskObj.title : undefined, task: taskText });
+			total++;
+		}
+		if (tasks.length) phases.push({ name: typeof phaseObj.name === "string" && phaseObj.name.trim() ? phaseObj.name.trim() : `phase-${phaseIndex + 1}`, tasks });
+		if (total >= MAX_ADAPTIVE_TASKS) break;
+	}
+	return phases.length ? { plan: { phases }, repaired: true, reason: repaired ? "repaired" : "normalized" } : { repaired: false, reason: "empty-plan" };
+}
+
 function reconstructAdaptiveWorkflow(workflow: WorkflowConfig, tasks: TeamTaskState[]): WorkflowConfig {
 	const existing = new Set(workflow.steps.map((step) => step.id));
 	const steps: WorkflowStep[] = [];
@@ -167,10 +263,20 @@ function injectAdaptivePlanIfReady(input: { manifest: TeamRunManifest; tasks: Te
 		appendEvent(input.manifest.eventsPath, { type: "adaptive.plan_missing", runId: input.manifest.runId, taskId: assessTask.id, message: "Adaptive planner result artifact could not be read." });
 		return { tasks: input.tasks, workflow: input.workflow, injected: false, missingPlan: true };
 	}
-	const plan = __test__parseAdaptivePlan(text, input.team.roles.map((role) => role.name));
+	const allowedRoles = input.team.roles.map((role) => role.name);
+	let plan = __test__parseAdaptivePlan(text, allowedRoles);
 	if (!plan) {
-		appendEvent(input.manifest.eventsPath, { type: "adaptive.plan_missing", runId: input.manifest.runId, taskId: assessTask.id, message: "Adaptive planner did not produce a valid plan; no dynamic subagents were spawned." });
-		return { tasks: input.tasks, workflow: input.workflow, injected: false, missingPlan: true };
+		const repair = process.env.PI_CREW_ADAPTIVE_REPAIR === "0" || process.env.PI_TEAMS_ADAPTIVE_REPAIR === "0" ? { repaired: false, reason: "disabled" } : __test__repairAdaptivePlan(text, allowedRoles);
+		if (repair.plan) {
+			plan = repair.plan;
+			const repairArtifact = writeArtifact(input.manifest.artifactsRoot, { kind: "metadata", relativePath: "metadata/adaptive-repair.json", producer: assessTask.id, content: `${JSON.stringify({ reason: repair.reason, phases: repair.plan.phases.map((phase) => ({ name: phase.name, count: phase.tasks.length, roles: phase.tasks.map((task) => task.role) })) }, null, 2)}\n` });
+			saveRunManifest({ ...input.manifest, updatedAt: new Date().toISOString(), artifacts: [...input.manifest.artifacts, repairArtifact] });
+			appendEvent(input.manifest.eventsPath, { type: "adaptive.plan_repaired", runId: input.manifest.runId, taskId: assessTask.id, message: "Adaptive planner output was repaired before dynamic subagents were spawned.", data: { reason: repair.reason } });
+		} else {
+			appendEvent(input.manifest.eventsPath, { type: "adaptive.plan_repair_failed", runId: input.manifest.runId, taskId: assessTask.id, message: "Adaptive planner output could not be repaired.", data: { reason: repair.reason } });
+			appendEvent(input.manifest.eventsPath, { type: "adaptive.plan_missing", runId: input.manifest.runId, taskId: assessTask.id, message: "Adaptive planner did not produce a valid plan; no dynamic subagents were spawned." });
+			return { tasks: input.tasks, workflow: input.workflow, injected: false, missingPlan: true };
+		}
 	}
 	const steps: WorkflowStep[] = [];
 	const tasks: TeamTaskState[] = [];
