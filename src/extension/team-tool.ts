@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { allAgents, discoverAgents } from "../agents/discover-agents.ts";
 import { allTeams, discoverTeams } from "../teams/discover-teams.ts";
 import { allWorkflows, discoverWorkflows } from "../workflows/discover-workflows.ts";
@@ -8,6 +9,7 @@ import { loadRunManifestById, saveRunManifest, saveRunTasks, updateRunStatus } f
 import { withRunLock, withRunLockSync } from "../state/locks.ts";
 import { aggregateUsage, formatUsage } from "../state/usage.ts";
 import { appendEvent, readEvents } from "../state/event-log.ts";
+import { writeArtifact } from "../state/artifact-store.ts";
 import { replayPendingMailboxMessages } from "../state/mailbox.ts";
 import { cleanupRunWorktrees } from "../worktree/cleanup.ts";
 import { piTeamsHelp } from "./help.ts";
@@ -31,6 +33,7 @@ import { applyAttentionState, formatActivityAge, resolveCrewControlConfig } from
 import { writeForegroundInterruptRequest } from "../runtime/foreground-control.ts";
 import { formatTaskGraphLines, waitingReason } from "../runtime/task-display.ts";
 import { directTeamAndWorkflowFromRun } from "../runtime/direct-run.ts";
+import { parsePiJsonOutput } from "../runtime/pi-json-output.ts";
 import { buildParentContext, configRecord, formatScoped, result, type TeamContext } from "./team-tool/context.ts";
 import { autonomousPatchFromConfig, configPatchFromConfig, formatAutonomyStatus } from "./team-tool/config-patch.ts";
 import { handleApi } from "./team-tool/api.ts";
@@ -225,9 +228,23 @@ function recoverCheckpointedTasks(manifest: TeamRunManifest, tasks: TeamTaskStat
 	const recovered: string[] = [];
 	let nextManifest = manifest;
 	let nextTasks = tasks.map((task) => {
-		if (task.status !== "running" || task.checkpoint?.phase !== "artifact-written" || !task.resultArtifact) return task;
-		recovered.push(task.id);
-		return { ...task, status: "completed" as const, finishedAt: task.finishedAt ?? task.checkpoint.updatedAt, error: undefined, claim: undefined };
+		if (task.status !== "running" || !task.checkpoint) return task;
+		if (task.checkpoint.phase === "artifact-written" && task.resultArtifact) {
+			recovered.push(task.id);
+			return { ...task, status: "completed" as const, finishedAt: task.finishedAt ?? task.checkpoint.updatedAt, error: undefined, claim: undefined };
+		}
+		if (task.checkpoint.phase === "child-stdout-final") {
+			const transcriptPath = path.join(manifest.artifactsRoot, "transcripts", `${task.id}.jsonl`);
+			if (!fs.existsSync(transcriptPath)) return task;
+			const transcript = fs.readFileSync(transcriptPath, "utf-8");
+			const parsed = parsePiJsonOutput(transcript);
+			if (!parsed.finalText && !parsed.usage) return task;
+			const resultArtifact = writeArtifact(manifest.artifactsRoot, { kind: "result", relativePath: `results/${task.id}.txt`, content: parsed.finalText ?? "(recovered from completed child transcript)", producer: task.id });
+			const transcriptArtifact = writeArtifact(manifest.artifactsRoot, { kind: "log", relativePath: `transcripts/${task.id}.jsonl`, content: transcript, producer: task.id });
+			recovered.push(task.id);
+			return { ...task, status: "completed" as const, finishedAt: task.finishedAt ?? task.checkpoint.updatedAt, error: undefined, claim: undefined, resultArtifact, transcriptArtifact, usage: parsed.usage, jsonEvents: parsed.jsonEvents };
+		}
+		return task;
 	});
 	if (recovered.length) {
 		const artifacts = new Map(nextManifest.artifacts.map((artifact) => [artifactKey(artifact), artifact]));

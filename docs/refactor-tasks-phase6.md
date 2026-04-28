@@ -39,7 +39,7 @@ Tổng: **22 task / ~6.25 ngày**, có thể ship theo nhiều mini-release (0.1
 | T61 | ✅ Done | `bfd9bc8` — async early-exit guard |
 | T62 | ✅ Done | `bfd9bc8` — async startup marker |
 | T63 | ✅ Done | `bfd9bc8` — concurrency hard cap + opt-out |
-| T64 | 🟡 Partial | checkpoint phases + artifact-written resume recovery implemented; child-stdout transcript recovery still pending |
+| T64 | ✅ Done | checkpoint phases + child-stdout-final/artifact-written resume recovery |
 | T65 | ✅ Done | async notifier marks quiet dead background runners failed with `async.died` |
 | T66 | ✅ Done | `5e495dc` — replay pending mailbox on resume |
 | T67 | ✅ Done | adaptive plan repair for malformed JSON, oversized plans, and role aliases |

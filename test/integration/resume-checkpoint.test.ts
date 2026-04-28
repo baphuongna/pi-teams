@@ -12,6 +12,34 @@ function restoreEnv(name: string, previous: string | undefined): void {
 	else process.env[name] = previous;
 }
 
+test("resume recovers running task with child-stdout-final checkpoint from transcript", async () => {
+	const previousMock = process.env.PI_TEAMS_MOCK_CHILD_PI;
+	process.env.PI_TEAMS_MOCK_CHILD_PI = "json-success";
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-resume-transcript-"));
+	try {
+		const run = await handleTeamTool({ action: "run", team: "fast-fix", goal: "checkpoint transcript recovery" }, { cwd });
+		const runId = run.details?.runId;
+		assert.ok(runId);
+		const loaded = loadRunManifestById(cwd, runId)!;
+		const task = loaded.tasks[0]!;
+		const rewound = loaded.tasks.map((item, index) => index === 0 ? { ...item, status: "running" as const, finishedAt: undefined, resultArtifact: undefined, transcriptArtifact: undefined, checkpoint: { phase: "child-stdout-final" as const, updatedAt: new Date().toISOString() } } : item);
+		saveRunTasks(loaded.manifest, rewound);
+		updateRunStatus(loaded.manifest, "running", "simulate crash after final stdout");
+		process.env.PI_TEAMS_MOCK_CHILD_PI = "fail";
+
+		const resumed = await handleTeamTool({ action: "resume", runId }, { cwd });
+		assert.equal(resumed.isError, false);
+		const after = loadRunManifestById(cwd, runId)!;
+		assert.equal(after.tasks[0]!.status, "completed");
+		assert.ok(after.tasks[0]!.resultArtifact?.path);
+		assert.match(fs.readFileSync(after.tasks[0]!.resultArtifact!.path, "utf-8"), /Mock JSON success/);
+		assert.equal(readEvents(after.manifest.eventsPath).some((event) => event.type === "task.checkpoint_recovered" && JSON.stringify(event.data).includes(task.id)), true);
+	} finally {
+		restoreEnv("PI_TEAMS_MOCK_CHILD_PI", previousMock);
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
 test("resume recovers running task with artifact-written checkpoint without rerunning worker", async () => {
 	const previousMock = process.env.PI_TEAMS_MOCK_CHILD_PI;
 	process.env.PI_TEAMS_MOCK_CHILD_PI = "json-success";
