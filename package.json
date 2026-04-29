@@ -1,6 +1,6 @@
 {
   "name": "pi-crew",
-  "version": "0.1.38",
+  "version": "0.1.39",
   "description": "Pi extension for coordinated AI teams, workflows, worktrees, and async task orchestration",
   "author": "baphuongna",
   "license": "MIT",
@@ -47,8 +47,8 @@
     "ci": "npm run typecheck && npm test && npm pack --dry-run",
     "typecheck": "tsc --noEmit && node --experimental-strip-types -e \"await import('./index.ts'); console.log('strip-types import ok')\"",
     "test": "npm run test:unit && npm run test:integration",
-    "test:unit": "node --experimental-strip-types --test --test-timeout=30000 test/unit/*.test.ts",
-    "test:integration": "node --experimental-strip-types --test --test-timeout=120000 test/integration/*.test.ts",
+    "test:unit": "node --experimental-strip-types --test --test-concurrency=1 --test-timeout=30000 test/unit/*.test.ts",
+    "test:integration": "node --experimental-strip-types --test --test-concurrency=1 --test-timeout=120000 test/integration/*.test.ts",
     "smoke:pi": "pi install ."
   },
   "exports": {

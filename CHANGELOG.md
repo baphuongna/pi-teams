@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.1.39
+
+### Fixed
+
+- Made CI test execution deterministic across Node 22/macOS/Linux/Windows by running Node test files sequentially to avoid cross-file environment races.
+- Fixed live-agent durable control symlink-file rejection to return an API error instead of throwing from the tool handler.
+- Tightened symlink artifact security assertions so tests check leaked file contents rather than safe metadata paths.
+
 ## 0.1.38
 
 ### Added

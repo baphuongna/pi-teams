@@ -191,11 +191,16 @@ export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): 
 			const task = loaded.tasks.find((item) => item.id === agent.taskId);
 			if (!task) return result(`API ${operation} agent '${agentId}' does not match a run task.`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
 			if (operation === "resume-agent" && !prompt) return result("API resume-agent requires config.prompt or config.message.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-			const request = appendLiveAgentControlRequest(loaded.manifest, { taskId: task.id, agentId: agent.id, operation: operation === "resume-agent" ? "resume" : operation === "steer-agent" ? "steer" : "stop", message: operation === "resume-agent" ? prompt : message });
-			publishLiveControlRealtime(request);
-			ctx.events?.emit?.("pi-crew:live-control", liveControlRealtimeMessage(request));
-			appendEvent(loaded.manifest.eventsPath, { type: "agent.control.queued", runId: loaded.manifest.runId, taskId: agent.taskId, message: `Queued ${request.operation} control request for live agent.`, data: { request, realtime: true } });
-			return result(JSON.stringify({ queued: true, request }, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+			try {
+				const request = appendLiveAgentControlRequest(loaded.manifest, { taskId: task.id, agentId: agent.id, operation: operation === "resume-agent" ? "resume" : operation === "steer-agent" ? "steer" : "stop", message: operation === "resume-agent" ? prompt : message });
+				publishLiveControlRealtime(request);
+				ctx.events?.emit?.("pi-crew:live-control", liveControlRealtimeMessage(request));
+				appendEvent(loaded.manifest.eventsPath, { type: "agent.control.queued", runId: loaded.manifest.runId, taskId: agent.taskId, message: `Queued ${request.operation} control request for live agent.`, data: { request, realtime: true } });
+				return result(JSON.stringify({ queued: true, request }, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+			} catch (queueError) {
+				const message = queueError instanceof Error ? queueError.message : String(queueError);
+				return result(message, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
+			}
 		}
 	}
 	if (operation === "read-mailbox") {

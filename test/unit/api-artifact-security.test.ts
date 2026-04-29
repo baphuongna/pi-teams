@@ -53,7 +53,7 @@ test("api refuses resultArtifact and transcript paths outside run artifacts", as
 	try {
 		fs.mkdirSync(path.join(cwd, ".crew"), { recursive: true });
 		const outside = path.join(cwd, "outside.txt");
-		fs.writeFileSync(outside, "secret", "utf-8");
+		fs.writeFileSync(outside, "OUTSIDE_SECRET_CONTENT", "utf-8");
 		const { manifest, tasks } = createRunManifest({ cwd, team, workflow, goal: "safe api" });
 		const task = tasks[0]!;
 		saveRunTasks(manifest, [{
@@ -74,10 +74,10 @@ test("api refuses resultArtifact and transcript paths outside run artifacts", as
 		const result = await handleTeamTool({ action: "api", runId: manifest.runId, config: { operation: "get-agent-result", agentId: task.id } }, { cwd });
 		assert.equal(result.isError, false);
 		const resultText = result.content[0]?.type === "text" ? result.content[0].text : "";
-		assert.doesNotMatch(resultText, /secret/);
+		assert.doesNotMatch(resultText, /OUTSIDE_SECRET_CONTENT/);
 		const transcript = await handleTeamTool({ action: "api", runId: manifest.runId, config: { operation: "read-agent-transcript", agentId: task.id } }, { cwd });
 		const transcriptText = transcript.content[0]?.type === "text" ? transcript.content[0].text : "";
-		assert.doesNotMatch(transcriptText, /secret/);
+		assert.doesNotMatch(transcriptText, /OUTSIDE_SECRET_CONTENT/);
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}
@@ -130,7 +130,7 @@ test("api refuses symlink escapes from artifacts root", async (t) => {
 	try {
 		fs.mkdirSync(path.join(cwd, ".crew"), { recursive: true });
 		const outside = path.join(cwd, "outside.txt");
-		fs.writeFileSync(outside, "secret", "utf-8");
+		fs.writeFileSync(outside, "OUTSIDE_SECRET_CONTENT", "utf-8");
 		const { manifest, tasks } = createRunManifest({ cwd, team, workflow, goal: "symlink safe api" });
 		const linkPath = path.join(manifest.artifactsRoot, "linked-secret.txt");
 		if (!trySymlink(outside, linkPath)) {
@@ -155,10 +155,10 @@ test("api refuses symlink escapes from artifacts root", async (t) => {
 		}]);
 		const result = await handleTeamTool({ action: "api", runId: manifest.runId, config: { operation: "get-agent-result", agentId: task.id } }, { cwd });
 		const resultText = result.content[0]?.type === "text" ? result.content[0].text : "";
-		assert.doesNotMatch(resultText, /secret/);
+		assert.doesNotMatch(resultText, /OUTSIDE_SECRET_CONTENT/);
 		const transcript = await handleTeamTool({ action: "api", runId: manifest.runId, config: { operation: "read-agent-transcript", agentId: task.id } }, { cwd });
 		const transcriptText = transcript.content[0]?.type === "text" ? transcript.content[0].text : "";
-		assert.doesNotMatch(transcriptText, /secret/);
+		assert.doesNotMatch(transcriptText, /OUTSIDE_SECRET_CONTENT/);
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}
