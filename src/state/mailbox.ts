@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { TeamRunManifest } from "./types.ts";
+import { resolveRealContainedPath } from "../utils/safe-paths.ts";
 
 export type MailboxDirection = "inbox" | "outbox";
 export type MailboxMessageStatus = "queued" | "delivered" | "acknowledged";
@@ -43,33 +44,78 @@ function mailboxDir(manifest: TeamRunManifest): string {
 	return path.join(manifest.stateRoot, "mailbox");
 }
 
-function taskMailboxDir(manifest: TeamRunManifest, taskId: string): string {
-	return path.join(mailboxDir(manifest), "tasks", taskId);
+function safeMailboxDir(manifest: TeamRunManifest, create = false): string {
+	const dir = mailboxDir(manifest);
+	if (create) fs.mkdirSync(dir, { recursive: true });
+	if (!fs.existsSync(dir)) return dir;
+	if (fs.lstatSync(dir).isSymbolicLink()) throw new Error(`Invalid mailbox directory: ${dir}`);
+	return resolveRealContainedPath(manifest.stateRoot, "mailbox");
 }
 
-function mailboxPath(manifest: TeamRunManifest, direction: MailboxDirection, taskId?: string): string {
-	return taskId ? path.join(taskMailboxDir(manifest, taskId), `${direction}.jsonl`) : path.join(mailboxDir(manifest), `${direction}.jsonl`);
+function safeTaskId(taskId: string): string {
+	if (!/^[\w.-]+$/.test(taskId) || taskId.includes("..") || path.isAbsolute(taskId)) throw new Error(`Invalid mailbox task id: ${taskId}`);
+	return taskId;
 }
 
-function deliveryPath(manifest: TeamRunManifest): string {
-	return path.join(mailboxDir(manifest), "delivery.json");
+function safeMailboxTasksRoot(manifest: TeamRunManifest, create = false): string {
+	const root = path.join(safeMailboxDir(manifest, create), "tasks");
+	if (create) fs.mkdirSync(root, { recursive: true });
+	if (!fs.existsSync(root)) return root;
+	if (fs.lstatSync(root).isSymbolicLink()) throw new Error(`Invalid mailbox tasks directory: ${root}`);
+	return resolveRealContainedPath(safeMailboxDir(manifest), "tasks");
+}
+
+function taskMailboxDir(manifest: TeamRunManifest, taskId: string, create = false): string {
+	const tasksRoot = safeMailboxTasksRoot(manifest, create);
+	const normalizedTaskId = safeTaskId(taskId);
+	const resolved = path.resolve(tasksRoot, normalizedTaskId);
+	const relative = path.relative(tasksRoot, resolved);
+	if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`Invalid mailbox task id: ${taskId}`);
+	if (create) fs.mkdirSync(resolved, { recursive: true });
+	if (!fs.existsSync(resolved)) return resolved;
+	if (fs.lstatSync(resolved).isSymbolicLink()) throw new Error(`Invalid mailbox task directory: ${resolved}`);
+	return resolveRealContainedPath(tasksRoot, normalizedTaskId);
+}
+
+function mailboxPath(manifest: TeamRunManifest, direction: MailboxDirection, taskId?: string, create = false): string {
+	return taskId ? path.join(taskMailboxDir(manifest, taskId, create), `${direction}.jsonl`) : path.join(safeMailboxDir(manifest, create), `${direction}.jsonl`);
+}
+
+function deliveryPath(manifest: TeamRunManifest, create = false): string {
+	return path.join(safeMailboxDir(manifest, create), "delivery.json");
+}
+
+function safeMailboxFile(filePath: string, parentDir: string): string {
+	if (!fs.existsSync(filePath)) return filePath;
+	if (fs.lstatSync(filePath).isSymbolicLink()) throw new Error(`Invalid mailbox file: ${filePath}`);
+	return resolveRealContainedPath(parentDir, path.basename(filePath));
+}
+
+function mailboxFile(manifest: TeamRunManifest, direction: MailboxDirection, taskId?: string, create = false): string {
+	const parent = taskId ? taskMailboxDir(manifest, taskId, create) : safeMailboxDir(manifest, create);
+	return safeMailboxFile(path.join(parent, `${direction}.jsonl`), parent);
+}
+
+function deliveryFile(manifest: TeamRunManifest, create = false): string {
+	const parent = safeMailboxDir(manifest, create);
+	return safeMailboxFile(path.join(parent, "delivery.json"), parent);
 }
 
 function ensureRunMailbox(manifest: TeamRunManifest): void {
-	fs.mkdirSync(mailboxDir(manifest), { recursive: true });
+	safeMailboxDir(manifest, true);
 	for (const direction of ["inbox", "outbox"] as const) {
-		const filePath = mailboxPath(manifest, direction);
+		const filePath = mailboxFile(manifest, direction, undefined, true);
 		if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, "", "utf-8");
 	}
-	const delivery = deliveryPath(manifest);
+	const delivery = deliveryFile(manifest, true);
 	if (!fs.existsSync(delivery)) fs.writeFileSync(delivery, `${JSON.stringify({ messages: {}, updatedAt: new Date().toISOString() }, null, 2)}\n`, "utf-8");
 }
 
 function ensureTaskMailbox(manifest: TeamRunManifest, taskId: string): void {
 	ensureRunMailbox(manifest);
-	fs.mkdirSync(taskMailboxDir(manifest, taskId), { recursive: true });
+	taskMailboxDir(manifest, taskId, true);
 	for (const direction of ["inbox", "outbox"] as const) {
-		const filePath = mailboxPath(manifest, direction, taskId);
+		const filePath = mailboxFile(manifest, direction, taskId, true);
 		if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, "", "utf-8");
 	}
 }
@@ -112,25 +158,24 @@ function safeReadMailboxFile(filePath: string, direction: MailboxDirection): Mai
 
 export function readMailbox(manifest: TeamRunManifest, direction?: MailboxDirection, taskId?: string): MailboxMessage[] {
 	const directions = direction ? [direction] : ["inbox", "outbox"] as const;
-	return directions.flatMap((item) => safeReadMailboxFile(mailboxPath(manifest, item, taskId), item)).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+	return directions.flatMap((item) => safeReadMailboxFile(mailboxFile(manifest, item, taskId), item)).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 function readAllInboxMessages(manifest: TeamRunManifest): MailboxMessage[] {
-	const messages = [...safeReadMailboxFile(mailboxPath(manifest, "inbox"), "inbox")];
-	const tasksDir = path.join(mailboxDir(manifest), "tasks");
+	const messages = [...safeReadMailboxFile(mailboxFile(manifest, "inbox"), "inbox")];
+	const tasksDir = safeMailboxTasksRoot(manifest);
 	if (fs.existsSync(tasksDir)) {
 		for (const entry of fs.readdirSync(tasksDir, { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
-			messages.push(...safeReadMailboxFile(mailboxPath(manifest, "inbox", entry.name), "inbox"));
+			messages.push(...safeReadMailboxFile(mailboxFile(manifest, "inbox", entry.name), "inbox"));
 		}
 	}
 	return messages.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 export function readDeliveryState(manifest: TeamRunManifest): MailboxDeliveryState {
-	ensureRunMailbox(manifest);
 	try {
-		const raw = JSON.parse(fs.readFileSync(deliveryPath(manifest), "utf-8")) as unknown;
+		const raw = JSON.parse(fs.readFileSync(deliveryFile(manifest), "utf-8")) as unknown;
 		if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("Invalid delivery state.");
 		const obj = raw as Record<string, unknown>;
 		const messages: Record<string, MailboxMessageStatus> = {};
@@ -145,7 +190,7 @@ export function readDeliveryState(manifest: TeamRunManifest): MailboxDeliverySta
 
 function writeDeliveryState(manifest: TeamRunManifest, state: MailboxDeliveryState): void {
 	ensureRunMailbox(manifest);
-	fs.writeFileSync(deliveryPath(manifest), `${JSON.stringify(state, null, 2)}\n`, "utf-8");
+	fs.writeFileSync(deliveryFile(manifest, true), `${JSON.stringify(state, null, 2)}\n`, "utf-8");
 }
 
 export function appendMailboxMessage(manifest: TeamRunManifest, message: Omit<MailboxMessage, "id" | "runId" | "createdAt" | "status"> & { id?: string; status?: MailboxMessageStatus }): MailboxMessage {
@@ -163,7 +208,7 @@ export function appendMailboxMessage(manifest: TeamRunManifest, message: Omit<Ma
 		status: message.status ?? "queued",
 		taskId: message.taskId,
 	};
-	fs.appendFileSync(mailboxPath(manifest, complete.direction, complete.taskId), `${JSON.stringify(complete)}\n`, "utf-8");
+	fs.appendFileSync(mailboxFile(manifest, complete.direction, complete.taskId), `${JSON.stringify(complete)}\n`, "utf-8");
 	const delivery = readDeliveryState(manifest);
 	delivery.messages[complete.id] = complete.status;
 	delivery.updatedAt = createdAt;
@@ -196,7 +241,7 @@ export function validateMailbox(manifest: TeamRunManifest, options: { repair?: b
 	const issues: MailboxValidationIssue[] = [];
 	const repaired: string[] = [];
 	for (const direction of ["inbox", "outbox"] as const) {
-		const filePath = mailboxPath(manifest, direction);
+		const filePath = mailboxFile(manifest, direction);
 		const lines = fs.readFileSync(filePath, "utf-8").split(/\r?\n/).filter(Boolean);
 		const validLines: string[] = [];
 		for (const line of lines) {
@@ -217,12 +262,12 @@ export function validateMailbox(manifest: TeamRunManifest, options: { repair?: b
 	}
 	const delivery = readDeliveryState(manifest);
 	const allMessages = readMailbox(manifest);
-	for (const message of allMessages) if (!delivery.messages[message.id]) issues.push({ level: "warning", path: deliveryPath(manifest), message: `Missing delivery entry for ${message.id}.` });
+	for (const message of allMessages) if (!delivery.messages[message.id]) issues.push({ level: "warning", path: deliveryFile(manifest), message: `Missing delivery entry for ${message.id}.` });
 	if (options.repair) {
 		for (const message of allMessages) delivery.messages[message.id] ??= message.status;
 		delivery.updatedAt = new Date().toISOString();
 		writeDeliveryState(manifest, delivery);
-		repaired.push(deliveryPath(manifest));
+		repaired.push(deliveryFile(manifest));
 	}
 	return { issues, repaired };
 }

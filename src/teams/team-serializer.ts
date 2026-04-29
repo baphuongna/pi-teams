@@ -9,6 +9,8 @@ function line(key: string, value: string | string[] | undefined): string | undef
 function serializeRole(role: TeamRole): string {
 	const parts = [`agent=${role.agent}`];
 	if (role.model) parts.push(`model=${role.model}`);
+	if (role.skills === false) parts.push("skills=false");
+	else if (role.skills?.length) parts.push(`skills=${role.skills.join(",")}`);
 	if (role.maxConcurrency !== undefined) parts.push(`maxConcurrency=${role.maxConcurrency}`);
 	if (role.description) parts.push(role.description);
 	return `- ${role.name}: ${parts.join(" ")}`;

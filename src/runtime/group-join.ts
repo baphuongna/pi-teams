@@ -54,7 +54,7 @@ export function deliverGroupJoin(input: {
 	const remaining = latest.filter((task) => task.status === "queued" || task.status === "running").map((task) => task.id);
 	const partial = input.partial ?? remaining.length > 0;
 	const batchId = batchIdFor(input.manifest.runId, taskIds);
-	const summary = aggregateTaskOutputs(latest);
+	const summary = aggregateTaskOutputs(latest, input.manifest);
 	const delivery: CrewGroupJoinDelivery = { batchId, mode: input.mode, partial, taskIds, completed, failed, skipped, remaining };
 	const content = `${JSON.stringify({ ...delivery, createdAt: new Date().toISOString() }, null, 2)}\n`;
 	const artifact = writeArtifact(input.manifest.artifactsRoot, {

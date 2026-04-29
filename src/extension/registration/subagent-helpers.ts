@@ -2,11 +2,34 @@ import * as fs from "node:fs";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { loadRunManifestById } from "../../state/state-store.ts";
 import { savePersistedSubagentRecord, type SubagentRecord, type SubagentSpawnOptions } from "../../subagents/manager.ts";
+import { resolveRealContainedPath } from "../../utils/safe-paths.ts";
+
+interface FollowUpCapablePi {
+	sendMessage?: (message: unknown, options?: unknown) => void;
+	sendUserMessage?: (content: string, options?: unknown) => void;
+}
 
 export function sendFollowUp(pi: ExtensionAPI, content: string): void {
-	const sender = (pi as unknown as { sendMessage?: (message: unknown, options?: unknown) => void }).sendMessage;
-	if (typeof sender !== "function") return;
-	sender.call(pi, { customType: "pi-crew-subagent-notification", content, display: true }, { deliverAs: "followUp", triggerTurn: true });
+	const api = pi as unknown as FollowUpCapablePi;
+	if (typeof api.sendMessage !== "function") return;
+	api.sendMessage.call(pi, { customType: "pi-crew-subagent-notification", content, display: true }, { deliverAs: "followUp", triggerTurn: true });
+}
+
+export function sendAgentWakeUp(pi: ExtensionAPI, content: string): boolean {
+	const api = pi as unknown as FollowUpCapablePi;
+	try {
+		if (typeof api.sendUserMessage === "function") {
+			api.sendUserMessage.call(pi, content, { deliverAs: "followUp", triggerTurn: true });
+			return true;
+		}
+		if (typeof api.sendMessage === "function") {
+			api.sendMessage.call(pi, { customType: "pi-crew-subagent-wakeup", content, display: true }, { deliverAs: "followUp", triggerTurn: true });
+			return true;
+		}
+	} catch {
+		return false;
+	}
+	return false;
 }
 
 export function refreshPersistedSubagentRecord(ctx: ExtensionContext | ExtensionCommandContext, record: SubagentRecord): SubagentRecord {
@@ -44,10 +67,11 @@ export function readSubagentRunResult(ctx: ExtensionContext | ExtensionCommandCo
 	if (!record.runId) return record.result;
 	const loaded = loadRunManifestById(ctx.cwd, record.runId);
 	const task = loaded?.tasks.find((item) => item.resultArtifact) ?? loaded?.tasks[0];
-	const path = task?.resultArtifact?.path;
-	if (!path) return undefined;
+	const artifactPath = task?.resultArtifact?.path;
+	if (!artifactPath || !loaded) return undefined;
 	try {
-		return fs.readFileSync(path, "utf-8").trim();
+		const safePath = resolveRealContainedPath(loaded.manifest.artifactsRoot, artifactPath);
+		return fs.readFileSync(safePath, "utf-8").trim();
 	} catch {
 		return undefined;
 	}

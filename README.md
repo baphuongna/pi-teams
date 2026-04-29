@@ -49,12 +49,15 @@ Current highlights:
 - project initialization for `.pi` layout and `.gitignore`
 - config show/update with user/project scope and nested unset support
 - safe API interop for manifest/task/event/heartbeat/claim/mailbox operations
+- realpath containment for run/import/artifact/transcript/mailbox/agent state reads and writes, including symlink escape protection
+- read-only state APIs avoid creating mailbox files when only inspecting delivery or mailbox state
 - run-level and task-level mailbox files with validation/repair support
 - `/team-manager` interactive helper
 - `/team-dashboard` custom TUI overlay with progress preview, action shortcuts, and reload
 - `parallel-research` team/workflow for dynamic `Source/pi-*` fanout and parallel shard exploration
 - observability metrics: per-session Counter/Gauge/Histogram registry, JSONL sink, `/team-metrics`, dashboard metrics pane, Prometheus/OTLP exporters (OTLP opt-in)
 - reliability hardening: heartbeat gradient watcher, opt-in retry executor with attempt trace, crash-recovery detection, deadletter queue
+- background `Agent`/`crew_agent` completion wake-up so parent sessions can automatically join completed subagent results
 - package polish: `schema.json`, TypeScript semantic check, strip-types import smoke, cross-platform CI workflow, dry-run package verification
 
 ## Install
@@ -219,7 +222,9 @@ Supported config:
 Safety notes:
 
 - Foreground child-process runs continue in the Pi extension process and return control to chat immediately, so large workflows do not block the interactive session. They are interrupted on session shutdown. Use `async: true` only for intentionally detached runs that may survive the current session.
+- Background `Agent`/`crew_agent` runs notify the parent session when they reach a terminal state; the parent can then call `get_subagent_result`/`crew_agent_result` and continue the original task.
 - `tools.terminateOnForeground` is an opt-in power-user setting. When true, foreground `Agent`/`crew_agent` calls return with `terminate: true` after the child result is available, saving one follow-up LLM turn. Default is false so the assistant can still summarize raw worker output.
+- Runtime state paths are treated as untrusted data: run ids, import bundles, artifact/transcript paths, mailbox files, and agent control/log files are validated with containment checks before reads or writes.
 - `observability.enabled` defaults to true for in-memory metrics and heartbeat watching. Metric JSONL snapshots are gated by `telemetry.enabled`; set `telemetry.enabled=false` to opt out of local telemetry files.
 - `reliability.autoRetry` and `reliability.autoRecover` default to false. Enabling retry may execute an idempotent task more than once; each attempt is recorded in `task.attempts`, and exhausted retries append a deadletter entry.
 - `otlp.enabled` defaults to false. Configure `otlp.endpoint` only when you want to push metrics to an OTLP HTTP collector.

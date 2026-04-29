@@ -11,7 +11,7 @@ This package is a Pi extension for team orchestration.
 - Avoid `any`; use `unknown` plus validation for tool/config inputs.
 - Avoid dynamic inline imports.
 - Do not hardcode global keybindings without user configurability.
-- Default execution should remain safe: child Pi workers only run when explicitly enabled with `PI_TEAMS_EXECUTE_WORKERS=1`.
+- Default execution uses child Pi workers. Keep it safe through runtime limits, depth guards, and explicit disable controls (`executeWorkers=false`, `runtime.mode=scaffold`, `PI_CREW_EXECUTE_WORKERS=0`, or `PI_TEAMS_EXECUTE_WORKERS=0`).
 - Worktree cleanup must preserve dirty worktrees unless `force` is explicitly set.
 - Management deletes must require `confirm: true`; referenced resources should be blocked unless `force: true`.
 - After code changes, run `npm test` from `pi-crew/` unless explicitly told not to.

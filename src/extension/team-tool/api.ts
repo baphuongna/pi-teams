@@ -10,18 +10,39 @@ import { appendEvent, readEvents, readEventsCursor } from "../../state/event-log
 import { resolveCrewRuntime } from "../../runtime/runtime-resolver.ts";
 import { probeLiveSessionRuntime } from "../../subagents/live/session-runtime.ts";
 import { touchWorkerHeartbeat } from "../../runtime/worker-heartbeat.ts";
-import { agentEventsPath, agentOutputPath, readCrewAgentEvents, readCrewAgentEventsCursor, readCrewAgentStatus, readCrewAgents } from "../../runtime/crew-agent-records.ts";
+import { agentOutputPath, readCrewAgentEventsCursor, readCrewAgentStatus, readCrewAgents } from "../../runtime/crew-agent-records.ts";
 import { buildAgentDashboard, readAgentOutput } from "../../runtime/agent-observability.ts";
 import { readForegroundControlStatus, writeForegroundInterruptRequest } from "../../runtime/foreground-control.ts";
-import { listLiveAgents, resumeLiveAgent, steerLiveAgent, stopLiveAgent } from "../../subagents/live/manager.ts";
+import { getLiveAgent, listLiveAgents, resumeLiveAgent, steerLiveAgent, stopLiveAgent } from "../../subagents/live/manager.ts";
 import { appendLiveAgentControlRequest } from "../../subagents/live/control.ts";
 import { liveControlRealtimeMessage, publishLiveControlRealtime } from "../../subagents/live/realtime.ts";
+import { resolveRealContainedPath } from "../../utils/safe-paths.ts";
 import type { PiTeamsToolResult } from "../tool-result.ts";
 import { configRecord, result, type TeamContext } from "./context.ts";
 
 function globMatch(value: string, pattern: string): boolean {
 	const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
 	return new RegExp(`^${escaped}$`).test(value);
+}
+
+function safeReadContainedFile(baseDir: string, filePath: string | undefined): string | undefined {
+	if (!filePath) return undefined;
+	let safePath: string;
+	try {
+		safePath = resolveRealContainedPath(baseDir, filePath);
+	} catch {
+		return undefined;
+	}
+	return fs.existsSync(safePath) ? fs.readFileSync(safePath, "utf-8") : undefined;
+}
+
+function safeContainedPath(baseDir: string, filePath: string | undefined): string | undefined {
+	if (!filePath) return undefined;
+	try {
+		return resolveRealContainedPath(baseDir, filePath);
+	} catch {
+		return undefined;
+	}
 }
 
 function snapshotHasRunId(snapshot: { values?: unknown }, runId: string): boolean {
@@ -85,7 +106,7 @@ export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): 
 		const agent = readCrewAgents(loaded.manifest).find((item) => item.id === agentId || item.taskId === agentId);
 		if (!agent) return result("API get-agent-result requires config.agentId matching an agent id or task id.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
 		const task = loaded.tasks.find((item) => item.id === agent.taskId);
-		const text = task?.resultArtifact && fs.existsSync(task.resultArtifact.path) ? fs.readFileSync(task.resultArtifact.path, "utf-8") : JSON.stringify(agent, null, 2);
+		const text = safeReadContainedFile(loaded.manifest.artifactsRoot, task?.resultArtifact?.path) ?? JSON.stringify(agent, null, 2);
 		return result(text, { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
 	}
 	if (operation === "read-agent-status") {
@@ -102,9 +123,8 @@ export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): 
 		if (!agent) return result("API read-agent-events requires config.agentId matching an agent id or task id, or at least one agent in the run.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
 		const sinceSeq = typeof cfg.sinceSeq === "number" ? cfg.sinceSeq : undefined;
 		const limit = typeof cfg.limit === "number" ? cfg.limit : undefined;
-		const payload = sinceSeq !== undefined || limit !== undefined
-			? readCrewAgentEventsCursor(loaded.manifest, agent.taskId, { sinceSeq, limit })
-			: { path: agentEventsPath(loaded.manifest, agent.taskId), events: readCrewAgentEvents(loaded.manifest, agent.taskId) };
+		const cursorPayload = readCrewAgentEventsCursor(loaded.manifest, agent.taskId, { sinceSeq, limit });
+		const payload = sinceSeq !== undefined || limit !== undefined ? cursorPayload : { path: cursorPayload.path, events: cursorPayload.events };
 		return result(JSON.stringify(payload, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
 	}
 	if (operation === "read-agent-transcript") {
@@ -112,8 +132,9 @@ export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): 
 		const agents = readCrewAgents(loaded.manifest);
 		const agent = agentId ? agents.find((item) => item.id === agentId || item.taskId === agentId) : agents[0];
 		if (!agent) return result("API read-agent-transcript requires config.agentId matching an agent id or task id, or at least one agent in the run.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-		const transcriptPath = agent.transcriptPath && fs.existsSync(agent.transcriptPath) ? agent.transcriptPath : agentOutputPath(loaded.manifest, agent.taskId);
-		const text = fs.existsSync(transcriptPath) ? fs.readFileSync(transcriptPath, "utf-8") : "";
+		const artifactTranscriptPath = safeContainedPath(loaded.manifest.artifactsRoot, agent.transcriptPath);
+		const transcriptPath = artifactTranscriptPath ?? agentOutputPath(loaded.manifest, agent.taskId);
+		const text = artifactTranscriptPath ? safeReadContainedFile(loaded.manifest.artifactsRoot, artifactTranscriptPath) ?? "" : safeReadContainedFile(loaded.manifest.stateRoot, transcriptPath) ?? "";
 		return result(text || `(no transcript at ${transcriptPath})`, { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
 	}
 	if (operation === "read-agent-output") {
@@ -153,6 +174,8 @@ export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): 
 		const message = typeof cfg.message === "string" && cfg.message.trim() ? cfg.message.trim() : undefined;
 		const prompt = typeof cfg.prompt === "string" && cfg.prompt.trim() ? cfg.prompt.trim() : message;
 		try {
+			const live = getLiveAgent(agentId);
+			if (live && live.runId !== loaded.manifest.runId) return result(`Live agent '${agentId}' does not belong to run ${loaded.manifest.runId}.`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
 			if (operation === "steer-agent") return result(JSON.stringify(await steerLiveAgent(agentId, message ?? "Please report current status and wrap up if possible."), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
 			if (operation === "resume-agent") {
 				if (!prompt) return result("API resume-agent requires config.prompt or config.message.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
@@ -165,8 +188,10 @@ export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): 
 				const err = error instanceof Error ? error.message : String(error);
 				return result(err, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
 			}
+			const task = loaded.tasks.find((item) => item.id === agent.taskId);
+			if (!task) return result(`API ${operation} agent '${agentId}' does not match a run task.`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
 			if (operation === "resume-agent" && !prompt) return result("API resume-agent requires config.prompt or config.message.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-			const request = appendLiveAgentControlRequest(loaded.manifest, { taskId: agent.taskId, agentId: agent.id, operation: operation === "resume-agent" ? "resume" : operation === "steer-agent" ? "steer" : "stop", message: operation === "resume-agent" ? prompt : message });
+			const request = appendLiveAgentControlRequest(loaded.manifest, { taskId: task.id, agentId: agent.id, operation: operation === "resume-agent" ? "resume" : operation === "steer-agent" ? "steer" : "stop", message: operation === "resume-agent" ? prompt : message });
 			publishLiveControlRealtime(request);
 			ctx.events?.emit?.("pi-crew:live-control", liveControlRealtimeMessage(request));
 			appendEvent(loaded.manifest.eventsPath, { type: "agent.control.queued", runId: loaded.manifest.runId, taskId: agent.taskId, message: `Queued ${request.operation} control request for live agent.`, data: { request, realtime: true } });
@@ -176,7 +201,13 @@ export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): 
 	if (operation === "read-mailbox") {
 		const direction = cfg.direction === "inbox" || cfg.direction === "outbox" ? cfg.direction as MailboxDirection : undefined;
 		const taskId = typeof cfg.taskId === "string" ? cfg.taskId : undefined;
-		return result(JSON.stringify(readMailbox(loaded.manifest, direction, taskId), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+		if (taskId && !loaded.tasks.some((task) => task.id === taskId)) return result(`API read-mailbox taskId '${taskId}' does not match a run task.`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
+		try {
+			return result(JSON.stringify(readMailbox(loaded.manifest, direction, taskId), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return result(message, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
+		}
 	}
 	if (operation === "validate-mailbox") {
 		const report = validateMailbox(loaded.manifest, { repair: cfg.repair === true });
@@ -192,6 +223,7 @@ export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): 
 		const body = typeof cfg.body === "string" && cfg.body.trim() ? cfg.body : undefined;
 		const taskId = typeof cfg.taskId === "string" && cfg.taskId.trim() ? cfg.taskId.trim() : undefined;
 		if (!body) return result("API send-message requires config.body.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
+		if (taskId && !loaded.tasks.some((task) => task.id === taskId)) return result(`API send-message taskId '${taskId}' does not match a run task.`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
 		try {
 			return withRunLockSync(loaded.manifest, () => {
 				const message = appendMailboxMessage(loaded.manifest, { direction, from, to, body, taskId });

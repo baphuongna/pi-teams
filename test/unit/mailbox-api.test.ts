@@ -7,6 +7,20 @@ import { handleTeamTool } from "../../src/extension/team-tool.ts";
 import { loadRunManifestById } from "../../src/state/state-store.ts";
 import { firstText } from "../fixtures/tool-result-helpers.ts";
 
+function tryDirectorySymlink(target: string, linkPath: string): boolean {
+	try {
+		fs.symlinkSync(target, linkPath, "dir");
+		return true;
+	} catch {
+		try {
+			fs.symlinkSync(target, linkPath, "junction");
+			return true;
+		} catch {
+			return false;
+		}
+	}
+}
+
 test("api supports mailbox inbox/outbox and delivery state", async () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-mailbox-"));
 	fs.mkdirSync(path.join(cwd, ".crew"));
@@ -25,6 +39,93 @@ test("api supports mailbox inbox/outbox and delivery state", async () => {
 		assert.equal(ack.isError, false);
 		const delivery = JSON.parse(firstText(ack) || "{}");
 		assert.equal(delivery.messages[messages[0]!.id], "acknowledged");
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("mailbox api rejects taskId path traversal", async () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-mailbox-traversal-"));
+	fs.mkdirSync(path.join(cwd, ".crew"));
+	try {
+		const run = await handleTeamTool({ action: "run", config: { runtime: { mode: "scaffold" } }, team: "fast-fix", goal: "mailbox traversal" }, { cwd });
+		const runId = run.details.runId;
+		assert.ok(runId);
+		const read = await handleTeamTool({ action: "api", runId, config: { operation: "read-mailbox", taskId: "../escape", direction: "inbox" } }, { cwd });
+		assert.equal(read.isError, true);
+		const sent = await handleTeamTool({ action: "api", runId, config: { operation: "send-message", taskId: "../escape", body: "nope" } }, { cwd });
+		assert.equal(sent.isError, true);
+		const loaded = loadRunManifestById(cwd, runId);
+		assert.ok(loaded);
+		assert.equal(fs.existsSync(path.join(loaded.manifest.stateRoot, "escape")), false);
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("mailbox api rejects symlinked mailbox root writes", async (t) => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-mailbox-symlink-root-"));
+	fs.mkdirSync(path.join(cwd, ".crew"));
+	try {
+		const run = await handleTeamTool({ action: "run", config: { runtime: { mode: "scaffold" } }, team: "fast-fix", goal: "mailbox symlink root" }, { cwd });
+		const runId = run.details.runId;
+		assert.ok(runId);
+		const loaded = loadRunManifestById(cwd, runId)!;
+		const mailboxDir = path.join(loaded.manifest.stateRoot, "mailbox");
+		const outside = path.join(cwd, "outside-mailbox");
+		fs.mkdirSync(outside, { recursive: true });
+		if (!tryDirectorySymlink(outside, mailboxDir)) {
+			t.skip("directory symlinks unavailable on this platform");
+			return;
+		}
+		const sent = await handleTeamTool({ action: "api", runId, config: { operation: "send-message", body: "nope" } }, { cwd });
+		assert.equal(sent.isError, true);
+		assert.equal(fs.existsSync(path.join(outside, "inbox.jsonl")), false);
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("mailbox api rejects symlinked mailbox files", async (t) => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-mailbox-symlink-file-"));
+	fs.mkdirSync(path.join(cwd, ".crew"));
+	try {
+		const run = await handleTeamTool({ action: "run", config: { runtime: { mode: "scaffold" } }, team: "fast-fix", goal: "mailbox symlink file" }, { cwd });
+		const runId = run.details.runId;
+		assert.ok(runId);
+		const loaded = loadRunManifestById(cwd, runId)!;
+		const mailboxDir = path.join(loaded.manifest.stateRoot, "mailbox");
+		fs.mkdirSync(mailboxDir, { recursive: true });
+		const outside = path.join(cwd, "outside-inbox.jsonl");
+		fs.writeFileSync(outside, "", "utf-8");
+		try {
+			fs.symlinkSync(outside, path.join(mailboxDir, "inbox.jsonl"), "file");
+		} catch {
+			t.skip("file symlinks unavailable on this platform");
+			return;
+		}
+		const sent = await handleTeamTool({ action: "api", runId, config: { operation: "send-message", body: "nope" } }, { cwd });
+		assert.equal(sent.isError, true);
+		assert.equal(fs.readFileSync(outside, "utf-8"), "");
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("read-delivery does not create mailbox files on reads", async () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-delivery-readonly-"));
+	fs.mkdirSync(path.join(cwd, ".crew"));
+	try {
+		const run = await handleTeamTool({ action: "run", config: { runtime: { mode: "scaffold" } }, team: "fast-fix", goal: "delivery readonly read" }, { cwd });
+		const runId = run.details.runId;
+		assert.ok(runId);
+		const loaded = loadRunManifestById(cwd, runId)!;
+		const mailboxDir = path.join(loaded.manifest.stateRoot, "mailbox");
+		const read = await handleTeamTool({ action: "api", runId, config: { operation: "read-delivery" } }, { cwd });
+		assert.equal(read.isError, false);
+		assert.equal(fs.existsSync(mailboxDir), false);
+		const delivery = JSON.parse(firstText(read) || "{}");
+		assert.deepEqual(delivery.messages, {});
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}

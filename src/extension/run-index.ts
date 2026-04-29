@@ -3,6 +3,7 @@ import * as path from "node:path";
 import type { TeamRunManifest } from "../state/types.ts";
 import { DEFAULT_PATHS } from "../config/defaults.ts";
 import { findRepoRoot, projectCrewRoot, userCrewRoot } from "../utils/paths.ts";
+import { isSafePathId, resolveRealContainedPath } from "../utils/safe-paths.ts";
 
 function readManifest(filePath: string): TeamRunManifest | undefined {
 	try {
@@ -15,10 +16,19 @@ function readManifest(filePath: string): TeamRunManifest | undefined {
 function collectRuns(root: string, maxEntries?: number): TeamRunManifest[] {
 	const runsRoot = path.join(root, DEFAULT_PATHS.state.runsSubdir);
 	if (!fs.existsSync(runsRoot)) return [];
-	const entries = fs.readdirSync(runsRoot).sort((a, b) => b.localeCompare(a));
+	const entries = fs.readdirSync(runsRoot, { withFileTypes: true })
+		.filter((entry) => entry.isDirectory() && isSafePathId(entry.name))
+		.map((entry) => entry.name)
+		.sort((a, b) => b.localeCompare(a));
 	const selected = maxEntries !== undefined ? entries.slice(0, Math.max(0, maxEntries)) : entries;
 	return selected
-		.map((entry) => readManifest(path.join(runsRoot, entry, DEFAULT_PATHS.state.manifestFile)))
+		.map((entry) => {
+			try {
+				return readManifest(path.join(resolveRealContainedPath(runsRoot, entry), DEFAULT_PATHS.state.manifestFile));
+			} catch {
+				return undefined;
+			}
+		})
 		.filter((manifest): manifest is TeamRunManifest => manifest !== undefined);
 }
 

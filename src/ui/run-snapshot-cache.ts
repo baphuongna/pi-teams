@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { readCrewAgents, agentsPath } from "../runtime/crew-agent-records.ts";
+import { readCrewAgents, agentsPath, agentOutputPath } from "../runtime/crew-agent-records.ts";
 import type { CrewAgentRecord } from "../runtime/crew-agent-runtime.ts";
 import { isActiveRunStatus } from "../runtime/process-status.ts";
 import { readEvents, type TeamEvent } from "../state/event-log.ts";
@@ -82,8 +82,16 @@ function mailboxStamp(manifest: TeamRunManifest): FileStamp {
 	return combineStamps(stamps);
 }
 
-function outputStamp(agents: CrewAgentRecord[]): FileStamp {
-	return combineStamps(agents.map((agent) => stampFile(agent.outputPath)));
+function safeAgentOutputPath(manifest: TeamRunManifest, agent: CrewAgentRecord): string | undefined {
+	try {
+		return agentOutputPath(manifest, agent.taskId);
+	} catch {
+		return undefined;
+	}
+}
+
+function outputStamp(manifest: TeamRunManifest, agents: CrewAgentRecord[]): FileStamp {
+	return combineStamps(agents.map((agent) => stampFile(safeAgentOutputPath(manifest, agent))));
 }
 
 function sameStamp(a: FileStamp, b: FileStamp): boolean {
@@ -134,9 +142,12 @@ function tailLines(filePath: string, limit: number): string[] {
 	}
 }
 
-function recentOutputLines(agents: CrewAgentRecord[], limit: number): string[] {
+function recentOutputLines(manifest: TeamRunManifest, agents: CrewAgentRecord[], limit: number): string[] {
 	const fromProgress = agents.flatMap((agent) => agent.progress?.recentOutput ?? []);
-	const fromFiles = agents.flatMap((agent) => agent.outputPath ? tailLines(agent.outputPath, limit) : []);
+	const fromFiles = agents.flatMap((agent) => {
+		const outputPath = safeAgentOutputPath(manifest, agent);
+		return outputPath ? tailLines(outputPath, limit) : [];
+	});
 	return [...fromProgress, ...fromFiles].map((line) => line.replace(/\s+/g, " ").trim()).filter(Boolean).slice(-limit);
 }
 
@@ -244,7 +255,7 @@ function stampsFor(manifest: TeamRunManifest, agents: CrewAgentRecord[]): Snapsh
 		agents: stampFile(agentsPath(manifest)),
 		events: stampFile(manifest.eventsPath),
 		mailbox: mailboxStamp(manifest),
-		output: outputStamp(agents),
+		output: outputStamp(manifest, agents),
 	};
 }
 
@@ -305,7 +316,7 @@ export function createRunSnapshotCache(cwd: string, options: RunSnapshotCacheOpt
 			usage: usageFrom(tasks, agents),
 			mailbox,
 			recentEvents: safeRecentEvents(loaded.manifest.eventsPath, recentEventsLimit),
-			recentOutputLines: recentOutputLines(agents, recentOutputLimit),
+			recentOutputLines: recentOutputLines(loaded.manifest, agents, recentOutputLimit),
 		};
 		const stamps = stampsFor(loaded.manifest, agents);
 		const snapshot: RunUiSnapshot = { ...base, fetchedAt: Date.now(), signature: signatureFor(base, stamps) };
@@ -320,7 +331,7 @@ export function createRunSnapshotCache(cwd: string, options: RunSnapshotCacheOpt
 			agents: stampFile(agentsPath(manifest)),
 			events: stampFile(manifest.eventsPath),
 			mailbox: mailboxStamp(manifest),
-			output: outputStamp(previous.snapshot.agents),
+			output: outputStamp(previous.snapshot.manifest, previous.snapshot.agents),
 		};
 	}
 

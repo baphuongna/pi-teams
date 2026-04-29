@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { createHash } from "node:crypto";
 import type { ArtifactDescriptor } from "./types.ts";
 import { atomicWriteFile } from "./atomic-write.ts";
+import { resolveRealContainedPath } from "../utils/safe-paths.ts";
 
 function hashContent(content: string): string {
 	return createHash("sha256").update(content).digest("hex");
@@ -88,12 +89,25 @@ export function cleanupOldArtifacts(artifactsRoot: string, options: ArtifactClea
 	if (!didCleanup) writeCleanupMarker(artifactsRoot, markerFile);
 }
 
-export function writeArtifact(artifactsRoot: string, options: ArtifactWriteOptions): ArtifactDescriptor {
-	const normalizedRelativePath = options.relativePath.replaceAll("\\", "/").replace(/^\.\/+/, "");
-	if (normalizedRelativePath.startsWith("../") || path.isAbsolute(normalizedRelativePath)) {
-		throw new Error(`Invalid artifact path: ${options.relativePath}`);
+function resolveInside(baseDir: string, relativePath: string): string {
+	const normalizedRelativePath = relativePath.replaceAll("\\", "/").replace(/^\.\/+/, "");
+	if (!normalizedRelativePath || normalizedRelativePath.split("/").some((segment) => segment === "..") || path.isAbsolute(normalizedRelativePath)) {
+		throw new Error(`Invalid artifact path: ${relativePath}`);
 	}
-	const filePath = path.join(artifactsRoot, normalizedRelativePath);
+	const base = path.resolve(baseDir);
+	const resolved = path.resolve(base, normalizedRelativePath);
+	const relative = path.relative(base, resolved);
+	if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`Invalid artifact path: ${relativePath}`);
+	return resolved;
+}
+
+export function writeArtifact(artifactsRoot: string, options: ArtifactWriteOptions): ArtifactDescriptor {
+	const filePath = resolveInside(artifactsRoot, options.relativePath);
+	fs.mkdirSync(artifactsRoot, { recursive: true });
+	if (fs.lstatSync(artifactsRoot).isSymbolicLink()) throw new Error(`Path is outside ${path.dirname(artifactsRoot)}: ${artifactsRoot}`);
+	resolveRealContainedPath(path.dirname(artifactsRoot), path.basename(artifactsRoot));
+	fs.mkdirSync(path.dirname(filePath), { recursive: true });
+	resolveRealContainedPath(artifactsRoot, path.dirname(filePath));
 	atomicWriteFile(filePath, options.content);
 	const stats = fs.statSync(filePath);
 	return {

@@ -7,6 +7,7 @@ import { appendEvent } from "./event-log.ts";
 import { DEFAULT_CACHE, DEFAULT_PATHS } from "../config/defaults.ts";
 import { createRunId, createTaskId } from "../utils/ids.ts";
 import { findRepoRoot, projectCrewRoot, userCrewRoot } from "../utils/paths.ts";
+import { assertSafePathId, resolveContainedRelativePath, resolveRealContainedPath } from "../utils/safe-paths.ts";
 import type { TeamConfig } from "../teams/team-config.ts";
 import type { WorkflowConfig } from "../workflows/workflow-config.ts";
 
@@ -53,14 +54,40 @@ function scopeBaseRoot(cwd: string): string {
 }
 
 function resolveRunStateRoot(cwd: string, runId: string): string | undefined {
-	const scopedPath = path.join(scopeBaseRoot(cwd), DEFAULT_PATHS.state.runsSubdir, runId);
-	return fs.existsSync(scopedPath) ? scopedPath : undefined;
+	assertSafePathId("runId", runId);
+	const runsRoot = path.join(scopeBaseRoot(cwd), DEFAULT_PATHS.state.runsSubdir);
+	const scopedPath = resolveContainedRelativePath(runsRoot, runId, "runId");
+	if (!fs.existsSync(scopedPath)) return undefined;
+	try {
+		if (fs.lstatSync(scopedPath).isSymbolicLink()) return undefined;
+		resolveRealContainedPath(runsRoot, runId);
+	} catch {
+		return undefined;
+	}
+	return scopedPath;
+}
+
+function validateRunManifestPaths(cwd: string, runId: string, manifest: TeamRunManifest, stateRoot: string, tasksPath: string): boolean {
+	if (manifest.runId !== runId || manifest.stateRoot !== stateRoot || manifest.tasksPath !== tasksPath || manifest.eventsPath !== path.join(stateRoot, "events.jsonl")) return false;
+	const artifactsParent = path.join(scopeBaseRoot(cwd), DEFAULT_PATHS.state.artifactsSubdir);
+	const expectedArtifactsRoot = resolveContainedRelativePath(artifactsParent, runId, "runId");
+	if (manifest.artifactsRoot !== expectedArtifactsRoot) return false;
+	if (fs.existsSync(expectedArtifactsRoot)) {
+		try {
+			if (fs.lstatSync(expectedArtifactsRoot).isSymbolicLink()) return false;
+			resolveRealContainedPath(artifactsParent, runId);
+		} catch {
+			return false;
+		}
+	}
+	return true;
 }
 
 export function createRunPaths(cwd: string, runId = createRunId()): RunPaths {
+	assertSafePathId("runId", runId);
 	const baseRoot = scopeBaseRoot(cwd);
-	const stateRoot = path.join(baseRoot, DEFAULT_PATHS.state.runsSubdir, runId);
-	const artifactsRoot = path.join(baseRoot, DEFAULT_PATHS.state.artifactsSubdir, runId);
+	const stateRoot = resolveContainedRelativePath(path.join(baseRoot, DEFAULT_PATHS.state.runsSubdir), runId, "runId");
+	const artifactsRoot = resolveContainedRelativePath(path.join(baseRoot, DEFAULT_PATHS.state.artifactsSubdir), runId, "runId");
 	return {
 		runId,
 		stateRoot,
@@ -222,11 +249,15 @@ export function loadRunManifestById(cwd: string, runId: string): { manifest: Tea
 		&& cached.tasksMtimeMs === tasksMtimeMs
 		&& cached.tasksSize === (tasksStat?.size ?? 0)
 	) {
+		if (!validateRunManifestPaths(cwd, runId, cached.manifest, stateRoot, tasksPath)) {
+			manifestCache.delete(stateRoot);
+			return undefined;
+		}
 		return { manifest: cached.manifest, tasks: cached.tasks };
 	}
 
 	const manifest = readJsonFile<TeamRunManifest>(manifestPath);
-	if (!manifest) return undefined;
+	if (!manifest || !validateRunManifestPaths(cwd, runId, manifest, stateRoot, tasksPath)) return undefined;
 	const tasks = readJsonFile<TeamTaskState[]>(tasksPath) ?? [];
 	setManifestCache(stateRoot, {
 		manifest,

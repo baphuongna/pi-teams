@@ -11,20 +11,25 @@ export interface WorkflowDiscoveryResult {
 	project: WorkflowConfig[];
 }
 
+const STEP_CONFIG_KEYS = new Set(["role", "dependsOn", "parallelGroup", "output", "reads", "model", "skills", "progress", "worktree", "verify", "task"]);
+
 function parseStepSection(id: string, body: string): WorkflowStep | undefined {
 	const lines = body.trim().split("\n");
 	const config: Record<string, string> = {};
 	const taskLines: string[] = [];
 	let inTask = false;
+	let sawConfig = false;
 	for (const line of lines) {
 		if (!inTask) {
 			if (line.trim() === "") {
+				if (!sawConfig) continue;
 				inTask = true;
 				continue;
 			}
 			const match = line.match(/^([\w-]+):\s*(.*)$/);
 			if (match) {
 				config[match[1]!.trim()] = match[2]!.trim();
+				sawConfig = true;
 				continue;
 			}
 			inTask = true;
@@ -55,18 +60,40 @@ const parseOptionalInteger = (value: string | undefined): number | undefined => 
 	return Math.trunc(parsed);
 };
 
+function hasSectionBoundary(body: string, match: RegExpMatchArray): boolean {
+	const index = match.index ?? 0;
+	return index === 0 || body.slice(0, index).trim() === "" || body.slice(Math.max(0, index - 2), index) === "\n\n";
+}
+
+function isStepHeading(body: string, match: RegExpMatchArray): boolean {
+	const sectionStart = match.index! + match[0].length + (body[match.index! + match[0].length] === "\n" ? 1 : 0);
+	const nextHeading = body.slice(sectionStart).search(/^##\s+.+[^\S\n]*$/m);
+	const section = body.slice(sectionStart, nextHeading >= 0 ? sectionStart + nextHeading : body.length);
+	for (const line of section.split("\n")) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+		const config = trimmed.match(/^([\w-]+):\s*(.*)$/);
+		if (config && STEP_CONFIG_KEYS.has(config[1]!)) return true;
+		return false;
+	}
+	return false;
+}
+
 function parseWorkflowFile(filePath: string, source: ResourceSource): WorkflowConfig | undefined {
 	try {
 		const content = fs.readFileSync(filePath, "utf-8");
 		const { frontmatter, body } = parseFrontmatter(content);
 		const name = frontmatter.name?.trim() || path.basename(filePath, ".workflow.md");
 		const matches = [...body.matchAll(/^##\s+(.+)[^\S\n]*$/gm)];
+		const explicitStepIndexes = new Set(matches.map((match, index) => isStepHeading(body, match) ? index : undefined).filter((index): index is number => index !== undefined));
+		const effectiveMatches = matches.filter((match, index) => explicitStepIndexes.has(index) || (hasSectionBoundary(body, match) && /^[a-z][a-z0-9-]*$/.test(match[1]?.trim() ?? "")));
+		const parseMatches = explicitStepIndexes.size ? effectiveMatches : matches;
 		const steps: WorkflowStep[] = [];
-		for (let i = 0; i < matches.length; i++) {
-			const match = matches[i]!;
+		for (let i = 0; i < parseMatches.length; i++) {
+			const match = parseMatches[i]!;
 			const id = match[1]!.trim();
 			const sectionStart = match.index! + match[0].length + (body[match.index! + match[0].length] === "\n" ? 1 : 0);
-			const sectionEnd = i + 1 < matches.length ? matches[i + 1]!.index! : body.length;
+			const sectionEnd = i + 1 < parseMatches.length ? parseMatches[i + 1]!.index! : body.length;
 			const step = parseStepSection(id, body.slice(sectionStart, sectionEnd));
 			if (step) steps.push(step);
 		}

@@ -11,7 +11,7 @@
     },
     "executeWorkers": {
       "type": "boolean",
-      "description": "Allow real child Pi workers without setting PI_TEAMS_EXECUTE_WORKERS=1."
+      "description": "Allow real child Pi workers. Defaults to true; set false or use PI_CREW_EXECUTE_WORKERS=0/PI_TEAMS_EXECUTE_WORKERS=0 to force scaffold mode."
     },
     "notifierIntervalMs": {
       "type": "number",
@@ -128,7 +128,7 @@
         "showModel": { "type": "boolean", "default": true, "description": "Show worker model attempts in dashboard agent rows." },
         "showTokens": { "type": "boolean", "description": "Show token usage in dashboard agent rows." },
         "showTools": { "type": "boolean", "description": "Show tool activity in dashboard agent rows." },
-        "transcriptTailBytes": { "type": "integer", "minimum": 1024, "default": 262144, "description": "Maximum transcript bytes to parse by default; use viewer hotkey f to load full content." },
+        "transcriptTailBytes": { "type": "integer", "minimum": 1024, "maximum": 52428800, "default": 262144, "description": "Maximum transcript bytes to parse by default; use viewer hotkey f to load full content." },
         "mascotStyle": { "type": "string", "enum": ["cat", "armin"] },
         "mascotEffect": { "type": "string", "enum": ["random", "none", "typewriter", "scanline", "rain", "fade", "crt", "glitch", "dissolve"] }
       }

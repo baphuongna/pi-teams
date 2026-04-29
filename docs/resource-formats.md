@@ -5,9 +5,10 @@
 Location:
 
 ```text
-agents/{name}.md
-~/.pi/agent/agents/{name}.md
-.pi/agents/{name}.md
+agents/{name}.md                                # builtin (in this package)
+~/.pi/agent/agents/{name}.md                    # user-global
+.crew/agents/{name}.md                          # project (new layout)
+.pi/teams/agents/{name}.md                      # project (legacy layout when .pi/ exists)
 ```
 
 Format:
@@ -80,7 +81,7 @@ category: implementation
 Role line:
 
 ```text
-- {role-name}: agent={agent-name} optional description
+- {role-name}: agent={agent-name} [model={provider/model}] [skills={a,b}|false] [maxConcurrency={n}] optional description
 ```
 
 ## Workflow files
@@ -88,9 +89,10 @@ Role line:
 Location:
 
 ```text
-workflows/{name}.workflow.md
-~/.pi/agent/workflows/{name}.workflow.md
-.pi/workflows/{name}.workflow.md
+workflows/{name}.workflow.md                    # builtin (in this package)
+~/.pi/agent/workflows/{name}.workflow.md        # user-global
+.crew/workflows/{name}.workflow.md              # project (new layout)
+.pi/teams/workflows/{name}.workflow.md          # project (legacy layout when .pi/ exists)
 ```
 
 Format:
@@ -129,4 +131,4 @@ Step fields:
 | `worktree` | `true`/`false` metadata |
 | `verify` | `true`/`false` verification marker |
 
-Avoid using level-2 headings (`##`) inside task bodies because they delimit workflow steps.
+Each step starts with `## step-id` followed by recognized step metadata such as `role:` before the blank line. Level-2 headings inside task bodies are preserved unless they look like a step section with recognized metadata; use `###` or lower for maximum compatibility.

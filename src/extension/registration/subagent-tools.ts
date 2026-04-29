@@ -66,15 +66,19 @@ export function registerSubagentTools(pi: ExtensionAPI, subagentManager: Subagen
 			const record = inMemory ?? readPersistedSubagentRecord(ctx.cwd, p.agent_id);
 			if (!record) return subagentToolResult(`Agent not found: ${p.agent_id}`, {}, true);
 			let current = refreshPersistedSubagentRecord(ctx, record);
+			if (inMemory && current !== inMemory) Object.assign(inMemory, current);
 			if (!inMemory && !current.runId && (current.status === "running" || current.status === "queued")) {
 				current = { ...current, status: "error", error: "Subagent was interrupted before its durable run id was recorded; it cannot be recovered after restart.", completedAt: current.completedAt ?? Date.now() };
 				savePersistedSubagentRecord(ctx.cwd, current);
 			}
 			if (p.wait && (current.status === "running" || current.status === "queued")) {
-				current.resultConsumed = true;
-				savePersistedSubagentRecord(ctx.cwd, current);
 				const waited = await subagentManager.waitForRecord(current.id);
 				if (waited) current = waited;
+				if (current.status === "blocked") {
+					current.resultConsumed = false;
+					if (inMemory) inMemory.resultConsumed = false;
+					savePersistedSubagentRecord(ctx.cwd, current);
+				}
 				else while (current.status === "running" || current.status === "queued") {
 					if (signal?.aborted) {
 						current = { ...current, status: "error", error: "Waiting for subagent result was aborted.", completedAt: Date.now() };
@@ -87,8 +91,9 @@ export function registerSubagentTools(pi: ExtensionAPI, subagentManager: Subagen
 				}
 			}
 			const output = readSubagentRunResult(ctx, current);
-			if (current.status !== "running" && current.status !== "queued") {
+			if (current.status !== "running" && current.status !== "queued" && current.status !== "blocked") {
 				current.resultConsumed = true;
+				if (inMemory) inMemory.resultConsumed = true;
 				savePersistedSubagentRecord(ctx.cwd, current);
 			}
 			const text = [p.verbose ? formatSubagentRecord(current) : undefined, output ? `${p.verbose ? "\n" : ""}${output}` : current.status === "running" || current.status === "queued" ? "Agent is still running. Use wait=true or check again later." : current.error ?? "No output."].filter((line): line is string => Boolean(line)).join("\n");

@@ -319,8 +319,12 @@ function parseWithSchema<T extends TSchema>(schema: T, value: unknown): Static<T
 	return Value.Decode(schema, value);
 }
 
+function parseIntegerInRange(value: unknown, minimum = 1, maximum = Number.MAX_SAFE_INTEGER): number | undefined {
+	return parseWithSchema(Type.Integer({ minimum, maximum }), value);
+}
+
 function parsePositiveInteger(value: unknown, max = Number.MAX_SAFE_INTEGER): number | undefined {
-	return parseWithSchema(Type.Integer({ minimum: 1, maximum: max }), value);
+	return parseIntegerInRange(value, 1, max);
 }
 
 function parseProfile(value: unknown): PiTeamsAutonomyProfile | undefined {
@@ -462,14 +466,14 @@ function parseUiConfig(value: unknown): CrewUiConfig | undefined {
 		widgetMaxLines: parsePositiveInteger(obj.widgetMaxLines, 50),
 		powerbar: parseWithSchema(Type.Boolean(), obj.powerbar),
 		dashboardPlacement: rawDashboardPlacement,
-		dashboardWidth: parsePositiveInteger(obj.dashboardWidth, 120),
-		dashboardLiveRefreshMs: parsePositiveInteger(obj.dashboardLiveRefreshMs, 60_000),
+		dashboardWidth: parseIntegerInRange(obj.dashboardWidth, 32, 120),
+		dashboardLiveRefreshMs: parseIntegerInRange(obj.dashboardLiveRefreshMs, 250, 60_000),
 		autoOpenDashboard: parseWithSchema(Type.Boolean(), obj.autoOpenDashboard),
 		autoOpenDashboardForForegroundRuns: parseWithSchema(Type.Boolean(), obj.autoOpenDashboardForForegroundRuns),
 		showModel: parseWithSchema(Type.Boolean(), obj.showModel),
 		showTokens: parseWithSchema(Type.Boolean(), obj.showTokens),
 		showTools: parseWithSchema(Type.Boolean(), obj.showTools),
-		transcriptTailBytes: parsePositiveInteger(obj.transcriptTailBytes, 50 * 1024 * 1024),
+		transcriptTailBytes: parseIntegerInRange(obj.transcriptTailBytes, 1024, 50 * 1024 * 1024),
 		mascotStyle: parseWithSchema(Type.Union([Type.Literal("cat"), Type.Literal("armin")]), obj.mascotStyle),
 		mascotEffect: parseWithSchema(Type.Union([Type.Literal("random"), Type.Literal("none"), Type.Literal("typewriter"), Type.Literal("scanline"), Type.Literal("rain"), Type.Literal("fade"), Type.Literal("crt"), Type.Literal("glitch"), Type.Literal("dissolve")]), obj.mascotEffect),
 	};

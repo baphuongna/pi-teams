@@ -22,6 +22,7 @@ import { dashboardActionForKey } from "./keybinding-map.ts";
 import type { RunSnapshotCache, RunUiSnapshot } from "./snapshot-types.ts";
 import { spinnerBucket, spinnerFrame } from "./spinner.ts";
 import type { MetricRegistry } from "../observability/metric-registry.ts";
+import { resolveRealContainedPath } from "../utils/safe-paths.ts";
 
 interface DashboardComponent {
 	invalidate(): void;
@@ -67,9 +68,11 @@ function renderLines(lines: string[], width: number): string[] {
 
 function readProgressPreview(run: TeamRunManifest, maxLines = 5): string[] {
 	const progress = [...run.artifacts].reverse().find((artifact) => artifact.kind === "progress");
-	if (!progress || !fs.existsSync(progress.path)) return ["Progress: (none)"];
+	if (!progress) return ["Progress: (none)"];
 	try {
-		return ["Progress:", ...fs.readFileSync(progress.path, "utf-8").split(/\r?\n/).filter(Boolean).slice(0, maxLines)];
+		const progressPath = resolveRealContainedPath(run.artifactsRoot, progress.path);
+		if (!fs.existsSync(progressPath)) return ["Progress: (none)"];
+		return ["Progress:", ...fs.readFileSync(progressPath, "utf-8").split(/\r?\n/).filter(Boolean).slice(0, maxLines)];
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return [`Progress: failed to read (${message})`];

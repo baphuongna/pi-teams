@@ -529,7 +529,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 			kind: "summary",
 			relativePath: `batches/${readyBatch.map((task) => task.id).join("+")}.md`,
 			producer: "team-runner",
-			content: aggregateTaskOutputs(completedBatch),
+			content: aggregateTaskOutputs(completedBatch, manifest),
 		});
 		const groupDelivery = deliverGroupJoin({ manifest, mode: resolveGroupJoinMode(input.runtimeConfig), batch: readyBatch, allTasks: tasks });
 		manifest = { ...manifest, artifacts: mergeArtifacts([...manifest.artifacts, batchArtifact, ...(groupDelivery?.artifact ? [groupDelivery.artifact] : [])]) };

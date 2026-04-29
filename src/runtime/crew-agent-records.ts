@@ -6,13 +6,45 @@ import { readJsonFileCoalesced } from "../utils/file-coalescer.ts";
 import type { CrewAgentProgress, CrewAgentRecord, CrewRuntimeKind } from "./crew-agent-runtime.ts";
 import { taskStatusToAgentStatus } from "./crew-agent-runtime.ts";
 import { logInternalError } from "../utils/internal-error.ts";
+import { assertSafePathId, resolveRealContainedPath } from "../utils/safe-paths.ts";
 
 export function agentsPath(manifest: TeamRunManifest): string {
 	return path.join(manifest.stateRoot, "agents.json");
 }
 
+export function agentsRoot(manifest: TeamRunManifest): string {
+	return path.join(manifest.stateRoot, "agents");
+}
+
+function safeAgentTaskId(taskId: string): string {
+	return assertSafePathId("taskId", taskId.includes(":") ? taskId.split(":").pop()! : taskId);
+}
+
 export function agentStateDir(manifest: TeamRunManifest, taskId: string): string {
-	return path.join(manifest.stateRoot, "agents", taskId);
+	return path.join(agentsRoot(manifest), safeAgentTaskId(taskId));
+}
+
+export function ensureAgentStateDir(manifest: TeamRunManifest, taskId: string): string {
+	const root = agentsRoot(manifest);
+	fs.mkdirSync(root, { recursive: true });
+	if (fs.lstatSync(root).isSymbolicLink()) throw new Error(`Invalid agents root: ${root}`);
+	const dir = agentStateDir(manifest, taskId);
+	fs.mkdirSync(dir, { recursive: true });
+	if (fs.lstatSync(dir).isSymbolicLink()) throw new Error(`Invalid agent state directory: ${dir}`);
+	resolveRealContainedPath(root, path.basename(dir));
+	return dir;
+}
+
+function safeExistingAgentFile(manifest: TeamRunManifest, taskId: string, fileName: string): string {
+	const filePath = path.join(agentStateDir(manifest, taskId), fileName);
+	if (!fs.existsSync(filePath)) return filePath;
+	if (fs.lstatSync(filePath).isSymbolicLink()) throw new Error(`Invalid agent state file: ${filePath}`);
+	return resolveRealContainedPath(agentsRoot(manifest), path.join(safeAgentTaskId(taskId), fileName));
+}
+
+export function agentStateFile(manifest: TeamRunManifest, taskId: string, fileName: string): string {
+	ensureAgentStateDir(manifest, taskId);
+	return safeExistingAgentFile(manifest, taskId, fileName);
 }
 
 export function agentStatusPath(manifest: TeamRunManifest, taskId: string): string {
@@ -51,13 +83,16 @@ export function upsertCrewAgent(manifest: TeamRunManifest, record: CrewAgentReco
 }
 
 export function writeCrewAgentStatus(manifest: TeamRunManifest, record: CrewAgentRecord): void {
-	fs.mkdirSync(agentStateDir(manifest, record.taskId), { recursive: true });
+	ensureAgentStateDir(manifest, record.taskId);
 	atomicWriteJson(agentStatusPath(manifest, record.taskId), record);
 }
 
 export function readCrewAgentStatus(manifest: TeamRunManifest, taskOrAgentId: string): CrewAgentRecord | undefined {
-	const taskId = taskOrAgentId.includes(":") ? taskOrAgentId.split(":").pop()! : taskOrAgentId;
-	return readJsonFile<CrewAgentRecord>(agentStatusPath(manifest, taskId));
+	try {
+		return readJsonFile<CrewAgentRecord>(safeExistingAgentFile(manifest, taskOrAgentId, "status.json"));
+	} catch {
+		return undefined;
+	}
 }
 
 const agentEventSeqCache = new Map<string, { size: number; mtimeMs: number; seq: number }>();
@@ -83,8 +118,8 @@ function nextAgentEventSeq(filePath: string): number {
 }
 
 export function appendCrewAgentEvent(manifest: TeamRunManifest, taskId: string, event: unknown): void {
-	fs.mkdirSync(agentStateDir(manifest, taskId), { recursive: true });
-	const filePath = agentEventsPath(manifest, taskId);
+	ensureAgentStateDir(manifest, taskId);
+	const filePath = agentStateFile(manifest, taskId, "events.jsonl");
 	const seq = nextAgentEventSeq(filePath);
 	fs.appendFileSync(filePath, `${JSON.stringify({ seq, time: new Date().toISOString(), event })}\n`, "utf-8");
 	try {
@@ -105,8 +140,18 @@ export function readCrewAgentEvents(manifest: TeamRunManifest, taskId: string): 
 }
 
 export function readCrewAgentEventsCursor(manifest: TeamRunManifest, taskId: string, options: CrewAgentEventCursorOptions = {}): { path: string; events: unknown[]; nextSeq: number; total: number } {
-	const filePath = agentEventsPath(manifest, taskId);
+	let filePath: string;
+	try {
+		filePath = agentEventsPath(manifest, taskId);
+	} catch {
+		return { path: "", events: [], nextSeq: options.sinceSeq ?? 0, total: 0 };
+	}
 	if (!fs.existsSync(filePath)) return { path: filePath, events: [], nextSeq: options.sinceSeq ?? 0, total: 0 };
+	try {
+		filePath = safeExistingAgentFile(manifest, taskId, "events.jsonl");
+	} catch {
+		return { path: "", events: [], nextSeq: options.sinceSeq ?? 0, total: 0 };
+	}
 	const sinceSeq = typeof options.sinceSeq === "number" && Number.isInteger(options.sinceSeq) && options.sinceSeq >= 0 ? options.sinceSeq : 0;
 	const limit = typeof options.limit === "number" && Number.isInteger(options.limit) && options.limit >= 0 ? options.limit : undefined;
 	const parsed = fs.readFileSync(filePath, "utf-8").split(/\r?\n/).filter(Boolean).map((line, index) => {
@@ -126,8 +171,8 @@ export function readCrewAgentEventsCursor(manifest: TeamRunManifest, taskId: str
 
 export function appendCrewAgentOutput(manifest: TeamRunManifest, taskId: string, text: string): void {
 	if (!text.trim()) return;
-	fs.mkdirSync(agentStateDir(manifest, taskId), { recursive: true });
-	fs.appendFileSync(agentOutputPath(manifest, taskId), `${text}\n`, "utf-8");
+	ensureAgentStateDir(manifest, taskId);
+	fs.appendFileSync(agentStateFile(manifest, taskId, "output.log"), `${text}\n`, "utf-8");
 }
 
 export function emptyCrewAgentProgress(): CrewAgentProgress {

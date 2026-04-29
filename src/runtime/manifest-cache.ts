@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { closeWatcher, watchWithErrorHandler } from "../utils/fs-watch.ts";
 import { findRepoRoot, projectCrewRoot, userCrewRoot } from "../utils/paths.ts";
+import { isSafePathId, resolveContainedRelativePath, resolveRealContainedPath } from "../utils/safe-paths.ts";
 import type { TeamRunManifest } from "../state/types.ts";
 import { DEFAULT_CACHE, DEFAULT_PATHS } from "../config/defaults.ts";
 
@@ -40,8 +41,13 @@ interface ParsedEntry {
 	manifest?: TeamRunManifest;
 }
 
-function manifestPathForRun(root: string, runId: string): string {
-	return path.join(root, runId, DEFAULT_PATHS.state.manifestFile);
+function manifestPathForRun(root: string, runId: string): string | undefined {
+	if (!isSafePathId(runId)) return undefined;
+	try {
+		return path.join(resolveRealContainedPath(root, runId), DEFAULT_PATHS.state.manifestFile);
+	} catch {
+		return undefined;
+	}
 }
 
 function parseManifest(filePath: string): TeamRunManifest | undefined {
@@ -52,7 +58,24 @@ function parseManifest(filePath: string): TeamRunManifest | undefined {
 	}
 }
 
-function parseManifestIfChanged(filePath: string, previous?: CachedManifest): CachedManifest | undefined {
+function validateManifestForRoot(root: string, runId: string, manifest: TeamRunManifest): boolean {
+	try {
+		if (!isSafePathId(runId)) return false;
+		const stateRoot = resolveContainedRelativePath(root, runId, "runId");
+		const crewRoot = path.dirname(path.dirname(root));
+		const artifactsRoot = resolveContainedRelativePath(path.join(crewRoot, DEFAULT_PATHS.state.artifactsSubdir), runId, "runId");
+		if (manifest.runId !== runId || manifest.stateRoot !== stateRoot || manifest.tasksPath !== path.join(stateRoot, DEFAULT_PATHS.state.tasksFile) || manifest.eventsPath !== path.join(stateRoot, DEFAULT_PATHS.state.eventsFile) || manifest.artifactsRoot !== artifactsRoot) return false;
+		if (fs.existsSync(artifactsRoot)) {
+			if (fs.lstatSync(artifactsRoot).isSymbolicLink()) return false;
+			resolveRealContainedPath(path.dirname(artifactsRoot), path.basename(artifactsRoot));
+		}
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function parseManifestIfChanged(root: string, runId: string, filePath: string, previous?: CachedManifest): CachedManifest | undefined {
 	let stat: fs.Stats;
 	try {
 		stat = fs.statSync(filePath);
@@ -60,10 +83,10 @@ function parseManifestIfChanged(filePath: string, previous?: CachedManifest): Ca
 		return undefined;
 	}
 	if (previous && previous.mtimeMs === stat.mtimeMs && previous.size === stat.size) {
-		return previous;
+		return validateManifestForRoot(root, runId, previous.manifest) ? previous : undefined;
 	}
 	const manifest = parseManifest(filePath);
-	if (!manifest) return undefined;
+	if (!manifest || !validateManifestForRoot(root, runId, manifest)) return undefined;
 	return {
 		path: filePath,
 		manifest,
@@ -87,8 +110,9 @@ function collectRoots(root: string): ParsedEntry[] {
 		return [];
 	}
 	return entries
-		.filter((entry) => entry.length > 0)
-		.map((entry) => ({ runId: entry, path: manifestPathForRun(root, entry) }));
+		.filter((entry) => entry.length > 0 && isSafePathId(entry))
+		.map((entry) => ({ runId: entry, path: manifestPathForRun(root, entry) }))
+		.filter((entry): entry is ParsedEntry => entry.path !== undefined);
 }
 
 export function createManifestCache(cwd: string, options: ManifestCacheOptions = {}): ManifestCache {
@@ -122,9 +146,11 @@ export function createManifestCache(cwd: string, options: ManifestCacheOptions =
 
 	function loadManifest(runId: string, rootsToCheck: string[]): CachedManifest | undefined {
 		let cached = manifestIndex.get(runId);
+		if (!isSafePathId(runId)) return undefined;
 		for (const root of rootsToCheck) {
 			const manifestPath = manifestPathForRun(root, runId);
-			const parsed = parseManifestIfChanged(manifestPath, cached);
+			if (!manifestPath) continue;
+			const parsed = parseManifestIfChanged(root, runId, manifestPath, cached);
 			if (parsed) {
 				if (!cached || parsed.mtimeMs !== cached.mtimeMs || parsed.size !== cached.size) {
 					manifestIndex.set(runId, parsed);
@@ -150,7 +176,8 @@ export function createManifestCache(cwd: string, options: ManifestCacheOptions =
 		for (const entry of parsedEntries) {
 			if (entry.runId.length === 0) continue;
 			let cached = manifestIndex.get(entry.runId);
-			const parsed = parseManifestIfChanged(entry.path, cached);
+			const root = path.dirname(path.dirname(entry.path));
+			const parsed = parseManifestIfChanged(root, entry.runId, entry.path, cached);
 			if (parsed) {
 				cached = parsed;
 				manifestIndex.set(entry.runId, cached);

@@ -107,6 +107,12 @@ Check status:
 }
 ```
 
+Background `Agent`/`crew_agent` subagents wake the parent Pi session when they complete, so the parent can call `get_subagent_result`/`crew_agent_result` and continue without waiting for another user prompt.
+
+## State and API safety
+
+State paths are validated before read/write operations. Run ids, imported bundles, artifact and transcript references, mailbox files, and agent control/log files must stay inside their expected `.crew` roots and symlink escapes are rejected. Read-only mailbox APIs return default state without creating mailbox files when no messages exist.
+
 ## Worktree mode
 
 ```json

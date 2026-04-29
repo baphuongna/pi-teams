@@ -12,19 +12,41 @@ export interface TeamDiscoveryResult {
 	project: TeamConfig[];
 }
 
+function parseRoleSkills(value: string | undefined): string[] | false | undefined {
+	if (!value) return undefined;
+	if (value === "false") return false;
+	const skills = value.split(",").map((entry) => entry.trim()).filter(Boolean);
+	return skills.length ? skills : undefined;
+}
+
 function parseRoleLine(line: string): TeamRole | undefined {
 	const trimmed = line.trim();
 	if (!trimmed.startsWith("-")) return undefined;
 	const value = trimmed.slice(1).trim();
 	if (!value) return undefined;
-	const [namePart, restPart] = value.split(":", 2);
-	const name = namePart?.trim();
+	const separator = value.indexOf(":");
+	const namePart = separator >= 0 ? value.slice(0, separator) : value;
+	const restPart = separator >= 0 ? value.slice(separator + 1) : "";
+	const name = namePart.trim();
 	if (!name) return undefined;
-	const agentMatch = restPart?.match(/agent\s*=\s*([\w-]+)/);
+	const metadata: Record<string, string> = {};
+	let descriptionSource = restPart.replace(/\bskills\s*=\s*([\w-]+(?:\s*,\s*[\w-]+)*)/g, (_match, raw: string) => {
+		metadata.skills = raw.replace(/\s*,\s*/g, ",").trim();
+		return "";
+	});
+	descriptionSource = descriptionSource.replace(/\b(agent|model|maxConcurrency)\s*=\s*(\S+)/g, (_match, key: string, raw: string) => {
+		metadata[key] = raw.trim();
+		return "";
+	});
+	const description = descriptionSource.replace(/\s+/g, " ").trim() || undefined;
+	const maxConcurrency = metadata.maxConcurrency ? Number.parseInt(metadata.maxConcurrency, 10) : undefined;
 	return {
 		name,
-		agent: agentMatch?.[1] ?? name,
-		description: restPart?.replace(/agent\s*=\s*[\w-]+/, "").trim() || undefined,
+		agent: metadata.agent ?? name,
+		description,
+		model: metadata.model,
+		skills: parseRoleSkills(metadata.skills),
+		maxConcurrency: maxConcurrency && maxConcurrency > 0 ? maxConcurrency : undefined,
 	};
 }
 

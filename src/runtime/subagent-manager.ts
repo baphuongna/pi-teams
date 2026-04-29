@@ -108,6 +108,9 @@ function totalRunTurns(cwd: string, runId: string | undefined): number | undefin
 
 export class SubagentManager {
 	private readonly records = new Map<string, SubagentRecord>();
+	private readonly cwdByRecord = new Map<string, string>();
+	private readonly controllers = new Map<string, AbortController>();
+	private readonly controllerCleanup = new Map<string, () => void>();
 	private queue: QueuedSpawn[] = [];
 	private runningBackground = 0;
 	private counter = 0;
@@ -135,6 +138,7 @@ export class SubagentManager {
 			background: options.background,
 		};
 		this.records.set(record.id, record);
+		this.cwdByRecord.set(record.id, options.cwd);
 		savePersistedSubagentRecord(options.cwd, record);
 		if (record.status === "queued") {
 			this.queue.push({ record, options, runner, signal });
@@ -157,28 +161,26 @@ export class SubagentManager {
 		if (!record) return false;
 		if (record.status === "queued") {
 			this.queue = this.queue.filter((entry) => entry.record.id !== id);
-			record.status = "stopped";
-			record.completedAt = Date.now();
+			this.markStopped(record);
 			return true;
 		}
 		if (record.status !== "running" && record.status !== "blocked") return false;
-		record.status = "stopped";
-		record.completedAt = Date.now();
+		this.controllers.get(id)?.abort();
+		this.markStopped(record);
 		return true;
 	}
 
 	abortAll(): number {
 		let count = 0;
 		for (const entry of this.queue) {
-			entry.record.status = "stopped";
-			entry.record.completedAt = Date.now();
+			this.markStopped(entry.record);
 			count++;
 		}
 		this.queue = [];
 		for (const record of this.records.values()) {
 			if (record.status === "running" || record.status === "blocked") {
-				record.status = "stopped";
-				record.completedAt = Date.now();
+				this.controllers.get(record.id)?.abort();
+				this.markStopped(record);
 				count++;
 			}
 		}
@@ -188,7 +190,7 @@ export class SubagentManager {
 	async waitForAll(): Promise<void> {
 		while (true) {
 			this.drainQueue();
-			const pending = this.listAgents().filter((record) => record.status === "running" || record.status === "blocked" || record.status === "queued").map((record) => record.promise).filter((promise): promise is Promise<void> => Boolean(promise));
+			const pending = this.listAgents().filter((record) => record.status === "running" || record.status === "queued").map((record) => record.promise).filter((promise): promise is Promise<void> => Boolean(promise));
 			if (!pending.length) break;
 			await Promise.allSettled(pending);
 		}
@@ -198,7 +200,7 @@ export class SubagentManager {
 		while (true) {
 			const record = this.records.get(id);
 			if (!record) return undefined;
-			if (record.status !== "running" && record.status !== "blocked" && record.status !== "queued") return record;
+			if (record.status !== "running" && record.status !== "queued") return record;
 			if (record.promise) await record.promise;
 			else await new Promise((resolve) => setTimeout(resolve, 100));
 		}
@@ -213,10 +215,13 @@ export class SubagentManager {
 		if (options.background) this.runningBackground++;
 		record.status = "running";
 		record.startedAt = Date.now();
+		record.completedAt = undefined;
+		const runSignal = this.createRunSignal(record.id, signal);
 		savePersistedSubagentRecord(options.cwd, record);
 		record.promise = (async () => {
 			try {
-				const result = await runner(options, signal);
+				const result = await runner(options, runSignal);
+				if (record.status === "stopped") return;
 				record.runId = detailsRunId(result);
 				record.result = resultText(result);
 				savePersistedSubagentRecord(options.cwd, record);
@@ -228,11 +233,16 @@ export class SubagentManager {
 				if (record.runId) await this.pollRunToTerminal(options.cwd, record);
 				else record.status = "completed";
 			} catch (error) {
+				if (record.status === "stopped" || runSignal.aborted) {
+					record.status = "stopped";
+					return;
+				}
 				record.status = "error";
 				record.error = error instanceof Error ? error.message : String(error);
 			} finally {
+				this.cleanupRunSignal(record.id);
 				if (options.background) this.runningBackground = Math.max(0, this.runningBackground - 1);
-				record.completedAt = record.completedAt ?? Date.now();
+				if (record.status !== "blocked") record.completedAt = record.completedAt ?? Date.now();
 				savePersistedSubagentRecord(options.cwd, record);
 				if (record.status === "completed" || record.status === "failed" || record.status === "cancelled" || record.status === "error" || record.status === "stopped") {
 					// Phase 1.6: Populate telemetry fields
@@ -244,6 +254,34 @@ export class SubagentManager {
 				this.drainQueue();
 			}
 		})();
+	}
+
+	private markStopped(record: SubagentRecord): void {
+		record.status = "stopped";
+		record.completedAt = Date.now();
+		const cwd = this.cwdByRecord.get(record.id);
+		if (cwd) savePersistedSubagentRecord(cwd, record);
+	}
+
+	private createRunSignal(id: string, signal?: AbortSignal): AbortSignal {
+		const controller = new AbortController();
+		this.controllers.set(id, controller);
+		if (signal?.aborted) {
+			controller.abort();
+			return controller.signal;
+		}
+		if (signal) {
+			const abort = (): void => controller.abort();
+			signal.addEventListener("abort", abort, { once: true });
+			this.controllerCleanup.set(id, () => signal.removeEventListener("abort", abort));
+		}
+		return controller.signal;
+	}
+
+	private cleanupRunSignal(id: string): void {
+		this.controllerCleanup.get(id)?.();
+		this.controllerCleanup.delete(id);
+		this.controllers.delete(id);
 	}
 
 	private drainQueue(): void {
@@ -286,12 +324,42 @@ export class SubagentManager {
 					record.completedAt = undefined;
 					this.onComplete?.(record);
 					this.scheduleStuckBlockedNotify(cwd, record);
+					this.scheduleBlockedTerminalPoll(cwd, record);
 				}
 				savePersistedSubagentRecord(cwd, record);
 				return;
 			}
 			await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs));
 		}
+	}
+
+	private scheduleBlockedTerminalPoll(cwd: string, record: SubagentRecord): void {
+		const poll = (): void => {
+			const current = this.records.get(record.id);
+			if (!current || current.status !== "blocked" || !current.runId) return;
+			const loaded = loadRunManifestById(cwd, current.runId);
+			if (!loaded || loaded.manifest.status === "blocked" || loaded.manifest.status === "running" || loaded.manifest.status === "planning" || loaded.manifest.status === "queued") {
+				const timer = setTimeout(poll, this.pollIntervalMs);
+				timer.unref?.();
+				return;
+			}
+			const persisted = readPersistedSubagentRecord(cwd, current.id);
+			current.resultConsumed = current.resultConsumed || persisted?.resultConsumed;
+			if (loaded.manifest.status === "completed") {
+				current.status = "completed";
+				current.error = undefined;
+			} else if (loaded.manifest.status === "failed" || loaded.manifest.status === "cancelled") {
+				current.status = loaded.manifest.status;
+				current.error = loaded.manifest.summary;
+			} else return;
+			current.completedAt = Date.now();
+			current.turnCount = current.turnCount ?? totalRunTurns(cwd, current.runId);
+			current.durationMs = Math.max(0, current.completedAt - current.startedAt);
+			savePersistedSubagentRecord(cwd, current);
+			this.onComplete?.(current);
+		};
+		const timer = setTimeout(poll, this.pollIntervalMs);
+		timer.unref?.();
 	}
 
 	private scheduleStuckBlockedNotify(cwd: string, record: SubagentRecord): void {

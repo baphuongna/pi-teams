@@ -8,6 +8,7 @@ import { highlightCode, highlightJson } from "./syntax-highlight.ts";
 import { pad, truncate, truncateToVisualLines } from "../utils/visual.ts";
 import { colorForStatus, iconForStatus, type RunStatus } from "./status-colors.ts";
 import { DEFAULT_TRANSCRIPT_TAIL_BYTES, getTranscriptCacheEntry, readTranscriptLinesCached } from "./transcript-cache.ts";
+import { resolveRealContainedPath } from "../utils/safe-paths.ts";
 
 type Component = { invalidate(): void; render(width: number): string[]; handleInput(data: string): void };
 
@@ -128,7 +129,20 @@ export function readRunTranscript(manifest: TeamRunManifest, taskId?: string, op
 	const agents = readCrewAgents(manifest);
 	const agent = taskId ? agents.find((item) => item.taskId === taskId || item.id === taskId) : agents.find((item) => item.transcriptPath) ?? agents[0];
 	const selectedTaskId = agent?.taskId ?? taskId ?? "unknown";
-	const transcriptPath = agent?.transcriptPath && fs.existsSync(agent.transcriptPath) ? agent.transcriptPath : agentOutputPath(manifest, selectedTaskId);
+	let transcriptPath: string;
+	try {
+		transcriptPath = agentOutputPath(manifest, selectedTaskId);
+	} catch {
+		transcriptPath = agentOutputPath(manifest, "unknown");
+	}
+	if (agent?.transcriptPath) {
+		try {
+			const safeTranscriptPath = resolveRealContainedPath(manifest.artifactsRoot, agent.transcriptPath);
+			if (fs.existsSync(safeTranscriptPath)) transcriptPath = safeTranscriptPath;
+		} catch {
+			// Ignore untrusted transcript paths from mutable agent state and fall back to durable agent output.
+		}
+	}
 	const readOptions = { full: options.full === true, maxTailBytes: options.maxTailBytes ?? DEFAULT_TRANSCRIPT_TAIL_BYTES };
 	const lines = readTranscriptLinesCached(transcriptPath, (text) => formatTranscriptText(text), Date.now(), readOptions);
 	const entry = getTranscriptCacheEntry(transcriptPath, readOptions);

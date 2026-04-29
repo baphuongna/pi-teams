@@ -70,18 +70,19 @@ function statusGlyph(status: CrewAgentRecord["status"]): string {
 	return "·";
 }
 
-function outputWarning(agent: CrewAgentRecord): string {
+function outputWarning(manifest: TeamRunManifest, agent: CrewAgentRecord): string {
 	if (agent.status !== "completed") return "";
-	if (!agent.outputPath || !fs.existsSync(agent.outputPath)) return " no-output";
 	try {
-		return fs.statSync(agent.outputPath).size === 0 ? " no-output" : "";
+		const outputPath = agentOutputPath(manifest, agent.taskId);
+		if (!fs.existsSync(outputPath)) return " no-output";
+		return fs.statSync(outputPath).size === 0 ? " no-output" : "";
 	} catch {
 		return " no-output";
 	}
 }
 
-function agentLine(agent: CrewAgentRecord): string {
-	return `- ${statusGlyph(agent.status)} ${agent.taskId} ${agent.role} → ${agent.agent} · ${agent.status} · ${agent.runtime} · ${activityText(agent)}${outputWarning(agent)}${agent.error ? ` · error=${agent.error}` : ""}`;
+function agentLine(manifest: TeamRunManifest, agent: CrewAgentRecord): string {
+	return `- ${statusGlyph(agent.status)} ${agent.taskId} ${agent.role} → ${agent.agent} · ${agent.status} · ${agent.runtime} · ${activityText(agent)}${outputWarning(manifest, agent)}${agent.error ? ` · error=${agent.error}` : ""}`;
 }
 
 export function buildAgentDashboard(manifest: TeamRunManifest): { text: string; groups: Record<string, CrewAgentRecord[]> } {
@@ -97,13 +98,13 @@ export function buildAgentDashboard(manifest: TeamRunManifest): { text: string; 
 		`Counts: running=${groups.running.length}, queued=${groups.queued.length}, recent=${groups.recent.length}`,
 		"",
 		"## Running",
-		...(groups.running.length ? groups.running.map(agentLine) : ["- (none)"]),
+		...(groups.running.length ? groups.running.map((agent) => agentLine(manifest, agent)) : ["- (none)"]),
 		"",
 		"## Queued",
-		...(groups.queued.length ? groups.queued.map(agentLine) : ["- (none)"]),
+		...(groups.queued.length ? groups.queued.map((agent) => agentLine(manifest, agent)) : ["- (none)"]),
 		"",
 		"## Recent",
-		...(groups.recent.length ? groups.recent.slice(-10).map(agentLine) : ["- (none)"]),
+		...(groups.recent.length ? groups.recent.slice(-10).map((agent) => agentLine(manifest, agent)) : ["- (none)"]),
 	];
 	return { text: lines.join("\n"), groups };
 }

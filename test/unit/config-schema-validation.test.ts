@@ -6,6 +6,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { configPath, loadConfig } from "../../src/config/config.ts";
+import { Value } from "typebox/value";
+import { PiTeamsConfigSchema } from "../../src/schema/config-schema.ts";
 
 test("parseConfig accepts valid values and drops invalid siblings using TypeBox validation", () => {
 	const parsed = parseConfig({
@@ -44,6 +46,35 @@ test("parseConfig accepts valid values and drops invalid siblings using TypeBox 
 	assert.equal(parsed.tools?.enableSteer, false);
 	assert.equal(parsed.tools?.terminateOnForeground, true);
 	assert.equal(parsed.telemetry?.enabled, false);
+});
+
+test("parseConfig enforces public UI schema ranges", () => {
+	const parsed = parseConfig({
+		ui: {
+			widgetMaxLines: 51,
+			dashboardWidth: 31,
+			dashboardLiveRefreshMs: 249,
+			transcriptTailBytes: 50 * 1024 * 1024 + 1,
+		},
+	});
+	assert.equal(parsed.ui, undefined);
+	const tooSmall = parseConfig({ ui: { transcriptTailBytes: 1023 } });
+	assert.equal(tooSmall.ui, undefined);
+	const valid = parseConfig({ ui: { widgetMaxLines: 50, dashboardWidth: 32, dashboardLiveRefreshMs: 250, transcriptTailBytes: 1024 } });
+	assert.equal(valid.ui?.widgetMaxLines, 50);
+	assert.equal(valid.ui?.dashboardWidth, 32);
+	assert.equal(valid.ui?.dashboardLiveRefreshMs, 250);
+	assert.equal(valid.ui?.transcriptTailBytes, 1024);
+});
+
+test("PiTeamsConfigSchema rejects unknown keys and allows runtime notifier numbers", () => {
+	assert.equal(Value.Check(PiTeamsConfigSchema, { unknown: true }), false);
+	assert.equal(Value.Check(PiTeamsConfigSchema, { ui: { unknown: true } }), false);
+	assert.equal(Value.Check(PiTeamsConfigSchema, { autonomous: { unknown: true } }), false);
+	assert.equal(Value.Check(PiTeamsConfigSchema, { limits: { unknown: true } }), false);
+	assert.equal(Value.Check(PiTeamsConfigSchema, { reliability: { retryPolicy: { unknown: true } } }), false);
+	assert.equal(Value.Check(PiTeamsConfigSchema, { notifierIntervalMs: 1000.5 }), true);
+	assert.equal(parseConfig({ notifierIntervalMs: 1000.5 }).notifierIntervalMs, 1000.5);
 });
 
 test("configPatchFromConfig validates config updates with TypeBox and drops invalid values", () => {

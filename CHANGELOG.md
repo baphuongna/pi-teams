@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 0.1.38
+
+### Added
+
+- Added parent-session wake-up for completed background subagents so the main agent automatically joins results and continues the original task.
+- Added stronger resource/parser coverage for team role metadata and workflow task-body headings.
+
+### Changed
+
+- Clarified the current default worker execution model and local disable controls in project guidance.
+- Aligned config schema constraints for UI settings with the published package schema.
+
+### Fixed
+
+- Hardened subagent abort handling so stopped records are persisted and late runner completion does not regress them to completed/error.
+- Fixed blocked subagent result joins, blocked duration persistence, and final wake-up after blocked runs resume to terminal status.
+- Blocked path traversal through workflow shared artifacts, run ids, imported run bundles, task-scoped mailbox APIs, agent runtime files, and untrusted artifact/transcript paths; hardened reads/writes with realpath containment to prevent symlink escapes; bound live-agent control to the selected run.
+- Documented actual project resource paths for `.crew/` and `.pi/teams/` layouts.
+
 ## 0.1.31
 
 ### Fixed

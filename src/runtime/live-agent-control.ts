@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { TeamRunManifest } from "../state/types.ts";
+import { agentStateFile, ensureAgentStateDir } from "./crew-agent-records.ts";
 
 export type LiveAgentControlOperation = "steer" | "stop" | "resume";
 
@@ -21,7 +22,11 @@ export interface LiveAgentControlCursor {
 }
 
 export function liveAgentControlPath(manifest: TeamRunManifest, taskId: string): string {
-	return path.join(manifest.stateRoot, "agents", taskId, "live-control.jsonl");
+	return path.join(ensureAgentStateDir(manifest, taskId), "live-control.jsonl");
+}
+
+function liveAgentControlFile(manifest: TeamRunManifest, taskId: string): string {
+	return agentStateFile(manifest, taskId, "live-control.jsonl");
 }
 
 function requestId(): string {
@@ -38,14 +43,18 @@ export function appendLiveAgentControlRequest(manifest: TeamRunManifest, input: 
 		message: input.message,
 		createdAt: new Date().toISOString(),
 	};
-	const filePath = liveAgentControlPath(manifest, input.taskId);
-	fs.mkdirSync(path.dirname(filePath), { recursive: true });
+	const filePath = liveAgentControlFile(manifest, input.taskId);
 	fs.appendFileSync(filePath, `${JSON.stringify(request)}\n`, "utf-8");
 	return request;
 }
 
 export function readLiveAgentControlRequests(manifest: TeamRunManifest, taskId: string, cursor: LiveAgentControlCursor = { offset: 0 }): { requests: LiveAgentControlRequest[]; cursor: LiveAgentControlCursor } {
-	const filePath = liveAgentControlPath(manifest, taskId);
+	let filePath: string;
+	try {
+		filePath = liveAgentControlFile(manifest, taskId);
+	} catch {
+		return { requests: [], cursor };
+	}
 	if (!fs.existsSync(filePath)) return { requests: [], cursor };
 	const text = fs.readFileSync(filePath, "utf-8");
 	const lines = text.split(/\r?\n/).filter(Boolean);

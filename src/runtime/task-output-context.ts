@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ArtifactDescriptor, TeamRunManifest, TeamTaskState } from "../state/types.ts";
 import { writeArtifact } from "../state/artifact-store.ts";
+import { resolveRealContainedPath } from "../utils/safe-paths.ts";
 import type { WorkflowStep } from "../workflows/workflow-config.ts";
 
 export interface DependencyOutputContext {
@@ -9,18 +10,38 @@ export interface DependencyOutputContext {
 	sharedReads: Array<{ name: string; path: string; content: string }>;
 }
 
-function readIfSmall(filePath: string, maxBytes = 24_000): string | undefined {
+function containedExists(filePath: string, baseDir?: string): boolean {
 	try {
-		const stat = fs.statSync(filePath);
-		if (stat.size > maxBytes) return `${fs.readFileSync(filePath, "utf-8").slice(0, maxBytes)}\n\n...(truncated ${stat.size - maxBytes} bytes)`;
-		return fs.readFileSync(filePath, "utf-8");
+		const safePath = baseDir ? resolveRealContainedPath(baseDir, filePath) : filePath;
+		return fs.existsSync(safePath);
+	} catch {
+		return false;
+	}
+}
+
+function readIfSmall(filePath: string, maxBytes = 24_000, baseDir?: string): string | undefined {
+	try {
+		const safePath = baseDir ? resolveRealContainedPath(baseDir, filePath) : filePath;
+		const stat = fs.statSync(safePath);
+		if (stat.size > maxBytes) return `${fs.readFileSync(safePath, "utf-8").slice(0, maxBytes)}\n\n...(truncated ${stat.size - maxBytes} bytes)`;
+		return fs.readFileSync(safePath, "utf-8");
 	} catch {
 		return undefined;
 	}
 }
 
+function safeSharedName(name: string): string {
+	const normalized = name.replaceAll("\\", "/").replace(/^\.\/+/, "");
+	if (!normalized || normalized.split("/").some((segment) => segment === "..") || path.isAbsolute(normalized)) throw new Error(`Invalid shared artifact name: ${name}`);
+	return normalized;
+}
+
 export function sharedPath(manifest: TeamRunManifest, name: string): string {
-	return path.join(manifest.artifactsRoot, "shared", name);
+	const sharedRoot = path.resolve(manifest.artifactsRoot, "shared");
+	const resolved = path.resolve(sharedRoot, safeSharedName(name));
+	const relative = path.relative(sharedRoot, resolved);
+	if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`Invalid shared artifact name: ${name}`);
+	return resolved;
 }
 
 export function collectDependencyOutputContext(manifest: TeamRunManifest, tasks: TeamTaskState[], task: TeamTaskState, step: WorkflowStep): DependencyOutputContext {
@@ -31,11 +52,11 @@ export function collectDependencyOutputContext(manifest: TeamRunManifest, tasks:
 		title: item.title,
 		status: item.status,
 		resultPath: item.resultArtifact?.path,
-		result: item.resultArtifact ? readIfSmall(item.resultArtifact.path) : undefined,
+		result: item.resultArtifact ? readIfSmall(item.resultArtifact.path, 24_000, manifest.artifactsRoot) : undefined,
 	}));
 	const sharedReads = (step.reads === false ? [] : step.reads ?? []).map((name) => {
 		const filePath = sharedPath(manifest, name);
-		return { name, path: filePath, content: readIfSmall(filePath) ?? "" };
+		return { name, path: filePath, content: readIfSmall(filePath, 24_000, path.resolve(manifest.artifactsRoot, "shared")) ?? "" };
 	}).filter((item) => item.content.trim().length > 0);
 	return { dependencies, sharedReads };
 }
@@ -57,8 +78,8 @@ export function renderDependencyOutputContext(context: DependencyOutputContext):
 
 export function writeTaskSharedOutput(manifest: TeamRunManifest, step: WorkflowStep, task: TeamTaskState): ArtifactDescriptor | undefined {
 	if (step.output === false) return undefined;
-	const name = step.output || `${task.id}.md`;
-	const source = task.resultArtifact ? readIfSmall(task.resultArtifact.path, 80_000) : undefined;
+	const name = safeSharedName(step.output || `${task.id}.md`);
+	const source = task.resultArtifact ? readIfSmall(task.resultArtifact.path, 80_000, manifest.artifactsRoot) : undefined;
 	if (!source) return undefined;
 	return writeArtifact(manifest.artifactsRoot, {
 		kind: "metadata",
@@ -77,11 +98,11 @@ export function writeTaskInputsArtifact(manifest: TeamRunManifest, task: TeamTas
 	});
 }
 
-export function aggregateTaskOutputs(tasks: TeamTaskState[]): string {
+export function aggregateTaskOutputs(tasks: TeamTaskState[], manifest?: TeamRunManifest): string {
 	return tasks.map((task, index) => {
-		const body = task.resultArtifact ? readIfSmall(task.resultArtifact.path, 40_000) : undefined;
+		const body = task.resultArtifact ? readIfSmall(task.resultArtifact.path, 40_000, manifest?.artifactsRoot) : undefined;
 		const hasBody = Boolean(body?.trim());
-		const expectedMissing = task.resultArtifact && !fs.existsSync(task.resultArtifact.path);
+		const expectedMissing = task.resultArtifact && !containedExists(task.resultArtifact.path, manifest?.artifactsRoot);
 		const status = task.status === "skipped"
 			? "SKIPPED"
 			: task.status === "failed"

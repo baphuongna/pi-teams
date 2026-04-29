@@ -165,6 +165,7 @@ test("RunDashboard renders progress preview", () => {
 		const progressPath = path.join(tmp, "progress.md");
 		fs.writeFileSync(progressPath, "# Progress\nTask counts: completed=1\n", "utf-8");
 		const manifest = run("team_progress", "running");
+		manifest.artifactsRoot = tmp;
 		manifest.artifacts.push({ kind: "progress", path: progressPath, createdAt: "2026-04-26T00:00:00.000Z", producer: "test", retention: "run" });
 		const dashboard = new RunDashboard([manifest], () => {});
 		const lines = dashboard.render(100);

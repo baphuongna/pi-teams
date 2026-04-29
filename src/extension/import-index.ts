@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { projectCrewRoot, userCrewRoot } from "../utils/paths.ts";
 import { DEFAULT_PATHS } from "../config/defaults.ts";
+import { isSafePathId, resolveRealContainedPath } from "../utils/safe-paths.ts";
 
 export interface ImportedRunIndexEntry {
 	runId: string;
@@ -16,8 +17,16 @@ export interface ImportedRunIndexEntry {
 }
 
 function readEntry(root: string, scope: "project" | "user", runId: string): ImportedRunIndexEntry | undefined {
-	const bundlePath = path.join(root, runId, "run-export.json");
-	const summaryPath = path.join(root, runId, "README.md");
+	if (!isSafePathId(runId)) return undefined;
+	let bundlePath: string;
+	let summaryPath: string;
+	try {
+		const entryRoot = resolveRealContainedPath(root, runId);
+		bundlePath = resolveRealContainedPath(root, path.join(entryRoot, "run-export.json"));
+		summaryPath = path.join(entryRoot, "README.md");
+	} catch {
+		return undefined;
+	}
 	if (!fs.existsSync(bundlePath)) return undefined;
 	try {
 		const raw = JSON.parse(fs.readFileSync(bundlePath, "utf-8")) as Record<string, unknown>;
@@ -40,7 +49,14 @@ function readEntry(root: string, scope: "project" | "user", runId: string): Impo
 
 function collect(root: string, scope: "project" | "user"): ImportedRunIndexEntry[] {
 	if (!fs.existsSync(root)) return [];
+	try {
+		if (fs.lstatSync(root).isSymbolicLink()) return [];
+		resolveRealContainedPath(path.dirname(root), path.basename(root));
+	} catch {
+		return [];
+	}
 	return fs.readdirSync(root)
+		.filter((entry) => isSafePathId(entry))
 		.map((entry) => readEntry(root, scope, entry))
 		.filter((entry): entry is ImportedRunIndexEntry => entry !== undefined);
 }
