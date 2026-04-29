@@ -19,6 +19,16 @@ test("decomposeGoal parses bullet lists", () => {
 	assert.equal(decomposition.fanout, 2);
 });
 
+test("recommendTeam routes actionable task lists to implementation", () => {
+	const recommendation = recommendTeam("Hãy thực hiện các task sau:\n- sửa config parser\n- thêm test\n- cập nhật docs");
+	assert.equal(recommendation.team, "implementation");
+	assert.equal(recommendation.workflow, "implementation");
+	assert.equal(recommendation.confidence, "high");
+	assert.equal(recommendation.decomposition.strategy, "bulleted");
+	assert.equal(recommendation.decomposition.fanout, 3);
+	assert.match(recommendation.reasons.join("\n"), /task list detected \(3 bullets\)/i);
+});
+
 test("recommendTeam can suggest async and worktree", () => {
 	const recommendation = recommendTeam("large risky refactor migration across multiple packages with tests", { preferAsyncForLongTasks: true });
 	assert.equal(recommendation.team, "implementation");

@@ -26,8 +26,8 @@ const REVIEW_TERMS = ["review", "audit", "security", "vulnerability", "diff", "p
 const RESEARCH_TERMS = ["research", "investigate", "compare", "analyze", "document", "docs", "explain", "architecture", "đọc sâu", "source", "projects"];
 const PARALLEL_RESEARCH_RE = /(?:đọc sâu|deep read|deep research|source audit|multiple projects|các project|pi-\*|source\/|@source)/i;
 const FAST_FIX_TERMS = ["quick fix", "fast-fix", "small bug", "typo", "one-line", "minor", "lint"];
-const IMPLEMENTATION_TERMS = ["implement", "refactor", "migrate", "feature", "tests", "test", "integration", "upgrade", "build", "create", "add"];
-const RISKY_TERMS = ["migration", "refactor", "large", "multiple", "parallel", "concurrent", "risky", "critical"];
+const IMPLEMENTATION_TERMS = ["implement", "refactor", "migrate", "feature", "tests", "test", "integration", "upgrade", "build", "create", "add", "fix", "update", "sửa", "thêm", "cập nhật", "kiểm thử"];
+const RISKY_TERMS = ["migration", "refactor", "large", "multiple", "parallel", "concurrent", "risky", "critical", "nhiều file", "nhiều task"];
 const NUMBERED_LINE_RE = /^\s*\d+[.)]\s+(.+)$/;
 const BULLETED_LINE_RE = /^\s*[-*•]\s+(.+)$/;
 const CONJUNCTION_SPLIT_RE = /\s+(?:and|,\s*and|,)\s+/i;
@@ -67,12 +67,14 @@ export function decomposeGoal(goal: string): { strategy: DecompositionStrategy; 
 		const subtask = makeSubtask(goal);
 		return { strategy: "atomic", subtasks: [subtask], fanout: 1 };
 	}
-	if (lines.length >= 2 && lines.every((line) => NUMBERED_LINE_RE.test(line))) {
-		const subtasks = lines.map((line) => makeSubtask(line.match(NUMBERED_LINE_RE)?.[1] ?? line));
+	const numberedLines = lines.map((line) => line.match(NUMBERED_LINE_RE)?.[1]).filter((line): line is string => line !== undefined);
+	if (numberedLines.length >= 2 && numberedLines.length >= lines.length - 1) {
+		const subtasks = numberedLines.map((line) => makeSubtask(line));
 		return { strategy: "numbered", subtasks, fanout: subtasks.length };
 	}
-	if (lines.length >= 2 && lines.every((line) => BULLETED_LINE_RE.test(line))) {
-		const subtasks = lines.map((line) => makeSubtask(line.match(BULLETED_LINE_RE)?.[1] ?? line));
+	const bulletedLines = lines.map((line) => line.match(BULLETED_LINE_RE)?.[1]).filter((line): line is string => line !== undefined);
+	if (bulletedLines.length >= 2 && bulletedLines.length >= lines.length - 1) {
+		const subtasks = bulletedLines.map((line) => makeSubtask(line));
 		return { strategy: "bulleted", subtasks, fanout: subtasks.length };
 	}
 	if (lines.length === 1) {
@@ -94,6 +96,7 @@ function metadataMatches(goal: string, values: string[] | undefined): string[] {
 export function recommendTeam(goal: string, config: PiTeamsAutonomousConfig = {}, resources?: { teams?: TeamConfig[]; agents?: AgentConfig[] }): TeamRecommendation {
 	const normalized = goal.toLowerCase();
 	const intents = detectTeamIntent(goal, config);
+	const decomposition = decomposeGoal(goal);
 	const reasons: string[] = [];
 	let team: TeamRecommendation["team"] = "default";
 	let workflow: TeamRecommendation["workflow"] = "default";
@@ -138,10 +141,15 @@ export function recommendTeam(goal: string, config: PiTeamsAutonomousConfig = {}
 		workflow = "fast-fix";
 		confidence = "high";
 		reasons.push(`Small fix terms detected: ${fastFixMatches.join(", ") || "fast-fix intent"}.`);
+	} else if (intents.includes("taskList")) {
+		team = "implementation";
+		workflow = "implementation";
+		confidence = "high";
+		reasons.push(`Actionable multi-item task list detected (${decomposition.fanout} bullet${decomposition.fanout === 1 ? "" : "s"}); use coordinated implementation planning.`);
 	} else if (intents.includes("implementation") || implementationMatches.length > 0) {
 		team = "implementation";
 		workflow = "implementation";
-		confidence = implementationMatches.length >= 2 || riskyMatches.length > 0 ? "high" : "medium";
+		confidence = implementationMatches.length >= 2 || riskyMatches.length > 0 || decomposition.fanout >= 2 ? "high" : "medium";
 		reasons.push(`Implementation terms detected: ${implementationMatches.join(", ") || "implementation intent"}.`);
 	} else {
 		action = "plan";
@@ -149,7 +157,7 @@ export function recommendTeam(goal: string, config: PiTeamsAutonomousConfig = {}
 		reasons.push("No strong team-specific intent detected; start with planning/default discovery.");
 	}
 
-	const decomposition = decomposeGoal(goal);
+
 	if (decomposition.strategy !== "atomic") reasons.push(`Goal decomposes into ${decomposition.subtasks.length} subtasks using ${decomposition.strategy} parsing.`);
 	const async = config.preferAsyncForLongTasks === true && (wordCount(goal) > 24 || riskyMatches.length > 0 || implementationMatches.length >= 2 || decomposition.fanout >= 3);
 	const workspaceMode = config.allowWorktreeSuggestion === false ? "single" : (riskyMatches.length > 0 && team === "implementation" ? "worktree" : "single");

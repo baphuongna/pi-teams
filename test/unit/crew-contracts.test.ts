@@ -47,6 +47,19 @@ test("TaskPacket captures scope, contracts, and validates required fields", () =
 	assert.match(invalid.errors.join("\n"), /scopePath is required/);
 });
 
+test("TaskPacket validation rejects missing guard rails", () => {
+	const packet = buildTaskPacket({ manifest: manifest(), step, taskId: "01_verify", cwd: process.cwd() });
+	const invalid = validateTaskPacket({ ...packet, constraints: [], expectedArtifacts: [] });
+	assert.equal(invalid.valid, false);
+	assert.match(invalid.errors.join("\n"), /constraints must contain at least one entry/);
+	assert.match(invalid.errors.join("\n"), /expectedArtifacts must contain at least one entry/);
+
+	const emptyValues = validateTaskPacket({ ...packet, constraints: [" "], expectedArtifacts: [" "] });
+	assert.equal(emptyValues.valid, false);
+	assert.match(emptyValues.errors.join("\n"), /constraints contains an empty value at index 0/);
+	assert.match(emptyValues.errors.join("\n"), /expectedArtifacts contains an empty value at index 0/);
+});
+
 test("Green contract compares required and observed levels", () => {
 	assert.equal(evaluateGreenContract({ requiredGreenLevel: "package", commands: [], allowManualEvidence: true }, { requiredGreenLevel: "package", observedGreenLevel: "targeted", satisfied: false, commands: [] }).satisfied, false);
 	assert.equal(evaluateGreenContract({ requiredGreenLevel: "package", commands: [], allowManualEvidence: true }, { requiredGreenLevel: "package", observedGreenLevel: "workspace", satisfied: true, commands: [] }).satisfied, true);

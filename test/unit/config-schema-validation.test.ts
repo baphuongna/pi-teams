@@ -24,6 +24,13 @@ test("parseConfig accepts valid values and drops invalid siblings using TypeBox 
 			widgetPlacement: "aboveEditor",
 			widgetMaxLines: "no",
 		},
+		tools: {
+			enableSteer: false,
+			terminateOnForeground: true,
+		},
+		telemetry: {
+			enabled: false,
+		},
 	});
 	assert.equal(parsed.asyncByDefault, undefined);
 	assert.equal(parsed.limits?.maxConcurrentWorkers, 4);
@@ -34,6 +41,9 @@ test("parseConfig accepts valid values and drops invalid siblings using TypeBox 
 	assert.equal(parsed.runtime?.graceTurns, 9);
 	assert.equal(parsed.ui?.widgetPlacement, "aboveEditor");
 	assert.equal(parsed.ui?.widgetMaxLines, undefined);
+	assert.equal(parsed.tools?.enableSteer, false);
+	assert.equal(parsed.tools?.terminateOnForeground, true);
+	assert.equal(parsed.telemetry?.enabled, false);
 });
 
 test("configPatchFromConfig validates config updates with TypeBox and drops invalid values", () => {

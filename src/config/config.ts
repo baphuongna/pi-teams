@@ -210,6 +210,18 @@ function mergeConfig(base: PiTeamsConfig, override: PiTeamsConfig): PiTeamsConfi
 			},
 		};
 	}
+	if (base.tools || override.tools) {
+		merged.tools = {
+			...(base.tools ?? {}),
+			...withoutUndefined((override.tools ?? {}) as Record<string, unknown>),
+		};
+	}
+	if (base.telemetry || override.telemetry) {
+		merged.telemetry = {
+			...(base.telemetry ?? {}),
+			...withoutUndefined((override.telemetry ?? {}) as Record<string, unknown>),
+		};
+	}
 	if (merged.agents?.overrides && Object.keys(merged.agents.overrides).length === 0) delete merged.agents.overrides;
 	return merged;
 }
@@ -409,6 +421,26 @@ function parseAgentsConfig(value: unknown): CrewAgentsConfig | undefined {
 	return Object.values(agents).some((entry) => entry !== undefined) ? agents : undefined;
 }
 
+function parseToolsConfig(value: unknown): CrewToolsConfig | undefined {
+	const obj = asRecord(value);
+	if (!obj) return undefined;
+	const tools: CrewToolsConfig = {
+		enableClaudeStyleAliases: parseWithSchema(Type.Boolean(), obj.enableClaudeStyleAliases),
+		enableSteer: parseWithSchema(Type.Boolean(), obj.enableSteer),
+		terminateOnForeground: parseWithSchema(Type.Boolean(), obj.terminateOnForeground),
+	};
+	return Object.values(tools).some((entry) => entry !== undefined) ? tools : undefined;
+}
+
+function parseTelemetryConfig(value: unknown): CrewTelemetryConfig | undefined {
+	const obj = asRecord(value);
+	if (!obj) return undefined;
+	const telemetry: CrewTelemetryConfig = {
+		enabled: parseWithSchema(Type.Boolean(), obj.enabled),
+	};
+	return Object.values(telemetry).some((entry) => entry !== undefined) ? telemetry : undefined;
+}
+
 export function parseConfig(raw: unknown): PiTeamsConfig {
 	const obj = asRecord(raw);
 	if (!obj) return {};
@@ -423,6 +455,8 @@ export function parseConfig(raw: unknown): PiTeamsConfig {
 		control: parseControlConfig(obj.control),
 		worktree: parseWorktreeConfig(obj.worktree),
 		agents: parseAgentsConfig(obj.agents),
+		tools: parseToolsConfig(obj.tools),
+		telemetry: parseTelemetryConfig(obj.telemetry),
 		ui: parseUiConfig(obj.ui),
 	};
 }

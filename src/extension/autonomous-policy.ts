@@ -5,14 +5,52 @@ import { allTeams, discoverTeams } from "../teams/discover-teams.ts";
 import { allWorkflows, discoverWorkflows } from "../workflows/discover-workflows.ts";
 
 const DEFAULT_MAGIC_KEYWORDS: Record<string, string[]> = {
-	implementation: ["autoteam", "team:", "implementation-team"],
+	implementation: ["autoteam", "team:", "implementation-team", "pi-crew", "dùng team", "use team"],
 	review: ["review-team", "security review", "code review"],
 	fastFix: ["fast-fix", "quick fix"],
 	research: ["research-team", "deep research"],
 };
 
+const BULLET_OR_NUMBERED_TASK_RE = /^\s*(?:[-*•]|\d+[.)])\s+\S+/;
+const ACTIONABLE_TASK_TERMS: readonly string[] = Array.from(new Set([
+	"implement",
+	"refactor",
+	"migrate",
+	"fix",
+	"add",
+	"update",
+	"test",
+	"review",
+	"research",
+	"analyze",
+	"document",
+	"docs",
+	"sửa",
+	"thêm",
+	"cập nhật",
+	"kiểm thử",
+	"nghiên cứu",
+	"phân tích",
+	"viết docs",
+]));
+
 function mergeMagicKeywords(configured: Record<string, string[]> | undefined): Record<string, string[]> {
 	return { ...DEFAULT_MAGIC_KEYWORDS, ...(configured ?? {}) };
+}
+
+function actionableLineCount(prompt: string): number {
+	return prompt
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter((line) => BULLET_OR_NUMBERED_TASK_RE.test(line) && ACTIONABLE_TASK_TERMS.some((term) => line.toLowerCase().includes(term)))
+		.length;
+}
+
+function hasTaskListSignal(prompt: string): boolean {
+	const lower = prompt.toLowerCase();
+	const bulletCount = prompt.split(/\r?\n/).filter((line) => BULLET_OR_NUMBERED_TASK_RE.test(line)).length;
+	const explicitList = ["các task", "danh sách task", "todo", "tasks sau", "task list", "làm lần lượt"].some((term) => lower.includes(term));
+	return bulletCount >= 3 || actionableLineCount(prompt) >= 2 || (explicitList && bulletCount >= 2);
 }
 
 export function detectTeamIntent(prompt: string, config: PiTeamsAutonomousConfig = {}): string[] {
@@ -21,6 +59,7 @@ export function detectTeamIntent(prompt: string, config: PiTeamsAutonomousConfig
 	for (const [intent, keywords] of Object.entries(mergeMagicKeywords(config.magicKeywords))) {
 		if (keywords.some((keyword) => lower.includes(keyword.toLowerCase()))) matches.push(intent);
 	}
+	if (hasTaskListSignal(prompt) && !matches.includes("taskList")) matches.push("taskList");
 	return matches;
 }
 
@@ -39,8 +78,15 @@ export function buildAutonomousPolicy(prompt: string, config: PiTeamsAutonomousC
 		`Autonomy profile: ${effective.profile}.`,
 		"You have access to the `team` tool for coordinated multi-agent work. Use it proactively when the task benefits from specialized roles, planning, review, verification, durable artifacts, async execution, or worktree isolation.",
 		"",
+		"Decision framework (not keyword-only):",
+		"- Treat a user-supplied task list with 2+ actionable bullets/numbered items as a delegation candidate even when no pi-crew keyword appears.",
+		"- Prefer `team` when tasks span multiple files/subsystems, require sequencing, combine implementation + tests/docs/review, or need independent exploration before edits.",
+		"- If unsure whether subtasks conflict, call `team` with action='recommend' first instead of manually splitting work.",
+		"- For assisted/aggressive autonomy and non-trivial multi-task work, prefer a team run or plan over direct single-agent execution.",
+		"",
 		"Use `team` automatically when:",
 		"- The task spans multiple files, subsystems, or unclear code areas.",
+		"- The prompt contains a non-trivial task list, roadmap, checklist, migration plan, or ordered implementation plan.",
 		"- The task requires planning before implementation.",
 		"- The task asks for implementation plus tests, review, verification, migration, architecture, security review, or debugging.",
 		"- The task would benefit from explorer/planner/executor/reviewer/verifier roles.",
@@ -48,6 +94,7 @@ export function buildAutonomousPolicy(prompt: string, config: PiTeamsAutonomousC
 		"Do not use `team` when:",
 		"- The user asks a simple factual question or tiny single-file edit.",
 		"- The user explicitly asks you to work directly without delegation.",
+		"- The tasks clearly modify the same small file region and can be completed safer by one agent without parallel fanout.",
 		"- The action is destructive (`delete`, `forget`, `prune`, forced cleanup) and the user has not explicitly confirmed it.",
 		"",
 		"Recommended mappings:",
@@ -60,9 +107,16 @@ export function buildAutonomousPolicy(prompt: string, config: PiTeamsAutonomousC
 		"- Before claiming delegated work is complete, inspect the run with action='status' or action='summary'.",
 		"- Unsure or risky work -> action='plan' first, then run the selected team.",
 		"",
+		"Conflict-safe task splitting:",
+		"- Do not parallelize subtasks that may edit the same file, same symbol, same migration path, package manifest, lockfile, or generated schema unless a planner explicitly sequences them.",
+		"- For potential overlap, use plan/recommend first, assign one owner per file/symbol, and require workers to report intended changed files before editing.",
+		"- Prefer workspaceMode: 'worktree' for parallel implementation in clean git repositories, but still avoid merging overlapping edits without review.",
+		"- If workers discover overlap, blockers, missing requirements, or need leader decisions, they must use mailbox/status artifacts to ask the leader/orchestrator and pause risky edits.",
+		"- The leader should resolve conflicts by sequencing, narrowing scope, or reassigning ownership before continuing.",
+		"",
 		asyncGuidance,
 		worktreeGuidance,
-		intents.length > 0 ? `Detected pi-crew routing keywords/intents in the user prompt: ${intents.join(", ")}. Consider the matching team workflow if appropriate.` : "No explicit pi-crew magic keyword was detected; decide based on task complexity and risk.",
+		intents.length > 0 ? `Detected pi-crew routing signals/intents in the user prompt: ${intents.join(", ")}. Consider the matching team workflow if appropriate.` : "No explicit pi-crew routing signal was detected; decide based on complexity, risk, task-list structure, and conflict potential.",
 	].join("\n");
 }
 

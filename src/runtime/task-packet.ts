@@ -43,12 +43,13 @@ export function buildTaskPacket(input: BuildTaskPacketInput): TaskPacket {
 		branchPolicy: input.manifest.workspaceMode === "worktree" ? "Use the assigned task worktree and avoid modifying the leader checkout." : "Use the current checkout; do not create branches unless explicitly requested.",
 		acceptanceTests: [],
 		commitPolicy: "Do not commit unless explicitly requested by the user or workflow.",
-		reportingContract: "Report changed files, verification evidence, blockers, and next recommended action.",
-		escalationPolicy: "Stop and report if scope is ambiguous, destructive action is needed, permissions are missing, or verification cannot be completed.",
+		reportingContract: "Report intended/changed files, verification evidence, blockers, conflict risks, and next recommended action.",
+		escalationPolicy: "Stop and report if scope is ambiguous, destructive action is needed, permissions are missing, verification cannot be completed, or edits may overlap with another worker/task.",
 		constraints: [
 			"Stay within the assigned task scope.",
 			"Do not claim completion without verification evidence.",
 			"Use mailbox/API state for coordination when available.",
+			"Do not make overlapping edits to the same file/symbol without explicit leader sequencing or ownership guidance.",
 		],
 		expectedArtifacts: ["prompt", "result", "verification"],
 		verification: defaultVerificationContract(input.step),
@@ -65,6 +66,14 @@ export function validateTaskPacket(packet: TaskPacket): TaskPacketValidationResu
 	if (!packet.escalationPolicy.trim()) errors.push("escalationPolicy must not be empty");
 	if ((packet.scope === "module" || packet.scope === "single_file" || packet.scope === "custom") && !packet.scopePath?.trim()) {
 		errors.push(`scopePath is required for scope '${packet.scope}'`);
+	}
+	if (packet.constraints.length === 0) errors.push("constraints must contain at least one entry");
+	for (const [index, constraint] of packet.constraints.entries()) {
+		if (!constraint.trim()) errors.push(`constraints contains an empty value at index ${index}`);
+	}
+	if (packet.expectedArtifacts.length === 0) errors.push("expectedArtifacts must contain at least one entry");
+	for (const [index, artifact] of packet.expectedArtifacts.entries()) {
+		if (!artifact.trim()) errors.push(`expectedArtifacts contains an empty value at index ${index}`);
 	}
 	for (const [index, test] of packet.acceptanceTests.entries()) {
 		if (!test.trim()) errors.push(`acceptanceTests contains an empty value at index ${index}`);
