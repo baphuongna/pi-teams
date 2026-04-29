@@ -11,6 +11,8 @@ import { pad, truncate } from "../utils/visual.ts";
 import type { CrewTheme } from "./theme-adapter.ts";
 import { asCrewTheme, subscribeThemeChange } from "./theme-adapter.ts";
 import { Box, Text } from "./layout-primitives.ts";
+import { requestRender, setExtensionWidget } from "./pi-ui-compat.ts";
+import type { RunSnapshotCache, RunUiSnapshot } from "./snapshot-types.ts";
 
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const TOOL_LABELS: Record<string, string> = {
@@ -31,14 +33,32 @@ const MAX_AGENTS_DISPLAY = 3;
 
 type WidgetComponent = { render(width: number): string[]; invalidate(): void };
 
+interface CrewWidgetModel {
+	cwd: string;
+	frame: number;
+	maxLines: number;
+	notificationCount?: number;
+	manifestCache?: ManifestCache;
+	snapshotCache?: RunSnapshotCache;
+}
+
 export interface CrewWidgetState {
 	frame: number;
 	interval?: ReturnType<typeof setInterval>;
+	lastPlacement?: string;
+	lastVisibility?: "hidden" | "visible";
+	lastKey?: string;
+	lastMaxLines?: number;
+	lastCwd?: string;
+	legacyCleared?: boolean;
+	model?: CrewWidgetModel;
+	notificationCount?: number;
 }
 
 interface WidgetRun {
 	run: TeamRunManifest;
 	agents: CrewAgentRecord[];
+	snapshot?: RunUiSnapshot;
 }
 
 function elapsed(iso: string | undefined, now = Date.now()): string | undefined {
@@ -80,10 +100,17 @@ function agentsFor(run: TeamRunManifest): CrewAgentRecord[] {
 	}
 }
 
-export function activeWidgetRuns(cwd: string, manifestCache?: ManifestCache): WidgetRun[] {
+export function activeWidgetRuns(cwd: string, manifestCache?: ManifestCache, snapshotCache?: RunSnapshotCache): WidgetRun[] {
 	const runs = manifestCache ? manifestCache.list(20) : listRecentRuns(cwd, 20);
 	return runs
-		.map((run) => ({ run, agents: agentsFor(run) }))
+		.map((run) => {
+			try {
+				const snapshot = snapshotCache?.refreshIfStale(run.runId);
+				return snapshot ? { run: snapshot.manifest, agents: snapshot.agents, snapshot } : { run, agents: agentsFor(run) };
+			} catch {
+				return { run, agents: agentsFor(run) };
+			}
+		})
 		.filter((item) => isDisplayActiveRun(item.run, item.agents));
 }
 
@@ -98,7 +125,14 @@ function statusSummary(runs: WidgetRun[]): string {
 	return `Crew: ${parts.join(", ")}`;
 }
 
-export function widgetHeader(runs: WidgetRun[], runningGlyph: string, maxLines = 20): string {
+export function notificationBadge(count: number | undefined, env: NodeJS.ProcessEnv = process.env): string {
+	if (!count || count <= 0) return "";
+	const term = `${env.TERM ?? ""} ${env.WT_SESSION ?? ""} ${env.TERM_PROGRAM ?? ""}`.toLowerCase();
+	const supportsEmoji = !term.includes("dumb") && env.NO_COLOR !== "1";
+	return supportsEmoji ? ` 🔔${count}` : ` [!${count}]`;
+}
+
+export function widgetHeader(runs: WidgetRun[], runningGlyph: string, maxLines = 20, notificationCount = 0): string {
 	const agents = runs.flatMap((item) => item.agents);
 	const runningAgents = agents.filter((agent) => agent.status === "running").length;
 	const queuedAgents = agents.filter((agent) => agent.status === "queued").length;
@@ -106,18 +140,18 @@ export function widgetHeader(runs: WidgetRun[], runningGlyph: string, maxLines =
 	const parts = [`${runningAgents} running`];
 	if (queuedAgents) parts.push(`${queuedAgents} queued`);
 	if (completedAgents) parts.push(`${completedAgents}/${agents.length} done`);
-	return `${runningGlyph} Crew agents · ${parts.join(" · ")} · /team-dashboard`;
+	return `${runningGlyph} Crew agents${notificationBadge(notificationCount)} · ${parts.join(" · ")} · /team-dashboard`;
 }
 
 function shortRunLabel(run: TeamRunManifest): string {
 	return `${run.team}/${run.workflow ?? "none"}`;
 }
 
-export function buildCrewWidgetLines(cwd: string, frame = 0, maxLines = 8, providedRuns?: WidgetRun[]): string[] {
+export function buildCrewWidgetLines(cwd: string, frame = 0, maxLines = 8, providedRuns?: WidgetRun[], notificationCount = 0): string[] {
 	const runs = providedRuns ?? activeWidgetRuns(cwd);
 	if (!runs.length) return [];
 	const runningGlyph = SPINNER[frame % SPINNER.length] ?? SPINNER[0];
-	const lines: string[] = [widgetHeader(runs, runningGlyph, maxLines)];
+	const lines: string[] = [widgetHeader(runs, runningGlyph, maxLines, notificationCount)];
 	for (const { run, agents } of runs) {
 		const activeAgents = agents.filter((item) => item.status === "running" || item.status === "queued");
 		const completed = agents.filter((agent) => agent.status === "completed").length;
@@ -172,32 +206,30 @@ function renderLines(lines: string[], width: number): string[] {
 }
 
 class CrewWidgetComponent implements WidgetComponent {
-	private cwd: string;
-	private frame: number;
-	private maxLines: number;
+	private readonly model: CrewWidgetModel;
 	private theme: CrewTheme;
 	private cacheSignature: string;
 	private cachedWidth = 0;
 	private cachedLines: string[] = [];
 	private cachedBaseLines: string[] = [];
 	private cachedTheme: CrewTheme;
-	private manifestCache?: ManifestCache;
 	private readonly unsubscribeTheme: () => void;
 
-	constructor(cwd: string, frame: number, maxLines: number, themeLike: unknown, manifestCache?: ManifestCache) {
-		this.cwd = cwd;
-		this.frame = frame;
-		this.maxLines = maxLines;
+	constructor(model: CrewWidgetModel, themeLike: unknown) {
+		this.model = model;
 		this.theme = asCrewTheme(themeLike);
 		this.cachedTheme = this.theme;
-		this.manifestCache = manifestCache;
 		this.cacheSignature = "";
 		this.unsubscribeTheme = subscribeThemeChange(themeLike, () => this.invalidate());
 	}
 
 	private buildSignature(runs: WidgetRun[]): string {
 		return runs
-			.map((entry) => `${entry.run.runId}:${entry.run.status}:${entry.run.updatedAt}:` + entry.agents.map((agent) => `${agent.status}:${agent.startedAt}:${agent.completedAt ?? ""}`).join(","))
+			.map((entry) => entry.snapshot?.signature ?? `${entry.run.runId}:${entry.run.status}:${entry.run.updatedAt}:` + entry.agents.map((agent) => {
+				const recentOutput = agent.progress?.recentOutput.at(-1) ?? "";
+				const progress = [agent.progress?.currentTool ?? "", agent.progress?.toolCount ?? 0, agent.progress?.tokens ?? 0, agent.progress?.turns ?? 0, agent.progress?.lastActivityAt ?? "", recentOutput].join(":");
+				return `${agent.status}:${agent.startedAt}:${agent.completedAt ?? ""}:${agent.toolUses ?? 0}:${progress}`;
+			}).join(","))
 			.join("|");
 	}
 
@@ -216,13 +248,13 @@ class CrewWidgetComponent implements WidgetComponent {
 	}
 
 	render(width: number): string[] {
-		const runs = activeWidgetRuns(this.cwd, this.manifestCache);
-		const signature = this.buildSignature(runs);
-		const runningGlyph = SPINNER[this.frame % SPINNER.length] ?? SPINNER[0];
+		const runs = activeWidgetRuns(this.model.cwd, this.model.manifestCache, this.model.snapshotCache);
+		const signature = `${this.buildSignature(runs)}:${this.model.notificationCount ?? 0}`;
+		const runningGlyph = SPINNER[this.model.frame % SPINNER.length] ?? SPINNER[0];
 		const headerGlyph = runs.length ? SPINNER[0] : " ";
 
 		if (this.cacheSignature !== signature || width !== this.cachedWidth || this.cachedTheme !== this.theme) {
-			this.cachedBaseLines = buildCrewWidgetLines(this.cwd, 0, this.maxLines, runs).map((line, index) => {
+			this.cachedBaseLines = buildCrewWidgetLines(this.model.cwd, 0, this.model.maxLines, runs, this.model.notificationCount ?? 0).map((line, index) => {
 				if (index === 0 && line.length > 0) return `${headerGlyph}${line.slice(1)}`;
 				return line;
 			});
@@ -241,34 +273,62 @@ class CrewWidgetComponent implements WidgetComponent {
 	}
 }
 
-function requestRender(ctx: Pick<ExtensionContext, "ui">): void {
-	(ctx.ui as { requestRender?: () => void }).requestRender?.();
-}
-
 export function updateCrewWidget(
 	ctx: Pick<ExtensionContext, "cwd" | "hasUI" | "ui">,
 	state: CrewWidgetState,
 	config?: CrewUiConfig,
 	manifestCache?: ManifestCache,
+	snapshotCache?: RunSnapshotCache,
 ): void {
 	if (!ctx.hasUI) return;
 	state.frame += 1;
 	const maxLines = config?.widgetMaxLines ?? MAX_LINES_DEFAULT;
-	const runs = activeWidgetRuns(ctx.cwd, manifestCache);
-	const lines = buildCrewWidgetLines(ctx.cwd, state.frame, maxLines, runs);
+	const runs = activeWidgetRuns(ctx.cwd, manifestCache, snapshotCache);
+	const lines = buildCrewWidgetLines(ctx.cwd, state.frame, maxLines, runs, state.notificationCount ?? 0);
 	const placement = config?.widgetPlacement ?? "aboveEditor";
 	ctx.ui.setStatus(STATUS_KEY, lines.length ? statusSummary(runs) : undefined);
-	ctx.ui.setWidget(LEGACY_WIDGET_KEY, undefined, { placement });
+	const shouldClearLegacy = state.legacyCleared !== true || state.lastPlacement !== placement;
+	if (shouldClearLegacy) {
+		setExtensionWidget(ctx, LEGACY_WIDGET_KEY, undefined, { placement });
+		state.legacyCleared = true;
+	}
 	if (!lines.length) {
-		ctx.ui.setWidget(WIDGET_KEY, undefined, { placement });
+		if (state.lastVisibility !== "hidden" || state.lastPlacement !== placement) {
+			setExtensionWidget(ctx, WIDGET_KEY, undefined, { placement });
+			state.lastVisibility = "hidden";
+			state.lastPlacement = placement;
+			state.lastKey = WIDGET_KEY;
+			state.lastMaxLines = maxLines;
+			state.lastCwd = ctx.cwd;
+			state.model = undefined;
+		}
 		requestRender(ctx);
 		return;
 	}
-	ctx.ui.setWidget(
-		WIDGET_KEY,
-		((_tui: unknown, theme: unknown) => new CrewWidgetComponent(ctx.cwd, state.frame, maxLines, theme, manifestCache)) as never,
-		{ placement },
-	);
+	const needsWidgetInstall = state.lastVisibility !== "visible" || state.lastPlacement !== placement || state.lastKey !== WIDGET_KEY || state.lastMaxLines !== maxLines || state.lastCwd !== ctx.cwd || !state.model;
+	if (!state.model) state.model = { cwd: ctx.cwd, frame: state.frame, maxLines, notificationCount: state.notificationCount ?? 0, manifestCache, snapshotCache };
+	else {
+		state.model.cwd = ctx.cwd;
+		state.model.frame = state.frame;
+		state.model.maxLines = maxLines;
+		state.model.notificationCount = state.notificationCount ?? 0;
+		state.model.manifestCache = manifestCache;
+		state.model.snapshotCache = snapshotCache;
+	}
+	if (needsWidgetInstall) {
+		const model = state.model;
+		setExtensionWidget(
+			ctx,
+			WIDGET_KEY,
+			((_tui: unknown, theme: unknown) => new CrewWidgetComponent(model, theme)) as never,
+			{ placement, persist: true },
+		);
+		state.lastVisibility = "visible";
+		state.lastPlacement = placement;
+		state.lastKey = WIDGET_KEY;
+		state.lastMaxLines = maxLines;
+		state.lastCwd = ctx.cwd;
+	}
 	requestRender(ctx);
 }
 
@@ -278,8 +338,13 @@ export function stopCrewWidget(ctx: Pick<ExtensionContext, "hasUI" | "ui"> | und
 	if (ctx?.hasUI) {
 		const placement = config?.widgetPlacement ?? "aboveEditor";
 		ctx.ui.setStatus(STATUS_KEY, undefined);
-		ctx.ui.setWidget(LEGACY_WIDGET_KEY, undefined, { placement });
-		ctx.ui.setWidget(WIDGET_KEY, undefined, { placement });
+		setExtensionWidget(ctx, LEGACY_WIDGET_KEY, undefined, { placement });
+		setExtensionWidget(ctx, WIDGET_KEY, undefined, { placement });
+		state.lastVisibility = "hidden";
+		state.lastPlacement = placement;
+		state.lastKey = WIDGET_KEY;
+		state.model = undefined;
+		state.legacyCleared = true;
 		requestRender(ctx);
 	}
 }

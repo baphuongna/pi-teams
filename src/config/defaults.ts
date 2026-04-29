@@ -55,6 +55,13 @@ export const DEFAULT_UI = {
 	widgetDefaultFrameMs: 1000,
 };
 
+export const DEFAULT_NOTIFICATIONS = {
+	severityFilter: ["warning", "error", "critical"] as const,
+	dedupWindowMs: 30_000,
+	batchWindowMs: 0,
+	sinkRetentionDays: 7,
+};
+
 export const DEFAULT_CACHE = {
 	manifestMaxEntries: 64,
 };

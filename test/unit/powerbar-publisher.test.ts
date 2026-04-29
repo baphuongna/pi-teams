@@ -70,6 +70,65 @@ test("powerbar progress uses task totals and respects model/token visibility", (
 	}
 });
 
+test("powerbar mirrors status when no powerbar consumer is registered", () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-powerbar-fallback-"));
+	try {
+		fs.mkdirSync(path.join(cwd, ".crew"), { recursive: true });
+		const events: Array<{ event: string; data: unknown }> = [];
+		const bus = { emit: (event: string, data: unknown) => events.push({ event, data }), listenerCount: () => 0 };
+		const statuses: Array<{ key: string; text: string | undefined }> = [];
+		const ctx = { hasUI: true, ui: { setStatus: (key: string, text: string | undefined) => statuses.push({ key, text }) } };
+		const team = { name: "fallback-team", description: "", roles: [{ name: "worker", agent: "worker" }], source: "test", filePath: "builtin" } as never;
+		const workflow = { name: "fallback-workflow", description: "", steps: [{ id: "one", role: "worker" }], source: "test", filePath: "builtin" } as never;
+		const created = createRunManifest({ cwd, team, workflow, goal: "powerbar fallback" });
+		saveRunManifest({ ...created.manifest, status: "running" });
+		saveCrewAgents(created.manifest, [{ id: `${created.manifest.runId}:01`, runId: created.manifest.runId, taskId: "one", agent: "worker", role: "worker", runtime: "child-process", status: "running", startedAt: created.manifest.createdAt, progress: { recentTools: [], recentOutput: [], toolCount: 0, activityState: "active" } }]);
+		updatePiCrewPowerbar(bus, cwd, {}, undefined, undefined, ctx);
+		assert.ok(events.some((item) => item.event === "powerbar:update"));
+		assert.ok(statuses.some((item) => item.key === "pi-crew" && item.text?.includes("crew 1a")));
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("powerbar skips status fallback when a powerbar consumer is registered", () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-powerbar-consumer-"));
+	try {
+		fs.mkdirSync(path.join(cwd, ".crew"), { recursive: true });
+		const bus = { emit: () => {}, listenerCount: (event: string) => event === "powerbar:update" ? 1 : 0 };
+		const statuses: Array<{ key: string; text: string | undefined }> = [];
+		const ctx = { hasUI: true, ui: { setStatus: (key: string, text: string | undefined) => statuses.push({ key, text }) } };
+		const team = { name: "consumer-team", description: "", roles: [{ name: "worker", agent: "worker" }], source: "test", filePath: "builtin" } as never;
+		const workflow = { name: "consumer-workflow", description: "", steps: [{ id: "one", role: "worker" }], source: "test", filePath: "builtin" } as never;
+		const created = createRunManifest({ cwd, team, workflow, goal: "powerbar consumer" });
+		saveRunManifest({ ...created.manifest, status: "running" });
+		saveCrewAgents(created.manifest, [{ id: `${created.manifest.runId}:01`, runId: created.manifest.runId, taskId: "one", agent: "worker", role: "worker", runtime: "child-process", status: "running", startedAt: created.manifest.createdAt, progress: { recentTools: [], recentOutput: [], toolCount: 0, activityState: "active" } }]);
+		updatePiCrewPowerbar(bus, cwd, {}, undefined, undefined, ctx);
+		assert.equal(statuses.length, 0);
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("powerbar active segment includes notification badge", () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-powerbar-badge-"));
+	try {
+		fs.mkdirSync(path.join(cwd, ".crew"), { recursive: true });
+		const events: Array<{ event: string; data: unknown }> = [];
+		const bus = { emit: (event: string, data: unknown) => events.push({ event, data }) };
+		const team = { name: "badge-team", description: "", roles: [{ name: "worker", agent: "worker" }], source: "test", filePath: "builtin" } as never;
+		const workflow = { name: "badge-workflow", description: "", steps: [{ id: "one", role: "worker" }], source: "test", filePath: "builtin" } as never;
+		const created = createRunManifest({ cwd, team, workflow, goal: "powerbar badge" });
+		saveRunManifest({ ...created.manifest, status: "running" });
+		saveCrewAgents(created.manifest, [{ id: `${created.manifest.runId}:01`, runId: created.manifest.runId, taskId: "one", agent: "worker", role: "worker", runtime: "child-process", status: "running", startedAt: created.manifest.createdAt, progress: { recentTools: [], recentOutput: [], toolCount: 0, activityState: "active" } }]);
+		updatePiCrewPowerbar(bus, cwd, {}, undefined, undefined, undefined, 3);
+		const active = events.map((item) => payloadRecord(item.data)).find((item) => item.id === "pi-crew-active" && typeof item.text === "string");
+		assert.match(String(active?.text ?? ""), /3/);
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
 test("compactTokens keeps short values and compacts thousands", () => {
 	assert.equal(compactTokens(999), "999");
 	assert.equal(compactTokens(1500), "2k");

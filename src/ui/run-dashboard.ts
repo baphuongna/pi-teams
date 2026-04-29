@@ -12,6 +12,13 @@ import { Box, Text } from "./layout-primitives.ts";
 import { DynamicCrewBorder } from "./dynamic-border.ts";
 import { CrewFooter } from "./crew-footer.ts";
 import { aggregateUsage } from "../state/usage.ts";
+import { renderAgentsPane } from "./dashboard-panes/agents-pane.ts";
+import { renderMailboxPane } from "./dashboard-panes/mailbox-pane.ts";
+import { renderProgressPane } from "./dashboard-panes/progress-pane.ts";
+import { renderTranscriptPane } from "./dashboard-panes/transcript-pane.ts";
+import { renderHealthPane } from "./dashboard-panes/health-pane.ts";
+import { dashboardActionForKey } from "./keybinding-map.ts";
+import type { RunSnapshotCache, RunUiSnapshot } from "./snapshot-types.ts";
 
 interface DashboardComponent {
 	invalidate(): void;
@@ -24,9 +31,11 @@ export interface RunDashboardOptions {
 	showModel?: boolean;
 	showTokens?: boolean;
 	showTools?: boolean;
+	snapshotCache?: RunSnapshotCache;
+	runProvider?: () => TeamRunManifest[];
 }
 
-export type RunDashboardAction = "status" | "summary" | "artifacts" | "api" | "events" | "agents" | "agent-events" | "agent-output" | "agent-transcript" | "reload";
+export type RunDashboardAction = "status" | "summary" | "artifacts" | "api" | "events" | "agents" | "agent-events" | "agent-output" | "agent-transcript" | "mailbox" | "reload" | "mailbox-detail" | "health-recovery" | "health-kill-stale" | "health-diagnostic-export" | "notifications-dismiss";
 export interface RunDashboardSelection {
 	runId: string;
 	action: RunDashboardAction;
@@ -76,7 +85,17 @@ function formatTokens(usage: UsageState | undefined): string | undefined {
 	return parts.join("/");
 }
 
-function readRunTasks(run: TeamRunManifest): TeamTaskState[] {
+function snapshotFor(run: TeamRunManifest, snapshotCache?: RunSnapshotCache): RunUiSnapshot | undefined {
+	try {
+		return snapshotCache?.refreshIfStale(run.runId);
+	} catch {
+		return snapshotCache?.get(run.runId);
+	}
+}
+
+function readRunTasks(run: TeamRunManifest, snapshotCache?: RunSnapshotCache): TeamTaskState[] {
+	const snapshot = snapshotFor(run, snapshotCache);
+	if (snapshot) return snapshot.tasks;
 	const parse = () => {
 		if (!fs.existsSync(run.tasksPath)) return [];
 		const parsed = JSON.parse(fs.readFileSync(run.tasksPath, "utf-8"));
@@ -126,8 +145,9 @@ function agentPreviewLine(agent: CrewAgentRecord, task: TeamTaskState | undefine
 
 function readAgentPreview(run: TeamRunManifest, maxLines = 5, options: RunDashboardOptions = {}): string[] {
 	try {
-		const agents = readCrewAgents(run);
-		const tasks = readRunTasks(run);
+		const snapshot = snapshotFor(run, options.snapshotCache);
+		const agents = snapshot?.agents ?? readCrewAgents(run);
+		const tasks = snapshot?.tasks ?? readRunTasks(run, options.snapshotCache);
 		if (!agents.length) return ["Agents: (none)"];
 		const totals = tasks.reduce((acc, task) => {
 			acc.input += task.usage?.input ?? 0;
@@ -151,7 +171,9 @@ function readAgentPreview(run: TeamRunManifest, maxLines = 5, options: RunDashbo
 	}
 }
 
-function agentsFor(run: TeamRunManifest): CrewAgentRecord[] {
+function agentsFor(run: TeamRunManifest, snapshotCache?: RunSnapshotCache): CrewAgentRecord[] {
+	const snapshot = snapshotFor(run, snapshotCache);
+	if (snapshot) return snapshot.agents;
 	try {
 		return readCrewAgents(run);
 	} catch {
@@ -159,8 +181,8 @@ function agentsFor(run: TeamRunManifest): CrewAgentRecord[] {
 	}
 }
 
-function runLabel(run: TeamRunManifest, selected: boolean): string {
-	const agents = agentsFor(run);
+function runLabel(run: TeamRunManifest, selected: boolean, snapshotCache?: RunSnapshotCache): string {
+	const agents = agentsFor(run, snapshotCache);
 	const stale = isLikelyOrphanedActiveRun(run, agents);
 	const running = agents.find((agent) => agent.status === "running");
 	const queued = agents.find((agent) => agent.status === "queued");
@@ -170,23 +192,25 @@ function runLabel(run: TeamRunManifest, selected: boolean): string {
 	return `${marker} ${iconForStatus(status)} ${run.runId.slice(-8)} ${status} | ${run.team}/${run.workflow ?? "none"} | ${step} | ${run.goal}`;
 }
 
-function groupedRuns(runs: TeamRunManifest[]): Array<{ label: string; run?: TeamRunManifest }> {
-	const active = runs.filter((run) => isDisplayActiveRun(run, agentsFor(run)));
-	const recent = runs.filter((run) => !isDisplayActiveRun(run, agentsFor(run)));
+function groupedRuns(runs: TeamRunManifest[], snapshotCache?: RunSnapshotCache): Array<{ label: string; run?: TeamRunManifest }> {
+	const active = runs.filter((run) => isDisplayActiveRun(snapshotFor(run, snapshotCache)?.manifest ?? run, agentsFor(run, snapshotCache)));
+	const recent = runs.filter((run) => !isDisplayActiveRun(snapshotFor(run, snapshotCache)?.manifest ?? run, agentsFor(run, snapshotCache)));
 	const rows: Array<{ label: string; run?: TeamRunManifest }> = [];
 	if (active.length) rows.push({ label: "Active" }, ...active.map((run) => ({ label: run.runId, run })));
 	if (recent.length) rows.push({ label: "Recent" }, ...recent.map((run) => ({ label: run.runId, run })));
 	return rows;
 }
 
-function selectedRunFromGrouped(runs: TeamRunManifest[], selected: number): TeamRunManifest | undefined {
-	return groupedRuns(runs).filter((row) => row.run)[selected]?.run;
+function selectedRunFromGrouped(runs: TeamRunManifest[], selected: number, snapshotCache?: RunSnapshotCache): TeamRunManifest | undefined {
+	return groupedRuns(runs, snapshotCache).filter((row) => row.run)[selected]?.run;
 }
 
-function countByStatus(runs: TeamRunManifest[]): string {
+function countByStatus(runs: TeamRunManifest[], snapshotCache?: RunSnapshotCache): string {
 	const counts = new Map<RunStatus, number>();
 	for (const run of runs) {
-		const status: RunStatus = isLikelyOrphanedActiveRun(run, agentsFor(run)) ? "stale" : (run.status as RunStatus);
+		const snapshot = snapshotFor(run, snapshotCache);
+		const displayRun = snapshot?.manifest ?? run;
+		const status: RunStatus = isLikelyOrphanedActiveRun(displayRun, snapshot?.agents ?? agentsFor(run, snapshotCache)) ? "stale" : (displayRun.status as RunStatus);
 		counts.set(status, (counts.get(status) ?? 0) + 1);
 	}
 	return [...counts.entries()].map(([status, count]) => `${status}=${count}`).join(", ") || "none";
@@ -195,7 +219,8 @@ function countByStatus(runs: TeamRunManifest[]): string {
 export class RunDashboard implements DashboardComponent {
 	private selected = 0;
 	private showFullProgress = false;
-	private readonly runs: TeamRunManifest[];
+	private activePane: "agents" | "progress" | "mailbox" | "output" | "health" = "agents";
+	private runs: TeamRunManifest[];
 	private readonly done: (selection: RunDashboardSelection | undefined) => void;
 	private readonly theme: CrewTheme;
 	private readonly options: RunDashboardOptions;
@@ -217,13 +242,26 @@ export class RunDashboard implements DashboardComponent {
 		this.unsubscribeTheme = subscribeThemeChange(theme, () => this.invalidate());
 	}
 
+	private refreshRuns(): void {
+		if (!this.options.runProvider) return;
+		const selectedRunId = this.selectedRunId();
+		this.runs = this.options.runProvider();
+		if (selectedRunId) {
+			const nextIndex = groupedRuns(this.runs, this.options.snapshotCache).filter((row) => row.run).findIndex((row) => row.run?.runId === selectedRunId);
+			if (nextIndex >= 0) this.selected = nextIndex;
+		}
+	}
+
 	private buildSignature(): string {
 		const statuses = this.runs.map((run) => {
-			const stale = isLikelyOrphanedActiveRun(run, agentsFor(run));
-			const status: RunStatus = stale ? "stale" : (run.status as RunStatus);
-			return `${run.runId}:${run.status}:${run.updatedAt}:${status}`;
+			const snapshot = snapshotFor(run, this.options.snapshotCache);
+			const displayRun = snapshot?.manifest ?? run;
+			const agents = snapshot?.agents ?? agentsFor(run, this.options.snapshotCache);
+			const stale = isLikelyOrphanedActiveRun(displayRun, agents);
+			const status: RunStatus = stale ? "stale" : (displayRun.status as RunStatus);
+			return snapshot?.signature ?? `${displayRun.runId}:${displayRun.status}:${displayRun.updatedAt}:${status}`;
 		}).join("|");
-		return `${this.selected}:${this.showFullProgress ? 1 : 0}:${statuses}`;
+		return `${this.selected}:${this.showFullProgress ? 1 : 0}:${this.activePane}:${statuses}`;
 	}
 
 	invalidate(): void {
@@ -235,7 +273,12 @@ export class RunDashboard implements DashboardComponent {
 		this.unsubscribeTheme();
 	}
 
+	private selectedRunId(): string | undefined {
+		return selectedRunFromGrouped(this.runs, this.selected, this.options.snapshotCache)?.runId;
+	}
+
 	render(width: number): string[] {
+		this.refreshRuns();
 		const signature = this.buildSignature();
 		if (signature !== this.cachedVersion || this.cachedWidth !== width) {
 			const innerWidth = Math.max(20, width - 4);
@@ -247,14 +290,14 @@ export class RunDashboard implements DashboardComponent {
 			const lines = [
 				border("╭", "╮"),
 				`│ ${pad(truncate(`${fg("accent", "▐")} ${this.theme.bold(this.options.placement === "right" ? "pi-crew right sidebar (anchored top-right)" : "pi-crew dashboard")}`, innerWidth - 1), innerWidth - 1)}│`,
-				`│ ${pad(truncate(`Runs: ${this.runs.length} • ${countByStatus(this.runs)}`, innerWidth - 1), innerWidth - 1)}│`,
-				`│ ${pad(truncate(`↑/↓/j/k select • r reload • p progress • s/u/a/i actions • d agents • e/v/o viewers • q close`, innerWidth - 1), innerWidth - 1)}│`,
+				`│ ${pad(truncate(`Runs: ${this.runs.length} • ${countByStatus(this.runs, this.options.snapshotCache)}`, innerWidth - 1), innerWidth - 1)}│`,
+				`│ ${pad(truncate(`↑/↓ select • 1 agents 2 progress 3 mailbox 4 output 5 health • s/u/a/i actions • R/K/D health • H hush`, innerWidth - 1), innerWidth - 1)}│`,
 				border("├", "┤"),
 			];
 			if (this.runs.length === 0) {
 				lines.push(`│ ${pad(truncate("No runs found.", innerWidth - 1), innerWidth - 1)}│`);
 			} else {
-				const rows = groupedRuns(this.runs).slice(0, 16);
+				const rows = groupedRuns(this.runs, this.options.snapshotCache).slice(0, 16);
 				const selectableRuns = rows.filter((row) => row.run);
 				for (const row of rows) {
 					if (!row.run) {
@@ -262,36 +305,57 @@ export class RunDashboard implements DashboardComponent {
 						continue;
 					}
 					const index = selectableRuns.findIndex((candidate) => candidate.run?.runId === row.run?.runId);
-					const rowStatus = isLikelyOrphanedActiveRun(row.run, agentsFor(row.run)) ? "stale" : (row.run.status as RunStatus);
-					const label = runLabel(row.run, index === this.selected);
+					const rowSnapshot = snapshotFor(row.run, this.options.snapshotCache);
+					const rowRun = rowSnapshot?.manifest ?? row.run;
+					const rowAgents = rowSnapshot?.agents ?? agentsFor(row.run, this.options.snapshotCache);
+					const rowStatus = isLikelyOrphanedActiveRun(rowRun, rowAgents) ? "stale" : (rowRun.status as RunStatus);
+					const label = runLabel(rowRun, index === this.selected, this.options.snapshotCache);
 					lines.push(`│ ${pad(applyStatusColor(this.theme, rowStatus, label), innerWidth - 1)}│`);
 				}
-				const selectedRun = selectedRunFromGrouped(this.runs, this.selected);
+				const selectedRun = selectedRunFromGrouped(this.runs, this.selected, this.options.snapshotCache);
 				if (selectedRun) {
+					const selectedSnapshot = snapshotFor(selectedRun, this.options.snapshotCache);
+					const selectedDisplayRun = selectedSnapshot?.manifest ?? selectedRun;
+					const selectedAgents = selectedSnapshot?.agents ?? agentsFor(selectedRun, this.options.snapshotCache);
 					lines.push(border("├", "┤"));
 					const details = [
-						`Selected: ${selectedRun.runId}`,
-						`Status: ${isLikelyOrphanedActiveRun(selectedRun, agentsFor(selectedRun)) ? "stale" : selectedRun.status} | Team: ${selectedRun.team} | Workflow: ${selectedRun.workflow ?? "none"}`,
-						`Created: ${selectedRun.createdAt}`,
-						`Updated: ${selectedRun.updatedAt}`,
-						`Artifacts: ${selectedRun.artifacts.length} | Workspace: ${selectedRun.workspaceMode}`,
-						selectedRun.async ? `Async: pid=${selectedRun.async.pid ?? "unknown"} log=${selectedRun.async.logPath}` : "Async: no",
-						`Goal: ${selectedRun.goal}`,
+						`Selected: ${selectedDisplayRun.runId}`,
+						`Status: ${isLikelyOrphanedActiveRun(selectedDisplayRun, selectedAgents) ? "stale" : selectedDisplayRun.status} | Team: ${selectedDisplayRun.team} | Workflow: ${selectedDisplayRun.workflow ?? "none"}`,
+						`Created: ${selectedDisplayRun.createdAt}`,
+						`Updated: ${selectedDisplayRun.updatedAt}`,
+						`Artifacts: ${selectedDisplayRun.artifacts.length} | Workspace: ${selectedDisplayRun.workspaceMode}`,
+						selectedDisplayRun.async ? `Async: pid=${selectedDisplayRun.async.pid ?? "unknown"} log=${selectedDisplayRun.async.logPath}` : "Async: no",
+						`Goal: ${selectedDisplayRun.goal}`,
 					];
+					const paneLines = selectedSnapshot
+						? this.activePane === "agents"
+							? renderAgentsPane(selectedSnapshot, this.options)
+							: this.activePane === "progress"
+								? renderProgressPane(selectedSnapshot)
+								: this.activePane === "mailbox"
+									? renderMailboxPane(selectedSnapshot)
+									: this.activePane === "health"
+										? renderHealthPane(selectedSnapshot, { isForeground: selectedDisplayRun.async ? false : true })
+										: renderTranscriptPane(selectedSnapshot)
+						: [
+							...readAgentPreview(selectedDisplayRun, this.showFullProgress ? 20 : 8, this.options),
+							...readProgressPreview(selectedDisplayRun, this.showFullProgress ? 20 : 5),
+						];
 					for (const detail of [
 						...details,
-						...readAgentPreview(selectedRun, this.showFullProgress ? 20 : 8, this.options),
-						...readProgressPreview(selectedRun, this.showFullProgress ? 20 : 5),
+						`Pane: ${this.activePane}`,
+						...paneLines,
+						...(this.showFullProgress ? readProgressPreview(selectedDisplayRun, 20) : []),
 					]) {
 						lines.push(`│ ${pad(truncate(detail, innerWidth - 1), innerWidth - 1)}│`);
 					}
-					const selectedTasks = readRunTasks(selectedRun);
+					const selectedTasks = selectedSnapshot?.tasks ?? readRunTasks(selectedDisplayRun, this.options.snapshotCache);
 					const footer = new CrewFooter({
-						pwd: selectedRun.cwd,
-						runId: selectedRun.runId,
-						status: isLikelyOrphanedActiveRun(selectedRun, agentsFor(selectedRun)) ? "stale" : selectedRun.status,
+						pwd: selectedDisplayRun.cwd,
+						runId: selectedDisplayRun.runId,
+						status: isLikelyOrphanedActiveRun(selectedDisplayRun, selectedAgents) ? "stale" : selectedDisplayRun.status,
 						usage: aggregateUsage(selectedTasks),
-						badges: [`team ${selectedRun.team}`, `workflow ${selectedRun.workflow ?? "none"}`, `${selectedRun.artifacts.length} artifacts`, selectedRun.workspaceMode],
+						badges: [`team ${selectedDisplayRun.team}`, `workflow ${selectedDisplayRun.workflow ?? "none"}`, `${selectedDisplayRun.artifacts.length} artifacts`, selectedDisplayRun.workspaceMode],
 					}, this.theme);
 					lines.push(border("├", "┤"));
 					for (const footerLine of footer.render(innerWidth - 1)) {
@@ -308,65 +372,47 @@ export class RunDashboard implements DashboardComponent {
 	}
 
 	handleInput(data: string): void {
-		if (data === "q" || data === "\u001b") {
+		const action = dashboardActionForKey(data, this.activePane);
+		const selectedRunId = this.selectedRunId();
+		if (action === "close") {
 			this.done(undefined);
 			return;
 		}
-		if (data === "\r" || data === "\n" || data === "s") {
-			const runId = selectedRunFromGrouped(this.runs, this.selected)?.runId;
-			this.done(runId ? { runId, action: "status" } : undefined);
+		if (action === "select") {
+			this.done(selectedRunId ? { runId: selectedRunId, action: "status" } : undefined);
 			return;
 		}
-		if (data === "u") {
-			const runId = selectedRunFromGrouped(this.runs, this.selected)?.runId;
-			this.done(runId ? { runId, action: "summary" } : undefined);
+		if (action === "summary" || action === "artifacts" || action === "api" || action === "agents" || action === "mailbox" || action === "reload" || action === "mailbox-detail" || action === "health-recovery" || action === "health-kill-stale" || action === "health-diagnostic-export" || action === "notifications-dismiss") {
+			this.done(selectedRunId ? { runId: selectedRunId, action } : action === "reload" ? { runId: "", action } : undefined);
 			return;
 		}
-		if (data === "a") {
-			const runId = selectedRunFromGrouped(this.runs, this.selected)?.runId;
-			this.done(runId ? { runId, action: "artifacts" } : undefined);
+		if (action === "events") {
+			this.done(selectedRunId ? { runId: selectedRunId, action: "agent-events" } : undefined);
 			return;
 		}
-		if (data === "i") {
-			const runId = selectedRunFromGrouped(this.runs, this.selected)?.runId;
-			this.done(runId ? { runId, action: "api" } : undefined);
+		if (action === "output") {
+			this.done(selectedRunId ? { runId: selectedRunId, action: "agent-output" } : undefined);
 			return;
 		}
-		if (data === "d") {
-			const runId = selectedRunFromGrouped(this.runs, this.selected)?.runId;
-			this.done(runId ? { runId, action: "agents" } : undefined);
+		if (action === "transcript") {
+			this.done(selectedRunId ? { runId: selectedRunId, action: "agent-transcript" } : undefined);
 			return;
 		}
-		if (data === "e") {
-			const runId = selectedRunFromGrouped(this.runs, this.selected)?.runId;
-			this.done(runId ? { runId, action: "agent-events" } : undefined);
-			return;
-		}
-		if (data === "o") {
-			const runId = selectedRunFromGrouped(this.runs, this.selected)?.runId;
-			this.done(runId ? { runId, action: "agent-output" } : undefined);
-			return;
-		}
-		if (data === "v") {
-			const runId = selectedRunFromGrouped(this.runs, this.selected)?.runId;
-			this.done(runId ? { runId, action: "agent-transcript" } : undefined);
-			return;
-		}
-		if (data === "r") {
-			this.done({ runId: selectedRunFromGrouped(this.runs, this.selected)?.runId ?? "", action: "reload" });
-			return;
-		}
-		if (data === "p") {
+		if (action === "progressToggle") {
 			this.showFullProgress = !this.showFullProgress;
+			this.invalidate();
 			return;
 		}
-		if (data === "k" || data === "\u001b[A") {
-			this.selected = Math.max(0, this.selected - 1);
-			return;
-		}
-		if (data === "j" || data === "\u001b[B") {
-			const selectableCount = groupedRuns(this.runs).filter((row) => row.run).length;
+		if (action === "pane-agents") this.activePane = "agents";
+		else if (action === "pane-progress") this.activePane = "progress";
+		else if (action === "pane-mailbox") this.activePane = "mailbox";
+		else if (action === "pane-output") this.activePane = "output";
+		else if (action === "pane-health") this.activePane = "health";
+		else if (action === "up") this.selected = Math.max(0, this.selected - 1);
+		else if (action === "down") {
+			const selectableCount = groupedRuns(this.runs, this.options.snapshotCache).filter((row) => row.run).length;
 			this.selected = Math.min(Math.max(0, selectableCount - 1), this.selected + 1);
 		}
+		if (action) this.invalidate();
 	}
 }

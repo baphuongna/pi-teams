@@ -58,6 +58,41 @@ test("crew widget hides when only orphaned or fixture-only active runs exist", (
 	}
 });
 
+test("crew widget keeps persistent component until placement changes and refreshes progress", () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-widget-persist-"));
+	try {
+		fs.mkdirSync(path.join(cwd, ".crew"), { recursive: true });
+		const team = { name: "fast-fix", description: "", roles: [{ name: "explorer", agent: "explorer" }], source: "test", filePath: "builtin" } as never;
+		const workflow = { name: "fast-fix", description: "", steps: [{ id: "explore", role: "explorer" }], source: "test", filePath: "builtin" } as never;
+		const created = createRunManifest({ cwd, team, workflow, goal: "persistent widget" });
+		saveRunManifest({ ...created.manifest, status: "running" });
+		saveCrewAgents(created.manifest, [{ id: `${created.manifest.runId}:01`, runId: created.manifest.runId, taskId: "01", agent: "explorer", role: "explorer", runtime: "child-process", status: "running", startedAt: created.manifest.createdAt, progress: { recentTools: [], recentOutput: ["first output"], toolCount: 1, currentTool: "read", tokens: 10 } }]);
+		const setWidgetCalls: Array<{ key: string; content: unknown; placement?: string }> = [];
+		const ctx = {
+			cwd,
+			hasUI: true,
+			ui: {
+				setStatus: () => {},
+				setWidget: (key: string, content: unknown, options?: { placement?: string }) => setWidgetCalls.push({ key, content, placement: options?.placement }),
+				requestRender: () => {},
+			},
+		} as never;
+		const state: CrewWidgetState = { frame: 0 };
+		updateCrewWidget(ctx, state, { widgetPlacement: "aboveEditor" });
+		updateCrewWidget(ctx, state, { widgetPlacement: "aboveEditor" });
+		assert.equal(setWidgetCalls.filter((call) => call.key === "pi-crew-active" && call.content).length, 1);
+		const factory = setWidgetCalls.find((call) => call.key === "pi-crew-active" && call.content)?.content as ((tui: unknown, theme: unknown) => { render(width: number): string[] });
+		const component = factory(undefined, { fg: (_color: string, value: string) => value, bold: (value: string) => value });
+		assert.match(component.render(100).join("\n"), /reading/);
+		saveCrewAgents(created.manifest, [{ id: `${created.manifest.runId}:01`, runId: created.manifest.runId, taskId: "01", agent: "explorer", role: "explorer", runtime: "child-process", status: "running", startedAt: created.manifest.createdAt, progress: { recentTools: [], recentOutput: ["second output"], toolCount: 2, currentTool: "bash", tokens: 20 } }]);
+		assert.match(component.render(100).join("\n"), /running command/);
+		updateCrewWidget(ctx, state, { widgetPlacement: "belowEditor" });
+		assert.equal(setWidgetCalls.filter((call) => call.key === "pi-crew-active" && call.content).length, 2);
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
 test("crew widget hides active async runs whose background process is stale", () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-widget-stale-async-"));
 	try {

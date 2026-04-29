@@ -7,6 +7,7 @@ import { renderDiff } from "./render-diff.ts";
 import { highlightCode, highlightJson } from "./syntax-highlight.ts";
 import { pad, truncate, truncateToVisualLines } from "../utils/visual.ts";
 import { colorForStatus, iconForStatus, type RunStatus } from "./status-colors.ts";
+import { DEFAULT_TRANSCRIPT_TAIL_BYTES, getTranscriptCacheEntry, readTranscriptLinesCached } from "./transcript-cache.ts";
 
 type Component = { invalidate(): void; render(width: number): string[]; handleInput(data: string): void };
 
@@ -123,13 +124,15 @@ export function formatTranscriptText(text: string, themeLike: unknown = undefine
 	return lines.length ? lines : ["(no transcript content)"];
 }
 
-export function readRunTranscript(manifest: TeamRunManifest, taskId?: string): { title: string; path: string; lines: string[] } {
+export function readRunTranscript(manifest: TeamRunManifest, taskId?: string, options: { full?: boolean; maxTailBytes?: number } = {}): { title: string; path: string; lines: string[]; bytesRead: number; size: number; truncated: boolean } {
 	const agents = readCrewAgents(manifest);
 	const agent = taskId ? agents.find((item) => item.taskId === taskId || item.id === taskId) : agents.find((item) => item.transcriptPath) ?? agents[0];
 	const selectedTaskId = agent?.taskId ?? taskId ?? "unknown";
 	const transcriptPath = agent?.transcriptPath && fs.existsSync(agent.transcriptPath) ? agent.transcriptPath : agentOutputPath(manifest, selectedTaskId);
-	const text = fs.existsSync(transcriptPath) ? fs.readFileSync(transcriptPath, "utf-8") : "";
-	return { title: `${manifest.runId}:${selectedTaskId}`, path: transcriptPath, lines: formatTranscriptText(text) };
+	const readOptions = { full: options.full === true, maxTailBytes: options.maxTailBytes ?? DEFAULT_TRANSCRIPT_TAIL_BYTES };
+	const lines = readTranscriptLinesCached(transcriptPath, (text) => formatTranscriptText(text), Date.now(), readOptions);
+	const entry = getTranscriptCacheEntry(transcriptPath, readOptions);
+	return { title: `${manifest.runId}:${selectedTaskId}`, path: transcriptPath, lines: lines.length ? lines : ["(no transcript content)"], bytesRead: entry?.bytesRead ?? 0, size: entry?.size ?? 0, truncated: entry?.truncated ?? false };
 }
 
 interface ViewerState {
@@ -159,7 +162,7 @@ function renderViewerBase(
 	const linesOut: string[] = [
 		fg("border", `╭${"─".repeat(inner + 2)}╮`),
 		row(`${fg("accent", title)} ${fg("dim", subtitle)}`),
-		row(fg("dim", "j/k scroll · PgUp/PgDn · g/G top/bottom · q close")),
+		row(fg("dim", "j/k scroll · PgUp/PgDn · g/G top/bottom · a auto · f full/tail · q close")),
 		fg("border", `├${"─".repeat(inner + 2)}┤`),
 		...visible.map(row),
 		fg("border", `├${"─".repeat(inner + 2)}┤`),
@@ -223,6 +226,8 @@ export class DurableTextViewer implements Component {
 		} else if (data === "G" || data === "\u001b[F") {
 			this.scroll = maxScroll;
 			this.autoScroll = true;
+		} else if (data === "a") {
+			this.autoScroll = !this.autoScroll;
 		}
 	}
 
@@ -245,13 +250,16 @@ export class DurableTranscriptViewer implements Component {
 	private theme: TranscriptTheme;
 	private done: (result: undefined) => void;
 	private taskId?: string;
+	private fullTranscript = false;
+	private maxTailBytes: number;
 	private readonly unsubscribeTheme: () => void;
 
-	constructor(manifest: TeamRunManifest, theme: unknown, done: (result: undefined) => void, taskId?: string) {
+	constructor(manifest: TeamRunManifest, theme: unknown, done: (result: undefined) => void, taskId?: string, options: { maxTailBytes?: number } = {}) {
 		this.manifest = manifest;
 		this.theme = asCrewTheme(theme);
 		this.done = done;
 		this.taskId = taskId;
+		this.maxTailBytes = options.maxTailBytes ?? DEFAULT_TRANSCRIPT_TAIL_BYTES;
 		this.unsubscribeTheme = subscribeThemeChange(theme, () => this.invalidate());
 	}
 
@@ -266,7 +274,7 @@ export class DurableTranscriptViewer implements Component {
 			this.done(undefined);
 			return;
 		}
-		const content = readRunTranscript(this.manifest, this.taskId).lines;
+		const content = readRunTranscript(this.manifest, this.taskId, { full: this.fullTranscript, maxTailBytes: this.maxTailBytes }).lines;
 		const maxScroll = Math.max(0, content.length - this.lastHeight);
 		if (data === "k" || data === "\u001b[A") {
 			this.scroll = Math.max(0, this.scroll - 1);
@@ -286,17 +294,23 @@ export class DurableTranscriptViewer implements Component {
 		} else if (data === "G" || data === "\u001b[F") {
 			this.scroll = maxScroll;
 			this.autoScroll = true;
+		} else if (data === "a") {
+			this.autoScroll = !this.autoScroll;
+		} else if (data === "f") {
+			this.fullTranscript = !this.fullTranscript;
+			this.scroll = 0;
+			this.autoScroll = !this.fullTranscript;
 		}
 	}
 
 	render(width: number): string[] {
-		const data = readRunTranscript(this.manifest, this.taskId);
+		const data = readRunTranscript(this.manifest, this.taskId, { full: this.fullTranscript, maxTailBytes: this.maxTailBytes });
 		return renderViewerBase(
 			{ theme: this.theme, autoScroll: this.autoScroll, lastHeight: this.lastHeight, scroll: this.scroll },
 			width,
 			data.lines,
 			"pi-crew transcript",
-			data.title,
+			`${data.title} · ${data.truncated ? `tail ${Math.round(data.bytesRead / 1024)}KB/${Math.round(data.size / 1024)}KB` : `full ${Math.round(data.size / 1024)}KB`} · f ${this.fullTranscript ? "tail" : "full"}`,
 		);
 	}
 }

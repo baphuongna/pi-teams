@@ -5,6 +5,7 @@ import type { CrewWidgetState } from "../../ui/crew-widget.ts";
 import { updateCrewWidget } from "../../ui/crew-widget.ts";
 import { updatePiCrewPowerbar } from "../../ui/powerbar-publisher.ts";
 import type { createManifestCache } from "../../runtime/manifest-cache.ts";
+import type { createRunSnapshotCache } from "../../ui/run-snapshot-cache.ts";
 import { handleTeamTool } from "../team-tool.ts";
 
 export interface RegisterTeamToolDeps {
@@ -12,6 +13,7 @@ export interface RegisterTeamToolDeps {
 	startForegroundRun: (ctx: ExtensionContext, runner: (signal?: AbortSignal) => Promise<void>, runId?: string) => void;
 	openLiveSidebar: (ctx: ExtensionContext, runId: string) => void;
 	getManifestCache: (cwd: string) => ReturnType<typeof createManifestCache>;
+	getRunSnapshotCache?: (cwd: string) => ReturnType<typeof createRunSnapshotCache>;
 	widgetState: CrewWidgetState;
 }
 
@@ -48,8 +50,9 @@ export function registerTeamTool(pi: ExtensionAPI, deps: RegisterTeamToolDeps): 
 				}
 				const config = loadConfig(ctx.cwd).config.ui;
 				const cache = deps.getManifestCache(ctx.cwd);
-				updateCrewWidget(ctx, deps.widgetState, config, cache);
-				updatePiCrewPowerbar(pi.events, ctx.cwd, config, cache);
+				const snapshotCache = deps.getRunSnapshotCache?.(ctx.cwd);
+				updateCrewWidget(ctx, deps.widgetState, config, cache, snapshotCache);
+				updatePiCrewPowerbar(pi.events, ctx.cwd, config, cache, snapshotCache, ctx);
 				return output;
 			} finally {
 				signal?.removeEventListener("abort", abort);

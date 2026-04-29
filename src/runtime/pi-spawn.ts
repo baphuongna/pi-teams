@@ -87,7 +87,10 @@ function resolvePiCliScript(): string | undefined {
 
 export function getPiSpawnCommand(args: string[]): PiSpawnCommand {
 	const explicit = process.env.PI_TEAMS_PI_BIN?.trim();
-	if (explicit && fs.existsSync(explicit) && !isRunnableNodeScript(explicit)) return { command: explicit, args };
+	if (explicit && fs.existsSync(explicit)) {
+		if (isRunnableNodeScript(explicit)) return { command: process.execPath, args: [explicit, ...args] };
+		return { command: explicit, args };
+	}
 	if (process.platform === "win32") {
 		const script = resolvePiCliScript();
 		if (script) return { command: process.execPath, args: [script, ...args] };

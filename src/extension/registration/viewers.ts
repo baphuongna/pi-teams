@@ -1,6 +1,7 @@
 import type { ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import { loadRunManifestById } from "../../state/state-store.ts";
 import { readCrewAgents } from "../../runtime/crew-agent-records.ts";
+import { loadConfig } from "../../config/config.ts";
 import { DurableTranscriptViewer } from "../../ui/transcript-viewer.ts";
 
 export async function selectAgentTask(ctx: ExtensionCommandContext, runId: string | undefined, taskId?: string): Promise<{ runId: string; taskId?: string } | undefined> {
@@ -24,7 +25,8 @@ export async function openTranscriptViewer(ctx: ExtensionCommandContext, initial
 	if (!runId || !ctx.hasUI) return false;
 	const loaded = loadRunManifestById(ctx.cwd, runId);
 	if (!loaded) return false;
-	await ctx.ui.custom<undefined>((_tui, theme, _keybindings, done) => new DurableTranscriptViewer(loaded.manifest, theme, done, taskId), {
+	const uiConfig = loadConfig(ctx.cwd).config.ui;
+	await ctx.ui.custom<undefined>((_tui, theme, _keybindings, done) => new DurableTranscriptViewer(loaded.manifest, theme, done, taskId, { maxTailBytes: uiConfig?.transcriptTailBytes }), {
 		overlay: true,
 		overlayOptions: { width: "90%", maxHeight: "85%", anchor: "center" },
 	});

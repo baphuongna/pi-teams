@@ -399,6 +399,7 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 
 			input.signal?.addEventListener("abort", abort, { once: true });
 			child.stdout?.on("data", (chunk: Buffer) => {
+				restartNoResponseTimer();
 				lineObserver.observe(chunk.toString("utf-8"));
 			});
 			child.stderr?.on("data", (chunk: Buffer) => {

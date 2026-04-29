@@ -128,6 +128,7 @@
         "showModel": { "type": "boolean", "default": true, "description": "Show worker model attempts in dashboard agent rows." },
         "showTokens": { "type": "boolean", "description": "Show token usage in dashboard agent rows." },
         "showTools": { "type": "boolean", "description": "Show tool activity in dashboard agent rows." },
+        "transcriptTailBytes": { "type": "integer", "minimum": 1024, "default": 262144, "description": "Maximum transcript bytes to parse by default; use viewer hotkey f to load full content." },
         "mascotStyle": { "type": "string", "enum": ["cat", "armin"] },
         "mascotEffect": { "type": "string", "enum": ["random", "none", "typewriter", "scanline", "rain", "fade", "crt", "glitch", "dissolve"] }
       }
@@ -148,6 +149,19 @@
       "description": "Pi-crew telemetry event controls.",
       "properties": {
         "enabled": { "type": "boolean", "default": true }
+      }
+    },
+    "notifications": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Operator notification routing, quiet-hours, batching, and JSONL sink settings.",
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "severityFilter": { "type": "array", "items": { "type": "string", "enum": ["info", "warning", "error", "critical"] }, "default": ["warning", "error", "critical"] },
+        "dedupWindowMs": { "type": "integer", "minimum": 1000, "default": 30000 },
+        "batchWindowMs": { "type": "integer", "minimum": 0, "default": 0 },
+        "quietHours": { "type": "string", "pattern": "^\\d{2}:\\d{2}-\\d{2}:\\d{2}$", "description": "Local HH:MM-HH:MM quiet-hours range; supports cross-day ranges such as 22:00-07:00." },
+        "sinkRetentionDays": { "type": "integer", "minimum": 1, "maximum": 90, "default": 7 }
       }
     }
   }

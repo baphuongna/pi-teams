@@ -64,6 +64,7 @@ export interface CrewUiConfig {
 	showModel?: boolean;
 	showTokens?: boolean;
 	showTools?: boolean;
+	transcriptTailBytes?: number;
 	mascotStyle?: "cat" | "armin";
 	mascotEffect?: "random" | "none" | "typewriter" | "scanline" | "rain" | "fade" | "crt" | "glitch" | "dissolve";
 }
@@ -91,6 +92,17 @@ export interface CrewTelemetryConfig {
 	enabled?: boolean;
 }
 
+export type CrewNotificationSeverity = "info" | "warning" | "error" | "critical";
+
+export interface CrewNotificationsConfig {
+	enabled?: boolean;
+	severityFilter?: CrewNotificationSeverity[];
+	dedupWindowMs?: number;
+	batchWindowMs?: number;
+	quietHours?: string;
+	sinkRetentionDays?: number;
+}
+
 export interface PiTeamsConfig {
 	asyncByDefault?: boolean;
 	executeWorkers?: boolean;
@@ -104,6 +116,7 @@ export interface PiTeamsConfig {
 	agents?: CrewAgentsConfig;
 	tools?: CrewToolsConfig;
 	telemetry?: CrewTelemetryConfig;
+	notifications?: CrewNotificationsConfig;
 	ui?: CrewUiConfig;
 }
 
@@ -220,6 +233,12 @@ function mergeConfig(base: PiTeamsConfig, override: PiTeamsConfig): PiTeamsConfi
 		merged.telemetry = {
 			...(base.telemetry ?? {}),
 			...withoutUndefined((override.telemetry ?? {}) as Record<string, unknown>),
+		};
+	}
+	if (base.notifications || override.notifications) {
+		merged.notifications = {
+			...(base.notifications ?? {}),
+			...withoutUndefined((override.notifications ?? {}) as Record<string, unknown>),
 		};
 	}
 	if (merged.agents?.overrides && Object.keys(merged.agents.overrides).length === 0) delete merged.agents.overrides;
@@ -398,6 +417,7 @@ function parseUiConfig(value: unknown): CrewUiConfig | undefined {
 		showModel: parseWithSchema(Type.Boolean(), obj.showModel),
 		showTokens: parseWithSchema(Type.Boolean(), obj.showTokens),
 		showTools: parseWithSchema(Type.Boolean(), obj.showTools),
+		transcriptTailBytes: parsePositiveInteger(obj.transcriptTailBytes, 50 * 1024 * 1024),
 		mascotStyle: parseWithSchema(Type.Union([Type.Literal("cat"), Type.Literal("armin")]), obj.mascotStyle),
 		mascotEffect: parseWithSchema(Type.Union([Type.Literal("random"), Type.Literal("none"), Type.Literal("typewriter"), Type.Literal("scanline"), Type.Literal("rain"), Type.Literal("fade"), Type.Literal("crt"), Type.Literal("glitch"), Type.Literal("dissolve")]), obj.mascotEffect),
 	};
@@ -441,6 +461,20 @@ function parseTelemetryConfig(value: unknown): CrewTelemetryConfig | undefined {
 	return Object.values(telemetry).some((entry) => entry !== undefined) ? telemetry : undefined;
 }
 
+function parseNotificationsConfig(value: unknown): CrewNotificationsConfig | undefined {
+	const obj = asRecord(value);
+	if (!obj) return undefined;
+	const notifications: CrewNotificationsConfig = {
+		enabled: parseWithSchema(Type.Boolean(), obj.enabled),
+		severityFilter: parseWithSchema(Type.Array(Type.Union([Type.Literal("info"), Type.Literal("warning"), Type.Literal("error"), Type.Literal("critical")])), obj.severityFilter),
+		dedupWindowMs: parsePositiveInteger(obj.dedupWindowMs, 24 * 60 * 60 * 1000),
+		batchWindowMs: parseWithSchema(Type.Integer({ minimum: 0, maximum: 60_000 }), obj.batchWindowMs),
+		quietHours: parseWithSchema(Type.String({ pattern: "^\\d{2}:\\d{2}-\\d{2}:\\d{2}$" }), obj.quietHours),
+		sinkRetentionDays: parsePositiveInteger(obj.sinkRetentionDays, 90),
+	};
+	return Object.values(notifications).some((entry) => entry !== undefined) ? notifications : undefined;
+}
+
 export function parseConfig(raw: unknown): PiTeamsConfig {
 	const obj = asRecord(raw);
 	if (!obj) return {};
@@ -457,6 +491,7 @@ export function parseConfig(raw: unknown): PiTeamsConfig {
 		agents: parseAgentsConfig(obj.agents),
 		tools: parseToolsConfig(obj.tools),
 		telemetry: parseTelemetryConfig(obj.telemetry),
+		notifications: parseNotificationsConfig(obj.notifications),
 		ui: parseUiConfig(obj.ui),
 	};
 }

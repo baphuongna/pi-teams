@@ -152,9 +152,9 @@ Atomic writes use temp-file replace with retry for transient Windows `EPERM`/`EB
 - The persistent widget shows active runs only.
 - Stale async runs with dead background pids are hidden from the active widget.
 - `/team-status` is the canonical detailed state view and can mark stale active async runs failed.
-- `/team-dashboard` provides history and details.
-- Powerbar publishing is optional and event-compatible.
-- Transcript viewer is file-backed so it works for foreground and async runs.
+- `/team-dashboard` provides live history/details from `RunSnapshotCache`, with panes for agents, progress/events, mailbox attention, and recent output.
+- Powerbar publishing is optional and event-compatible: pi-crew emits `powerbar:register-segment` for `pi-crew-active` / `pi-crew-progress`, emits `powerbar:update` payloads (`id`, `text`, optional `suffix`, `bar`, `color`), and mirrors status through `ctx.ui.setStatus("pi-crew", ...)` when no powerbar listener is detected.
+- Transcript viewer is file-backed so it works for foreground and async runs; it defaults to bounded tail reads and can load full content on demand.
 
 ## Lifecycle and cleanup
 

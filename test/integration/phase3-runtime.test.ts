@@ -54,6 +54,36 @@ test("child Pi runtime writes JSONL transcript callbacks", async () => {
 	}
 });
 
+test("child Pi response timeout treats filtered stdout JSON as activity", async () => {
+	const previousMock = process.env.PI_TEAMS_MOCK_CHILD_PI;
+	const previousBin = process.env.PI_TEAMS_PI_BIN;
+	delete process.env.PI_TEAMS_MOCK_CHILD_PI;
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-child-filtered-activity-"));
+	try {
+		const fakePi = path.join(dir, "fake-pi.js");
+		fs.writeFileSync(fakePi, `
+console.log(JSON.stringify({ type: "message_update", message: { content: [{ type: "thinking", text: "still working" }] } }));
+setTimeout(() => console.log(JSON.stringify({ type: "message_update", message: { content: [{ type: "thinking", text: "still working" }] } })), 600);
+setTimeout(() => {
+  console.log(JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "done" }] } }));
+  console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", content: [], stopReason: "stop" } }));
+}, 1500);
+setTimeout(() => process.exit(0), 1550);
+`, "utf-8");
+		process.env.PI_TEAMS_PI_BIN = fakePi;
+		const result = await runChildPi({ cwd: dir, task: "hello", agent: { name: "mock", description: "mock", source: "builtin", filePath: "mock.md", systemPrompt: "mock" }, responseTimeoutMs: 1000, finalDrainMs: 1000 });
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.error, undefined);
+		assert.match(result.stdout, /done/);
+	} finally {
+		if (previousMock === undefined) delete process.env.PI_TEAMS_MOCK_CHILD_PI;
+		else process.env.PI_TEAMS_MOCK_CHILD_PI = previousMock;
+		if (previousBin === undefined) delete process.env.PI_TEAMS_PI_BIN;
+		else process.env.PI_TEAMS_PI_BIN = previousBin;
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test("child Pi runtime ignores observer callback failures", async () => {
 	const previous = process.env.PI_TEAMS_MOCK_CHILD_PI;
 	process.env.PI_TEAMS_MOCK_CHILD_PI = "json-success";

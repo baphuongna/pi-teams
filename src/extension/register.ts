@@ -11,7 +11,7 @@ import { loadRunManifestById, updateRunStatus } from "../state/state-store.ts";
 import { terminateActiveChildPiProcesses } from "../subagents/spawn.ts";
 import { SubagentManager } from "../subagents/manager.ts";
 import { __test__subagentSpawnParams, sendFollowUp } from "./registration/subagent-helpers.ts";
-import { DEFAULT_UI } from "../config/defaults.ts";
+import { DEFAULT_NOTIFICATIONS, DEFAULT_UI } from "../config/defaults.ts";
 import { logInternalError } from "../utils/internal-error.ts";
 import { createManifestCache } from "../runtime/manifest-cache.ts";
 import { resetTimings, time } from "../utils/timings.ts";
@@ -20,6 +20,13 @@ import { registerSubagentTools } from "./registration/subagent-tools.ts";
 import { runArtifactCleanup } from "./registration/artifact-cleanup.ts";
 import { registerTeamTool } from "./registration/team-tool.ts";
 import { registerCompactionGuard } from "./registration/compaction-guard.ts";
+import { requestRender, setExtensionWidget, setWorkingIndicator, showCustom } from "../ui/pi-ui-compat.ts";
+import { createRunSnapshotCache } from "../ui/run-snapshot-cache.ts";
+import { RenderScheduler } from "../ui/render-scheduler.ts";
+import { NotificationRouter, type NotificationDescriptor } from "./notification-router.ts";
+import { createJsonlSink, type NotificationSink } from "./notification-sink.ts";
+import { projectCrewRoot } from "../utils/paths.ts";
+import { summarizeHeartbeats } from "../ui/heartbeat-aggregator.ts";
 
 export { __test__subagentSpawnParams };
 
@@ -42,14 +49,58 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	let rpcHandle: PiCrewRpcHandle | undefined;
 	let cleanedUp = false;
 	let manifestCache = createManifestCache(process.cwd());
+	let runSnapshotCache = createRunSnapshotCache(process.cwd());
+	let cacheCwd = process.cwd();
 	const getManifestCache = (cwd: string): ReturnType<typeof createManifestCache> => {
-		if (manifestCache && currentCtx?.cwd === cwd) return manifestCache;
+		if (manifestCache && cacheCwd === cwd) return manifestCache;
 		if (manifestCache) manifestCache.dispose();
+		if (runSnapshotCache) runSnapshotCache.dispose?.();
+		cacheCwd = cwd;
 		manifestCache = createManifestCache(cwd);
+		runSnapshotCache = createRunSnapshotCache(cwd);
 		return manifestCache;
+	};
+	const getRunSnapshotCache = (cwd: string): ReturnType<typeof createRunSnapshotCache> => {
+		if (cacheCwd !== cwd) getManifestCache(cwd);
+		return runSnapshotCache;
 	};
 	const telemetryEnabled = (): boolean => loadConfig(currentCtx?.cwd ?? process.cwd()).config.telemetry?.enabled !== false;
 	const widgetState: CrewWidgetState = { frame: 0 };
+	let notificationSink: NotificationSink | undefined;
+	let notificationRouter: NotificationRouter | undefined;
+	const configureNotifications = (ctx: ExtensionContext): void => {
+		notificationRouter?.dispose();
+		notificationSink?.dispose();
+		notificationRouter = undefined;
+		notificationSink = undefined;
+		const config = loadConfig(ctx.cwd).config;
+		if (config.notifications?.enabled === false) return;
+		if (config.telemetry?.enabled !== false) notificationSink = createJsonlSink(projectCrewRoot(ctx.cwd), config.notifications?.sinkRetentionDays ?? DEFAULT_NOTIFICATIONS.sinkRetentionDays);
+		notificationRouter = new NotificationRouter({
+			dedupWindowMs: config.notifications?.dedupWindowMs ?? DEFAULT_NOTIFICATIONS.dedupWindowMs,
+			batchWindowMs: config.notifications?.batchWindowMs ?? DEFAULT_NOTIFICATIONS.batchWindowMs,
+			quietHours: config.notifications?.quietHours,
+			severityFilter: config.notifications?.severityFilter ?? [...DEFAULT_NOTIFICATIONS.severityFilter],
+			sink: (notification) => notificationSink?.write(notification),
+		}, (notification) => {
+			widgetState.notificationCount = (widgetState.notificationCount ?? 0) + 1;
+			sendFollowUp(pi, [notification.title, notification.body, notification.runId ? `Run: ${notification.runId}` : undefined].filter((line): line is string => Boolean(line)).join("\n"));
+			if (currentCtx) {
+				const uiConfig = loadConfig(currentCtx.cwd).config.ui;
+				updateCrewWidget(currentCtx, widgetState, uiConfig, getManifestCache(currentCtx.cwd), getRunSnapshotCache(currentCtx.cwd));
+				updatePiCrewPowerbar(pi.events, currentCtx.cwd, uiConfig, getManifestCache(currentCtx.cwd), getRunSnapshotCache(currentCtx.cwd), currentCtx, widgetState.notificationCount ?? 0);
+			}
+		});
+	};
+	const autoRecoveryLast = new Map<string, number>();
+	const notifyOperator = (notification: NotificationDescriptor): void => {
+		try {
+			notificationRouter?.enqueue(notification);
+		} catch (error) {
+			logInternalError("register.notification", error);
+			sendFollowUp(pi, [notification.title, notification.body].filter((line): line is string => Boolean(line)).join("\n"));
+		}
+	};
 	const subagentManager = new SubagentManager(
 		4,
 		(record) => {
@@ -68,7 +119,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 			}
 			if (!record.background || record.resultConsumed) return;
 			if (record.status === "completed" || record.status === "failed" || record.status === "cancelled" || record.status === "blocked" || record.status === "error") {
-				sendFollowUp(pi, [`pi-crew subagent ${record.id} ${record.status}.`, record.runId ? `Run: ${record.runId}` : undefined, `Use get_subagent_result with agent_id=${record.id} for output.`].filter((line): line is string => Boolean(line)).join("\n"));
+				notifyOperator({ id: `subagent:${record.id}:${record.status}`, severity: record.status === "completed" ? "info" : "warning", source: "subagent-completed", runId: record.runId, title: `pi-crew subagent ${record.id} ${record.status}.`, body: `Use get_subagent_result with agent_id=${record.id} for output.` });
 			}
 		},
 		1000,
@@ -77,25 +128,24 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 				const id = typeof payload.id === "string" ? payload.id : "unknown";
 				const runId = typeof payload.runId === "string" ? payload.runId : "unknown";
 				const durationMs = typeof payload.durationMs === "number" ? payload.durationMs : 0;
-				sendFollowUp(pi, [`pi-crew subagent ${id} may be stuck in blocked state for ${Math.max(1, Math.round(durationMs / 1000))}s.`, `Run: ${runId}`, `Use team status runId=${runId} and investigate.`, "Subagent may need manual intervention."].filter((line): line is string => Boolean(line)).join("\n"));
+				notifyOperator({ id: `subagent-stuck:${id}:${runId}`, severity: "warning", source: "subagent-stuck", runId, title: `pi-crew subagent ${id} may be stuck in blocked state for ${Math.max(1, Math.round(durationMs / 1000))}s.`, body: `Use team status runId=${runId} and investigate.\nSubagent may need manual intervention.` });
 			}
 			pi.events?.emit?.(event, payload);
 		},
 	);
 	const foregroundControllers = new Set<AbortController>();
 	let liveSidebarRunId: string | undefined;
-	let liveSidebarTimer: ReturnType<typeof setInterval> | undefined;
-	const requestRender = (ctx: ExtensionContext): void => (ctx.ui as { requestRender?: () => void }).requestRender?.();
+	let renderScheduler: RenderScheduler | undefined;
 	const stopSessionBoundSubagents = (): void => {
 		for (const controller of foregroundControllers) controller.abort();
 		foregroundControllers.clear();
 		subagentManager.abortAll();
 		terminateActiveChildPiProcesses();
-		if (liveSidebarTimer) clearInterval(liveSidebarTimer);
-		liveSidebarTimer = undefined;
+		renderScheduler?.dispose();
+		renderScheduler = undefined;
 		liveSidebarRunId = undefined;
 		if (currentCtx) stopCrewWidget(currentCtx, widgetState, loadConfig(currentCtx.cwd).config.ui);
-		clearPiCrewPowerbar(pi.events);
+		clearPiCrewPowerbar(pi.events, currentCtx);
 	};
 	const openLiveSidebar = (ctx: ExtensionContext, runId: string): void => {
 		const uiConfig = loadConfig(ctx.cwd).config.ui;
@@ -103,28 +153,28 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		const foregroundAutoOpen = uiConfig?.autoOpenDashboardForForegroundRuns !== false;
 		if (!ctx.hasUI || !autoOpen || !foregroundAutoOpen || (uiConfig?.dashboardPlacement ?? "right") !== "right") return;
 		if (liveSidebarRunId === runId) return;
-		if (liveSidebarTimer) clearInterval(liveSidebarTimer);
 		liveSidebarRunId = runId;
-		ctx.ui.setWidget("pi-crew", undefined, { placement: uiConfig?.widgetPlacement ?? "aboveEditor" });
-		ctx.ui.setWidget("pi-crew-active", undefined, { placement: uiConfig?.widgetPlacement ?? "aboveEditor" });
+		const widgetPlacement = uiConfig?.widgetPlacement ?? "aboveEditor";
+		setExtensionWidget(ctx, "pi-crew", undefined, { placement: widgetPlacement });
+		setExtensionWidget(ctx, "pi-crew-active", undefined, { placement: widgetPlacement });
+		widgetState.lastVisibility = "hidden";
+		widgetState.lastPlacement = widgetPlacement;
+		widgetState.lastKey = "pi-crew-active";
+		widgetState.model = undefined;
 		const width = Math.min(90, Math.max(40, uiConfig?.dashboardWidth ?? 56));
-		liveSidebarTimer = setInterval(() => requestRender(ctx), uiConfig?.dashboardLiveRefreshMs ?? DEFAULT_UI.refreshMs);
-		liveSidebarTimer.unref?.();
-		void ctx.ui.custom<undefined>((_tui, theme, _keybindings, done) => new LiveRunSidebar({ cwd: ctx.cwd, runId, done, theme, config: uiConfig }), {
+		void showCustom<undefined>(ctx, (_tui, theme, _keybindings, done) => new LiveRunSidebar({ cwd: ctx.cwd, runId, done, theme, config: uiConfig, snapshotCache: getRunSnapshotCache(ctx.cwd) }), {
 			overlay: true,
 			overlayOptions: { width, minWidth: 40, maxHeight: "100%", anchor: "top-right", offsetX: 0, offsetY: 0, margin: { top: 0, right: 0, bottom: 0, left: 0 }, visible: (termWidth: number) => termWidth >= 100 },
 		}).finally(() => {
 			if (liveSidebarRunId === runId) liveSidebarRunId = undefined;
-			if (liveSidebarTimer) clearInterval(liveSidebarTimer);
-			liveSidebarTimer = undefined;
-			updateCrewWidget(ctx, widgetState, loadConfig(ctx.cwd).config.ui, getManifestCache(ctx.cwd));
+			updateCrewWidget(ctx, widgetState, loadConfig(ctx.cwd).config.ui, getManifestCache(ctx.cwd), getRunSnapshotCache(ctx.cwd));
 		});
 	};
 	const startForegroundRun = (ctx: ExtensionContext, runner: (signal?: AbortSignal) => Promise<void>, runId?: string): void => {
 		const controller = new AbortController();
 		foregroundControllers.add(controller);
 		if (ctx.hasUI) {
-			(ctx.ui as { setWorkingIndicator?: (options?: { frames?: string[]; intervalMs?: number }) => void }).setWorkingIndicator?.({ frames: ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"], intervalMs: 80 });
+			setWorkingIndicator(ctx, { frames: ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"], intervalMs: 80 });
 			ctx.ui.setWorkingMessage(runId ? `pi-crew foreground run ${runId}...` : "pi-crew foreground run...");
 		}
 		setImmediate(() => {
@@ -144,7 +194,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 				.finally(() => {
 					foregroundControllers.delete(controller);
 					if (ctx.hasUI) {
-						(ctx.ui as { setWorkingIndicator?: (options?: { frames?: string[]; intervalMs?: number }) => void }).setWorkingIndicator?.();
+						setWorkingIndicator(ctx);
 						ctx.ui.setWorkingMessage();
 					}
 					if (runId) {
@@ -177,8 +227,8 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 					}
 					if (currentCtx) {
 						const config = loadConfig(currentCtx.cwd).config.ui;
-						updateCrewWidget(currentCtx, widgetState, config, getManifestCache(currentCtx.cwd));
-						updatePiCrewPowerbar(pi.events, currentCtx.cwd, config, getManifestCache(currentCtx.cwd));
+						updateCrewWidget(currentCtx, widgetState, config, getManifestCache(currentCtx.cwd), getRunSnapshotCache(currentCtx.cwd));
+						updatePiCrewPowerbar(pi.events, currentCtx.cwd, config, getManifestCache(currentCtx.cwd), getRunSnapshotCache(currentCtx.cwd), currentCtx, widgetState.notificationCount ?? 0);
 					}
 				});
 		});
@@ -194,8 +244,16 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		stopSessionBoundSubagents();
 		stopAsyncRunNotifier(notifierState);
 		stopCrewWidget(currentCtx, widgetState, currentCtx ? loadConfig(currentCtx.cwd).config.ui : undefined);
-		clearPiCrewPowerbar(pi.events);
+		clearPiCrewPowerbar(pi.events, currentCtx);
 		manifestCache.dispose();
+		runSnapshotCache.dispose?.();
+		renderScheduler?.dispose();
+		renderScheduler = undefined;
+		autoRecoveryLast.clear();
+		notificationRouter?.dispose();
+		notificationSink?.dispose();
+		notificationRouter = undefined;
+		notificationSink = undefined;
 		rpcHandle?.unsubscribe();
 		rpcHandle = undefined;
 		currentCtx = undefined;
@@ -212,24 +270,57 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		widgetState.interval = undefined;
 		notifyActiveRuns(ctx);
 		const loadedConfig = loadConfig(ctx.cwd);
+		autoRecoveryLast.clear();
+		configureNotifications(ctx);
 		registerPiCrewPowerbarSegments(pi.events, loadedConfig.config.ui);
 		startAsyncRunNotifier(ctx, notifierState, loadedConfig.config.notifierIntervalMs ?? DEFAULT_UI.notifierIntervalMs);
 		const cache = getManifestCache(ctx.cwd);
-		updateCrewWidget(ctx, widgetState, loadedConfig.config.ui, cache);
-		updatePiCrewPowerbar(pi.events, ctx.cwd, loadedConfig.config.ui, cache);
-		widgetState.interval = setInterval(() => {
+		updateCrewWidget(ctx, widgetState, loadedConfig.config.ui, cache, getRunSnapshotCache(ctx.cwd));
+		updatePiCrewPowerbar(pi.events, ctx.cwd, loadedConfig.config.ui, cache, getRunSnapshotCache(ctx.cwd), ctx, widgetState.notificationCount ?? 0);
+		renderScheduler?.dispose();
+		const renderTick = (): void => {
 			if (!currentCtx) return;
 			const config = loadConfig(currentCtx.cwd).config.ui;
-			const cache = getManifestCache(currentCtx.cwd);
+			const activeCache = getManifestCache(currentCtx.cwd);
 			if (liveSidebarRunId) {
-				currentCtx.ui.setWidget("pi-crew", undefined, { placement: config?.widgetPlacement ?? "aboveEditor" });
-				currentCtx.ui.setWidget("pi-crew-active", undefined, { placement: config?.widgetPlacement ?? "aboveEditor" });
+				const placement = config?.widgetPlacement ?? "aboveEditor";
+				if (widgetState.lastVisibility !== "hidden" || widgetState.lastPlacement !== placement) {
+					setExtensionWidget(currentCtx, "pi-crew", undefined, { placement });
+					setExtensionWidget(currentCtx, "pi-crew-active", undefined, { placement });
+					widgetState.lastVisibility = "hidden";
+					widgetState.lastPlacement = placement;
+					widgetState.lastKey = "pi-crew-active";
+					widgetState.model = undefined;
+				}
+				requestRender(currentCtx);
 			} else {
-				updateCrewWidget(currentCtx, widgetState, config, cache);
+				updateCrewWidget(currentCtx, widgetState, config, activeCache, getRunSnapshotCache(currentCtx.cwd));
 			}
-			updatePiCrewPowerbar(pi.events, currentCtx.cwd, config, cache);
-		}, DEFAULT_UI.widgetDefaultFrameMs);
-		widgetState.interval.unref?.();
+			updatePiCrewPowerbar(pi.events, currentCtx.cwd, config, activeCache, getRunSnapshotCache(currentCtx.cwd), currentCtx, widgetState.notificationCount ?? 0);
+			const now = Date.now();
+			for (const run of activeCache.list(20)) {
+				try {
+					const snapshot = getRunSnapshotCache(currentCtx.cwd).refreshIfStale(run.runId);
+					const summary = summarizeHeartbeats(snapshot, { now });
+					const maybeNotifyHealth = (kind: string, count: number, title: string, body: string): void => {
+						if (count <= 0) return;
+						const key = `${kind}_${run.runId}`;
+						const previous = autoRecoveryLast.get(key);
+						if (previous !== undefined && now - previous < 5 * 60_000) return;
+						autoRecoveryLast.set(key, now);
+						notifyOperator({ id: key, severity: "warning", source: "health", runId: run.runId, title, body });
+					};
+					maybeNotifyHealth("recovery_dead_workers", summary.dead, `Run ${run.runId} has ${summary.dead} dead worker(s).`, "Open /team-dashboard → 5 health → R recovery / K kill stale / D diagnostic.");
+					maybeNotifyHealth("recovery_missing_heartbeat", summary.missing, `Run ${run.runId} has ${summary.missing} worker(s) missing heartbeat.`, "Open /team-dashboard → 5 health → inspect health actions.");
+				} catch (error) {
+					logInternalError("register.health-notification", error, run.runId);
+				}
+			}
+		};
+		renderScheduler = new RenderScheduler(pi.events, renderTick, {
+			fallbackMs: loadedConfig.config.ui?.dashboardLiveRefreshMs ?? 750,
+			onInvalidate: () => getRunSnapshotCache(ctx.cwd).invalidate(),
+		});
 	});
 	pi.on("session_before_switch", () => stopSessionBoundSubagents());
 	pi.on("session_shutdown", () => cleanupRuntime());
@@ -252,9 +343,16 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		};
 	});
 
-	registerTeamTool(pi, { foregroundControllers, startForegroundRun, openLiveSidebar, getManifestCache, widgetState });
+	registerTeamTool(pi, { foregroundControllers, startForegroundRun, openLiveSidebar, getManifestCache, getRunSnapshotCache, widgetState });
 	registerSubagentTools(pi, subagentManager);
 	time("register.tools");
 
-	registerTeamCommands(pi, { startForegroundRun, openLiveSidebar, getManifestCache });
+	registerTeamCommands(pi, { startForegroundRun, openLiveSidebar, getManifestCache, getRunSnapshotCache, dismissNotifications: () => {
+		widgetState.notificationCount = 0;
+		if (currentCtx) {
+			const uiConfig = loadConfig(currentCtx.cwd).config.ui;
+			updateCrewWidget(currentCtx, widgetState, uiConfig, getManifestCache(currentCtx.cwd), getRunSnapshotCache(currentCtx.cwd));
+			updatePiCrewPowerbar(pi.events, currentCtx.cwd, uiConfig, getManifestCache(currentCtx.cwd), getRunSnapshotCache(currentCtx.cwd), currentCtx, 0);
+		}
+	} });
 }

@@ -7,16 +7,108 @@ import { loadRunManifestById } from "../../state/state-store.ts";
 import type { TeamRunManifest } from "../../state/types.ts";
 import { readCrewAgents } from "../../runtime/crew-agent-records.ts";
 import { AnimatedMascot } from "../../ui/mascot.ts";
+import * as path from "node:path";
 import { RunDashboard, type RunDashboardSelection } from "../../ui/run-dashboard.ts";
 import { DurableTextViewer } from "../../ui/transcript-viewer.ts";
+import { ConfirmOverlay, type ConfirmOptions } from "../../ui/overlays/confirm-overlay.ts";
+import { MailboxDetailOverlay, type MailboxAction } from "../../ui/overlays/mailbox-detail-overlay.ts";
+import { MailboxComposeOverlay, type MailboxComposeResult } from "../../ui/overlays/mailbox-compose-overlay.ts";
+import { AgentPickerOverlay } from "../../ui/overlays/agent-picker-overlay.ts";
+import { dispatchDiagnosticExport, dispatchHealthRecovery, dispatchKillStaleWorkers, dispatchMailboxAck, dispatchMailboxAckAll, dispatchMailboxCompose, dispatchMailboxNudge } from "../../ui/run-action-dispatcher.ts";
+import { listRecentDiagnostic } from "../../runtime/diagnostic-export.ts";
 import { commandText, notifyCommandResult, parseRunArgs, parseScalar, pushUnset, setNestedConfig } from "./command-utils.ts";
 import { openTranscriptViewer, selectAgentTask } from "./viewers.ts";
 import { printTimings, time } from "../../utils/timings.ts";
+import { requestRenderTarget } from "../../ui/pi-ui-compat.ts";
+import type { createRunSnapshotCache } from "../../ui/run-snapshot-cache.ts";
 
 export interface RegisterTeamCommandsDeps {
 	startForegroundRun: (ctx: ExtensionContext, runner: (signal?: AbortSignal) => Promise<void>, runId?: string) => void;
 	openLiveSidebar: (ctx: ExtensionContext, runId: string) => void;
 	getManifestCache: (cwd: string) => { list(max?: number): TeamRunManifest[] };
+	getRunSnapshotCache?: (cwd: string) => ReturnType<typeof createRunSnapshotCache>;
+	dismissNotifications?: () => void;
+}
+
+async function openConfirm(ctx: ExtensionCommandContext, options: ConfirmOptions): Promise<boolean> {
+	if (!ctx.hasUI) return false;
+	return await ctx.ui.custom<boolean>((_tui, theme, _keybindings, done) => new ConfirmOverlay(options, done, theme), { overlay: true, overlayOptions: { width: 64, maxHeight: "70%", anchor: "center" } });
+}
+
+async function handleMailboxDashboardAction(ctx: ExtensionCommandContext, runId: string): Promise<void> {
+	if (!ctx.hasUI) return;
+	const action = await ctx.ui.custom<MailboxAction | undefined>((_tui, theme, _keybindings, done) => new MailboxDetailOverlay({ runId, cwd: ctx.cwd, done, theme }), { overlay: true, overlayOptions: { width: "90%", maxHeight: "85%", anchor: "center" } });
+	if (!action || action.type === "close") return;
+	let resultMessage: string | undefined;
+	let ok = true;
+	if (action.type === "ack") {
+		const result = await dispatchMailboxAck(ctx as ExtensionContext, runId, action.messageId);
+		ok = result.ok;
+		resultMessage = result.message;
+	} else if (action.type === "ackAll") {
+		const confirmed = await openConfirm(ctx, { title: "Acknowledge all unread messages?", body: "This cannot be undone. Y=ack all, N=cancel.", dangerLevel: "medium", defaultAction: "cancel" });
+		if (!confirmed) return;
+		const result = await dispatchMailboxAckAll(ctx as ExtensionContext, runId);
+		ok = result.ok;
+		resultMessage = result.message;
+	} else if (action.type === "compose") {
+		const compose = await ctx.ui.custom<MailboxComposeResult>((_tui, theme, _keybindings, done) => new MailboxComposeOverlay({ done, theme }), { overlay: true, overlayOptions: { width: "90%", maxHeight: "85%", anchor: "center" } });
+		if (compose.type === "cancel") return;
+		const result = await dispatchMailboxCompose(ctx as ExtensionContext, runId, compose.payload);
+		ok = result.ok;
+		resultMessage = result.message;
+	} else if (action.type === "nudge") {
+		let agentId = action.agentId;
+		if (!agentId) {
+			const picked = await ctx.ui.custom<{ agentId: string } | undefined>((_tui, theme, _keybindings, done) => new AgentPickerOverlay({ cwd: ctx.cwd, runId, done, theme }), { overlay: true, overlayOptions: { width: 72, maxHeight: "75%", anchor: "center" } });
+			agentId = picked?.agentId;
+		}
+		if (!agentId) return;
+		const result = await dispatchMailboxNudge(ctx as ExtensionContext, runId, agentId, "Please report your current status, blocker, or smallest next step.");
+		ok = result.ok;
+		resultMessage = result.message;
+	}
+	depsNotify(ctx, resultMessage ?? "Mailbox action complete.", ok ? "info" : "error");
+}
+
+function depsNotify(ctx: ExtensionCommandContext, message: string, level: "info" | "warning" | "error"): void {
+	ctx.ui.notify(message, level);
+}
+
+async function handleHealthDashboardAction(ctx: ExtensionCommandContext, selection: RunDashboardSelection): Promise<void> {
+	const loaded = loadRunManifestById(ctx.cwd, selection.runId);
+	if (!loaded) {
+		depsNotify(ctx, `Run '${selection.runId}' not found.`, "error");
+		return;
+	}
+	if (selection.action === "health-recovery") {
+		if (loaded.manifest.async) {
+			depsNotify(ctx, "Recovery is only available for foreground runs.", "warning");
+			return;
+		}
+		const confirmed = await openConfirm(ctx, { title: "Interrupt foreground run?", body: "Tasks may be marked failed. Y=interrupt, N=cancel.", dangerLevel: "high", defaultAction: "cancel" });
+		if (!confirmed) return;
+		const result = await dispatchHealthRecovery(ctx as ExtensionContext, selection.runId);
+		depsNotify(ctx, result.message, result.ok ? "info" : "error");
+		return;
+	}
+	if (selection.action === "health-kill-stale") {
+		const confirmed = await openConfirm(ctx, { title: "Mark stale workers dead?", body: "This updates worker heartbeat state. Y=mark dead, N=cancel.", dangerLevel: "medium", defaultAction: "cancel" });
+		if (!confirmed) return;
+		const result = await dispatchKillStaleWorkers(ctx as ExtensionContext, selection.runId);
+		depsNotify(ctx, result.message, result.ok ? "info" : "error");
+		return;
+	}
+	if (selection.action === "health-diagnostic-export") {
+		const diagDir = path.join(loaded.manifest.artifactsRoot, "diagnostic");
+		const recent = listRecentDiagnostic(diagDir, 60_000);
+		if (recent) {
+			const confirmed = await openConfirm(ctx, { title: "Recent diagnostic exists", body: `File ${recent} was created <1min ago. Export another diagnostic?`, defaultAction: "cancel" });
+			if (!confirmed) return;
+		}
+		const result = await dispatchDiagnosticExport(ctx as ExtensionContext, selection.runId);
+		depsNotify(ctx, result.message, result.ok ? "info" : "error");
+	}
 }
 
 export function registerTeamCommands(pi: ExtensionAPI, deps: RegisterTeamCommandsDeps): void {
@@ -133,11 +225,26 @@ export function registerTeamCommands(pi: ExtensionAPI, deps: RegisterTeamCommand
 			const uiConfig = loadConfig(ctx.cwd).config.ui;
 			const rightPanel = uiConfig?.dashboardPlacement !== "center";
 			const width = rightPanel ? Math.min(90, Math.max(40, uiConfig?.dashboardWidth ?? 56)) : "90%";
-			const selection = await ctx.ui.custom<RunDashboardSelection | undefined>((_tui, theme, _keybindings, done) => new RunDashboard(runs, done, theme, { placement: rightPanel ? "right" : "center", showModel: uiConfig?.showModel, showTokens: uiConfig?.showTokens, showTools: uiConfig?.showTools }), { overlay: true, overlayOptions: rightPanel ? { width, minWidth: 40, maxHeight: "100%", anchor: "top-right", offsetX: 0, offsetY: 0, margin: { top: 0, right: 0, bottom: 0, left: 0 } } : { width, maxHeight: "90%", anchor: "center", margin: 2 } });
+			const selection = await ctx.ui.custom<RunDashboardSelection | undefined>((_tui, theme, _keybindings, done) => new RunDashboard(runs, done, theme, { placement: rightPanel ? "right" : "center", showModel: uiConfig?.showModel, showTokens: uiConfig?.showTokens, showTools: uiConfig?.showTools, snapshotCache: deps.getRunSnapshotCache?.(ctx.cwd), runProvider: () => deps.getManifestCache(ctx.cwd).list(50) }), { overlay: true, overlayOptions: rightPanel ? { width, minWidth: 40, maxHeight: "100%", anchor: "top-right", offsetX: 0, offsetY: 0, margin: { top: 0, right: 0, bottom: 0, left: 0 } } : { width, maxHeight: "90%", anchor: "center", margin: 2 } });
 			if (!selection) return;
 			if (selection.action === "reload") continue;
+			if (selection.action === "notifications-dismiss") {
+				deps.dismissNotifications?.();
+				ctx.ui.notify("pi-crew notifications dismissed.", "info");
+				continue;
+			}
+			if (selection.action === "mailbox-detail") {
+				await handleMailboxDashboardAction(ctx, selection.runId);
+				deps.getRunSnapshotCache?.(ctx.cwd).invalidate(selection.runId);
+				continue;
+			}
+			if (selection.action === "health-recovery" || selection.action === "health-kill-stale" || selection.action === "health-diagnostic-export") {
+				await handleHealthDashboardAction(ctx, selection);
+				deps.getRunSnapshotCache?.(ctx.cwd).invalidate(selection.runId);
+				continue;
+			}
 			if (selection.action === "agent-transcript" && await openTranscriptViewer(ctx, selection.runId)) continue;
-			const result = selection.action === "api" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "read-manifest" } }, ctx) : selection.action === "agents" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "agent-dashboard" } }, ctx) : selection.action === "agent-events" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "read-agent-events", limit: 50 } }, ctx) : selection.action === "agent-output" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "read-agent-output", maxBytes: 32_000 } }, ctx) : selection.action === "agent-transcript" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "read-agent-transcript" } }, ctx) : await handleTeamTool({ action: selection.action, runId: selection.runId }, ctx);
+			const result = selection.action === "api" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "read-manifest" } }, ctx) : selection.action === "agents" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "agent-dashboard" } }, ctx) : selection.action === "mailbox" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "read-mailbox" } }, ctx) : selection.action === "agent-events" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "read-agent-events", limit: 50 } }, ctx) : selection.action === "agent-output" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "read-agent-output", maxBytes: 32_000 } }, ctx) : selection.action === "agent-transcript" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "read-agent-transcript" } }, ctx) : await handleTeamTool({ action: selection.action, runId: selection.runId }, ctx);
 			await notifyCommandResult(ctx, commandText(result));
 			return;
 		}
@@ -151,7 +258,7 @@ export function registerTeamCommands(pi: ExtensionAPI, deps: RegisterTeamCommand
 		const effectArg = tokens.find((t) => ["random", "none", "typewriter", "scanline", "rain", "fade", "crt", "glitch", "dissolve"].includes(t));
 		const style = (styleArg as "cat" | "armin" | undefined) ?? uiConfig?.mascotStyle ?? "cat";
 		const effect = (effectArg as "random" | "none" | "typewriter" | "scanline" | "rain" | "fade" | "crt" | "glitch" | "dissolve" | undefined) ?? uiConfig?.mascotEffect ?? "random";
-		await ctx.ui.custom<undefined>((tui, theme, _keybindings, done) => new AnimatedMascot(theme, () => done(undefined), { frameIntervalMs: style === "armin" ? 33 : 180, autoCloseMs: 7000, requestRender: () => (tui as { requestRender?: () => void }).requestRender?.(), style, effect }), { overlay: true, overlayOptions: { width: style === "armin" ? 48 : 62, maxHeight: "85%", anchor: "center" } });
+		await ctx.ui.custom<undefined>((tui, theme, _keybindings, done) => new AnimatedMascot(theme, () => done(undefined), { frameIntervalMs: style === "armin" ? 33 : 180, autoCloseMs: 7000, requestRender: () => requestRenderTarget(tui), style, effect }), { overlay: true, overlayOptions: { width: style === "armin" ? 48 : 62, maxHeight: "85%", anchor: "center" } });
 	} });
 
 	pi.registerCommand("team-init", { description: "Initialize project-local pi-crew directories and gitignore entries", handler: async (args: string, ctx: ExtensionCommandContext) => {

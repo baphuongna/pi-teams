@@ -72,6 +72,15 @@ export const PiTeamsTelemetryConfigSchema = Type.Object({
 	enabled: Type.Optional(Type.Boolean()),
 });
 
+export const PiTeamsNotificationsConfigSchema = Type.Object({
+	enabled: Type.Optional(Type.Boolean()),
+	severityFilter: Type.Optional(Type.Array(Type.Union([Type.Literal("info"), Type.Literal("warning"), Type.Literal("error"), Type.Literal("critical")]))),
+	dedupWindowMs: Type.Optional(Type.Integer({ minimum: 1000 })),
+	batchWindowMs: Type.Optional(Type.Integer({ minimum: 0 })),
+	quietHours: Type.Optional(Type.String({ pattern: "^\\d{2}:\\d{2}-\\d{2}:\\d{2}$" })),
+	sinkRetentionDays: Type.Optional(Type.Integer({ minimum: 1, maximum: 90 })),
+});
+
 export const PiTeamsUiConfigSchema = Type.Object({
 	widgetPlacement: Type.Optional(Type.Union([Type.Literal("aboveEditor"), Type.Literal("belowEditor")])),
 	widgetMaxLines: Type.Optional(Type.Integer({ minimum: 1 })),
@@ -84,6 +93,7 @@ export const PiTeamsUiConfigSchema = Type.Object({
 	showModel: Type.Optional(Type.Boolean()),
 	showTokens: Type.Optional(Type.Boolean()),
 	showTools: Type.Optional(Type.Boolean()),
+	transcriptTailBytes: Type.Optional(Type.Number({ minimum: 1024 })),
 	mascotStyle: Type.Optional(Type.Union([Type.Literal("cat"), Type.Literal("armin")])),
 	mascotEffect: Type.Optional(Type.Union([Type.Literal("random"), Type.Literal("none"), Type.Literal("typewriter"), Type.Literal("scanline"), Type.Literal("rain"), Type.Literal("fade"), Type.Literal("crt"), Type.Literal("glitch"), Type.Literal("dissolve")])),
 });
@@ -101,5 +111,6 @@ export const PiTeamsConfigSchema = Type.Object({
 	agents: Type.Optional(PiTeamsAgentsConfigSchema),
 	tools: Type.Optional(PiTeamsToolsConfigSchema),
 	telemetry: Type.Optional(PiTeamsTelemetryConfigSchema),
+	notifications: Type.Optional(PiTeamsNotificationsConfigSchema),
 	ui: Type.Optional(PiTeamsUiConfigSchema),
 });

@@ -12,6 +12,7 @@ import { iconForStatus } from "./status-colors.ts";
 import type { CrewTheme } from "./theme-adapter.ts";
 import { asCrewTheme, subscribeThemeChange } from "./theme-adapter.ts";
 import { Box, Text } from "./layout-primitives.ts";
+import type { RunSnapshotCache, RunUiSnapshot } from "./snapshot-types.ts";
 
 const TASK_READ_TTL_MS = 200;
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -58,22 +59,26 @@ export class LiveRunSidebar {
 	private readonly theme: CrewTheme;
 	private readonly config: CrewUiConfig;
 	private readonly unsubscribeTheme: () => void;
+	private readonly snapshotCache?: RunSnapshotCache;
 	private cachedLines: string[] = [];
 	private cachedWidth = 0;
 	private cachedSignature = "";
 
-	constructor(input: { cwd: string; runId: string; done: Done; theme?: unknown; config?: CrewUiConfig }) {
+	constructor(input: { cwd: string; runId: string; done: Done; theme?: unknown; config?: CrewUiConfig; snapshotCache?: RunSnapshotCache }) {
 		this.cwd = input.cwd;
 		this.runId = input.runId;
 		this.done = input.done;
 		this.theme = asCrewTheme(input.theme);
 		this.config = input.config ?? {};
+		this.snapshotCache = input.snapshotCache;
 		this.unsubscribeTheme = subscribeThemeChange(input.theme, () => this.invalidate());
 	}
 
-	private buildSignature(manifestStatus: string, tasks: TeamTaskState[], agentsCount: number, waitingCount: number): string {
-		const agentStatusSig = tasks.map((task) => `${task.id}:${task.status}:${task.startedAt ?? ""}`).join("|");
-		return `${manifestStatus}|${agentsCount}|${waitingCount}|${agentStatusSig}`;
+	private buildSignature(manifestStatus: string, tasks: TeamTaskState[], agents: ReturnType<typeof readCrewAgents>, waitingCount: number, snapshot?: RunUiSnapshot): string {
+		if (snapshot) return `${snapshot.signature}:${waitingCount}`;
+		const taskSig = tasks.map((task) => `${task.id}:${task.status}:${task.startedAt ?? ""}:${task.finishedAt ?? ""}:${task.agentProgress?.currentTool ?? ""}:${task.agentProgress?.toolCount ?? 0}:${task.agentProgress?.tokens ?? 0}:${task.usage ? JSON.stringify(task.usage) : ""}`).join("|");
+		const agentSig = agents.map((agent) => [agent.id, agent.status, agent.startedAt, agent.completedAt ?? "", agent.progress?.currentTool ?? "", agent.progress?.toolCount ?? 0, agent.progress?.tokens ?? 0, agent.progress?.turns ?? 0, agent.progress?.lastActivityAt ?? "", agent.progress?.recentOutput.at(-1) ?? "", agent.toolUses ?? 0].join(":")).join("|");
+		return `${manifestStatus}|${agents.length}|${waitingCount}|${taskSig}|${agentSig}`;
 	}
 
 	private colorLine(line: string): string {
@@ -110,14 +115,21 @@ export class LiveRunSidebar {
 			);
 		}
 
-		const run = loaded.manifest;
-		const tasks = readTasks(run.tasksPath);
+		let snapshot: RunUiSnapshot | undefined;
+		try {
+			snapshot = this.snapshotCache?.refreshIfStale(this.runId);
+		} catch {
+			snapshot = undefined;
+		}
+		const run = snapshot?.manifest ?? loaded.manifest;
+		const tasks = snapshot?.tasks ?? readTasks(run.tasksPath);
 		const controlConfig = resolveCrewControlConfig({ ui: this.config });
-		const agents = readCrewAgents(run).map((agent) => applyAttentionState(run, agent, controlConfig));
+		const rawAgents = snapshot?.agents ?? readCrewAgents(run);
+		const agents = rawAgents.map((agent) => applyAttentionState(run, agent, controlConfig));
 		const active = agents.filter((agent) => agent.status === "running");
 		const completed = agents.filter((agent) => agent.status !== "running").slice(-5);
 		const waiting = tasks.filter((task) => task.status === "queued");
-		const signature = this.buildSignature(run.updatedAt, tasks, agents.length, waiting.length);
+		const signature = this.buildSignature(run.updatedAt, tasks, agents, waiting.length, snapshot);
 		if (signature !== this.cachedSignature || w !== this.cachedWidth) {
 			const lines: string[] = [
 				border("╭", "─", "╮", w),
