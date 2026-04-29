@@ -84,6 +84,32 @@ setTimeout(() => process.exit(0), 1550);
 	}
 });
 
+test("child Pi final-drain termination after final assistant output is treated as completed", async () => {
+	const previousMock = process.env.PI_TEAMS_MOCK_CHILD_PI;
+	const previousBin = process.env.PI_TEAMS_PI_BIN;
+	delete process.env.PI_TEAMS_MOCK_CHILD_PI;
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-child-final-drain-"));
+	try {
+		const fakePi = path.join(dir, "fake-pi.js");
+		fs.writeFileSync(fakePi, `
+console.log(JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "final answer before lingering cleanup" }] } }));
+console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", content: [], stopReason: "stop" } }));
+setInterval(() => {}, 1000);
+`, "utf-8");
+		process.env.PI_TEAMS_PI_BIN = fakePi;
+		const result = await runChildPi({ cwd: dir, task: "hello", agent: { name: "mock", description: "mock", source: "builtin", filePath: "mock.md", systemPrompt: "mock" }, finalDrainMs: 100, hardKillMs: 100, responseTimeoutMs: 1000 });
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.error, undefined);
+		assert.match(result.stdout, /final answer before lingering cleanup/);
+	} finally {
+		if (previousMock === undefined) delete process.env.PI_TEAMS_MOCK_CHILD_PI;
+		else process.env.PI_TEAMS_MOCK_CHILD_PI = previousMock;
+		if (previousBin === undefined) delete process.env.PI_TEAMS_PI_BIN;
+		else process.env.PI_TEAMS_PI_BIN = previousBin;
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test("child Pi runtime ignores observer callback failures", async () => {
 	const previous = process.env.PI_TEAMS_MOCK_CHILD_PI;
 	process.env.PI_TEAMS_MOCK_CHILD_PI = "json-success";

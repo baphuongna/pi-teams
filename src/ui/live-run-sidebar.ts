@@ -13,9 +13,9 @@ import type { CrewTheme } from "./theme-adapter.ts";
 import { asCrewTheme, subscribeThemeChange } from "./theme-adapter.ts";
 import { Box, Text } from "./layout-primitives.ts";
 import type { RunSnapshotCache, RunUiSnapshot } from "./snapshot-types.ts";
+import { spinnerBucket, spinnerFrame } from "./spinner.ts";
 
 const TASK_READ_TTL_MS = 200;
-const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 function renderLines(lines: string[], width: number): string[] {
 	const box = new Box(0, 0);
@@ -75,10 +75,11 @@ export class LiveRunSidebar {
 	}
 
 	private buildSignature(manifestStatus: string, tasks: TeamTaskState[], agents: ReturnType<typeof readCrewAgents>, waitingCount: number, snapshot?: RunUiSnapshot): string {
-		if (snapshot) return `${snapshot.signature}:${waitingCount}`;
+		const animation = agents.some((agent) => agent.status === "running") ? `:spin=${spinnerBucket()}` : "";
+		if (snapshot) return `${snapshot.signature}:${waitingCount}${animation}`;
 		const taskSig = tasks.map((task) => `${task.id}:${task.status}:${task.startedAt ?? ""}:${task.finishedAt ?? ""}:${task.agentProgress?.currentTool ?? ""}:${task.agentProgress?.toolCount ?? 0}:${task.agentProgress?.tokens ?? 0}:${task.usage ? JSON.stringify(task.usage) : ""}`).join("|");
 		const agentSig = agents.map((agent) => [agent.id, agent.status, agent.startedAt, agent.completedAt ?? "", agent.progress?.currentTool ?? "", agent.progress?.toolCount ?? 0, agent.progress?.tokens ?? 0, agent.progress?.turns ?? 0, agent.progress?.lastActivityAt ?? "", agent.progress?.recentOutput.at(-1) ?? "", agent.toolUses ?? 0].join(":")).join("|");
-		return `${manifestStatus}|${agents.length}|${waitingCount}|${taskSig}|${agentSig}`;
+		return `${manifestStatus}|${agents.length}|${waitingCount}|${taskSig}|${agentSig}${animation}`;
 	}
 
 	private colorLine(line: string): string {
@@ -140,7 +141,7 @@ export class LiveRunSidebar {
 				line(`Active agents (${active.length})`, w),
 			];
 			for (const agent of active.slice(0, 8)) {
-				const status = iconForStatus(agent.status, { runningGlyph: SPINNER[0] });
+				const status = iconForStatus(agent.status, { runningGlyph: spinnerFrame(agent.taskId) });
 				const usage = agent.usage ? formatUsage(agent.usage) : agent.progress?.tokens ? `tokens=${agent.progress.tokens}` : "usage=pending";
 				lines.push(line(`${status} ${agent.taskId} ${agent.role}->${agent.agent}`, w));
 				lines.push(line(`  ${agent.routing ? `model ${agent.routing.requested ? `${agent.routing.requested} → ` : ""}${agent.routing.resolved}` : agent.model ? `model ${agent.model}` : "model pending"}`, w));

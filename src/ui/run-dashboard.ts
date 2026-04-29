@@ -19,6 +19,7 @@ import { renderTranscriptPane } from "./dashboard-panes/transcript-pane.ts";
 import { renderHealthPane } from "./dashboard-panes/health-pane.ts";
 import { dashboardActionForKey } from "./keybinding-map.ts";
 import type { RunSnapshotCache, RunUiSnapshot } from "./snapshot-types.ts";
+import { spinnerBucket, spinnerFrame } from "./spinner.ts";
 
 interface DashboardComponent {
 	invalidate(): void;
@@ -140,7 +141,8 @@ function agentPreviewLine(agent: CrewAgentRecord, task: TeamTaskState | undefine
 		agent.startedAt ? `age=${formatAge(agent.completedAt ?? agent.startedAt)}` : undefined,
 	].filter((part): part is string => Boolean(part));
 	const recent = agent.progress?.recentOutput?.at(-1);
-	return `Agent: ${iconForStatus(agent.status)} ${agent.taskId} ${agent.role}->${agent.agent}${stats.length ? ` · ${stats.join(" · ")}` : ""}${recent ? ` ⎿ ${recent}` : ""}`;
+	const icon = iconForStatus(agent.status, { runningGlyph: spinnerFrame(agent.taskId) });
+	return `Agent: ${icon} ${agent.taskId} ${agent.role}->${agent.agent}${stats.length ? ` · ${stats.join(" · ")}` : ""}${recent ? ` ⎿ ${recent}` : ""}`;
 }
 
 function readAgentPreview(run: TeamRunManifest, maxLines = 5, options: RunDashboardOptions = {}): string[] {
@@ -189,7 +191,7 @@ function runLabel(run: TeamRunManifest, selected: boolean, snapshotCache?: RunSn
 	const step = stale ? "orphaned queued run" : running ? `step ${running.taskId}` : queued ? `queued ${queued.taskId}` : `agents ${agents.length}`;
 	const status: RunStatus = stale ? "stale" : (run.status as RunStatus);
 	const marker = selected ? "›" : " ";
-	return `${marker} ${iconForStatus(status)} ${run.runId.slice(-8)} ${status} | ${run.team}/${run.workflow ?? "none"} | ${step} | ${run.goal}`;
+	return `${marker} ${iconForStatus(status, { runningGlyph: spinnerFrame(run.runId) })} ${run.runId.slice(-8)} ${status} | ${run.team}/${run.workflow ?? "none"} | ${step} | ${run.goal}`;
 }
 
 function groupedRuns(runs: TeamRunManifest[], snapshotCache?: RunSnapshotCache): Array<{ label: string; run?: TeamRunManifest }> {
@@ -253,15 +255,17 @@ export class RunDashboard implements DashboardComponent {
 	}
 
 	private buildSignature(): string {
+		let hasRunning = false;
 		const statuses = this.runs.map((run) => {
 			const snapshot = snapshotFor(run, this.options.snapshotCache);
 			const displayRun = snapshot?.manifest ?? run;
 			const agents = snapshot?.agents ?? agentsFor(run, this.options.snapshotCache);
 			const stale = isLikelyOrphanedActiveRun(displayRun, agents);
 			const status: RunStatus = stale ? "stale" : (displayRun.status as RunStatus);
+			if (status === "running" || agents.some((agent) => agent.status === "running")) hasRunning = true;
 			return snapshot?.signature ?? `${displayRun.runId}:${displayRun.status}:${displayRun.updatedAt}:${status}`;
 		}).join("|");
-		return `${this.selected}:${this.showFullProgress ? 1 : 0}:${this.activePane}:${statuses}`;
+		return `${this.selected}:${this.showFullProgress ? 1 : 0}:${this.activePane}:${statuses}${hasRunning ? `:spin=${spinnerBucket()}` : ""}`;
 	}
 
 	invalidate(): void {

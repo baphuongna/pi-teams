@@ -318,7 +318,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 			}
 		};
 		renderScheduler = new RenderScheduler(pi.events, renderTick, {
-			fallbackMs: loadedConfig.config.ui?.dashboardLiveRefreshMs ?? 750,
+			fallbackMs: loadedConfig.config.ui?.dashboardLiveRefreshMs ?? 250,
 			onInvalidate: () => getRunSnapshotCache(ctx.cwd).invalidate(),
 		});
 	});

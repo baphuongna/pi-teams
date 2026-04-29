@@ -430,7 +430,11 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 					clearHardKillTimer(child.pid);
 				}
 				const timeoutError = responseTimeoutHit && !stderr.trim() ? { error: `Child Pi produced no new output for ${responseTimeoutMs}ms; process was terminated as unresponsive.` } : undefined;
-				settle({ exitCode, stdout, stderr, ...(forcedFinalDrain && !stderr.trim() ? { error: `Child Pi did not exit within ${finalDrainMs}ms after final assistant message; termination was requested.` } : {}), ...(timeoutError ? { error: timeoutError.error } : {}) });
+				// A final assistant event is the child Pi contract for "the worker produced its answer".
+				// Some Pi processes can linger during post-final cleanup/stdio shutdown; finalDrain terminates
+				// that lingering process so the parent can continue, but it must not turn a completed
+				// subagent answer into a failed task. Real pre-final response timeouts still report errors.
+				settle({ exitCode: forcedFinalDrain && !timeoutError ? 0 : exitCode, stdout, stderr, ...(timeoutError ? { error: timeoutError.error } : {}) });
 			});
 		});
 	} finally {
