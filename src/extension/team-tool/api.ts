@@ -5,7 +5,7 @@ import { loadRunManifestById, saveRunManifest, saveRunTasks, updateRunStatus } f
 import { withRunLockSync } from "../../state/locks.ts";
 import { canTransitionTaskStatus, isTeamTaskStatus } from "../../state/contracts.ts";
 import { claimTask, releaseTaskClaim, transitionClaimedTaskStatus } from "../../state/task-claims.ts";
-import { acknowledgeMailboxMessage, appendMailboxMessage, readDeliveryState, readMailbox, validateMailbox, type MailboxDirection } from "../../state/mailbox.ts";
+import { acknowledgeMailboxMessage, appendMailboxMessage, readDeliveryState, readMailbox, readMailboxMessage, validateMailbox, type MailboxDirection } from "../../state/mailbox.ts";
 import { appendEvent, readEvents, readEventsCursor } from "../../state/event-log.ts";
 import { resolveCrewRuntime } from "../../runtime/runtime-resolver.ts";
 import { probeLiveSessionRuntime } from "../../subagents/live/session-runtime.ts";
@@ -298,8 +298,18 @@ export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): 
 		if (!messageId) return result("API ack-message requires config.messageId.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
 		try {
 			return withRunLockSync(loaded.manifest, () => {
+				const message = readMailboxMessage(loaded.manifest, messageId);
 				const delivery = acknowledgeMailboxMessage(loaded.manifest, messageId);
 				appendEvent(loaded.manifest.eventsPath, { type: "mailbox.acknowledged", runId: loaded.manifest.runId, data: { messageId } });
+				if (message?.data?.kind === "group_join" && typeof message.data.requestId === "string") {
+					appendEvent(loaded.manifest.eventsPath, {
+						type: "agent.group_join.acknowledged",
+						runId: loaded.manifest.runId,
+						message: "Group join delivery acknowledged via mailbox ack.",
+						data: { requestId: message.data.requestId, messageId, batchId: message.data.batchId, partial: message.data.partial, acknowledgedAt: delivery.updatedAt, acknowledgedBy: "leader" },
+						metadata: { provenance: "api" },
+					});
+				}
 				ctx.events?.emit?.("crew.mailbox.acknowledged", { runId: loaded.manifest.runId, messageId, delivery });
 				return result(JSON.stringify(delivery, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
 			});

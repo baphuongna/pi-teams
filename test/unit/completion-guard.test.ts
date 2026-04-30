@@ -1,0 +1,71 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import test from "node:test";
+import assert from "node:assert/strict";
+import { evaluateCompletionMutationGuard, expectsImplementationMutation } from "../../src/runtime/completion-guard.ts";
+import { appendTaskAttentionEvent } from "../../src/runtime/attention-events.ts";
+import { createRunManifest } from "../../src/state/state-store.ts";
+import { readEvents } from "../../src/state/event-log.ts";
+import type { TeamConfig } from "../../src/teams/team-config.ts";
+import type { WorkflowConfig } from "../../src/workflows/workflow-config.ts";
+
+const team: TeamConfig = { name: "guard", description: "guard", source: "builtin", filePath: "guard.team.md", roles: [{ name: "executor", agent: "executor" }] };
+const workflow: WorkflowConfig = { name: "guard", description: "guard", source: "builtin", filePath: "guard.workflow.md", steps: [{ id: "execute", role: "executor", task: "Execute" }] };
+
+function withTranscript(lines: unknown[], fn: (file: string) => void): void {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-completion-guard-"));
+	try {
+		const file = path.join(dir, "transcript.jsonl");
+		fs.writeFileSync(file, lines.map((line) => JSON.stringify(line)).join("\n"), "utf-8");
+		fn(file);
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+test("completion guard expects mutations only for mutating roles", () => {
+	assert.equal(expectsImplementationMutation({ role: "executor", taskText: "Implement fix" }), true);
+	assert.equal(expectsImplementationMutation({ role: "test-engineer", taskText: "Add regression test" }), true);
+	assert.equal(expectsImplementationMutation({ role: "reviewer", taskText: "Review fix" }), false);
+	assert.equal(expectsImplementationMutation({ role: "executor", taskText: "Plan only; do not edit" }), false);
+});
+
+test("completion guard detects toolCall edit/write mutations", () => {
+	withTranscript([{ message: { content: [{ type: "toolCall", name: "edit", input: {} }] } }], (transcriptPath) => {
+		const result = evaluateCompletionMutationGuard({ role: "executor", taskText: "Implement fix", transcriptPath });
+		assert.equal(result.expectedMutation, true);
+		assert.equal(result.observedMutation, true);
+		assert.equal(result.reason, undefined);
+	});
+});
+
+test("completion guard detects tool_execution_start bash mutation", () => {
+	withTranscript([{ type: "tool_execution_start", toolName: "bash", args: { command: "git add src/file.ts" } }], (transcriptPath) => {
+		const result = evaluateCompletionMutationGuard({ role: "executor", taskText: "Implement fix", transcriptPath });
+		assert.equal(result.observedMutation, true);
+	});
+});
+
+test("completion guard warns for implementation without mutation but not read-only commands", () => {
+	withTranscript([{ type: "tool_execution_start", toolName: "bash", args: { command: "rg TODO src" } }], (transcriptPath) => {
+		const result = evaluateCompletionMutationGuard({ role: "executor", taskText: "Implement fix", transcriptPath });
+		assert.equal(result.expectedMutation, true);
+		assert.equal(result.observedMutation, false);
+		assert.equal(result.reason, "no_mutation_observed");
+	});
+});
+
+test("task attention events dedupe by task and reason", () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-attention-dedupe-"));
+	try {
+		fs.mkdirSync(path.join(cwd, ".crew"), { recursive: true });
+		const { manifest } = createRunManifest({ cwd, team, workflow, goal: "dedupe" });
+		const input = { manifest, taskId: "01_execute", message: "needs attention", data: { activityState: "needs_attention" as const, reason: "completion_guard" as const, taskId: "01_execute" } };
+		assert.equal(appendTaskAttentionEvent(input), true);
+		assert.equal(appendTaskAttentionEvent(input), false);
+		assert.equal(readEvents(manifest.eventsPath).filter((event) => event.type === "task.attention").length, 1);
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});

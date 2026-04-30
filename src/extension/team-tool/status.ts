@@ -1,6 +1,7 @@
 import { loadConfig } from "../../config/config.ts";
 import type { TeamToolParamsValue } from "../../schema/team-tool-schema.ts";
 import { appendEvent, readEvents } from "../../state/event-log.ts";
+import { readDeliveryState, readMailbox } from "../../state/mailbox.ts";
 import { loadRunManifestById, updateRunStatus } from "../../state/state-store.ts";
 import { aggregateUsage, formatUsage } from "../../state/usage.ts";
 import { applyAttentionState, formatActivityAge, resolveCrewControlConfig } from "../../runtime/agent-control.ts";
@@ -27,15 +28,32 @@ export function handleStatus(params: TeamToolParamsValue, ctx: TeamContext): PiT
 	}
 	const counts = new Map<string, number>();
 	for (const task of tasks) counts.set(task.status, (counts.get(task.status) ?? 0) + 1);
-	const events = readEvents(manifest.eventsPath).slice(-8);
+	const allEvents = readEvents(manifest.eventsPath);
+	const events = allEvents.slice(-8);
+	const attentionByTask = new Map(allEvents.filter((event) => event.type === "task.attention" && event.taskId).map((event) => [event.taskId!, event]));
 	const controlConfig = resolveCrewControlConfig(loadConfig(ctx.cwd).config);
 	const crewAgents = readCrewAgents(manifest).map((agent) => applyAttentionState(manifest, agent, controlConfig));
 	const artifactLines = manifest.artifacts.slice(-10).map((artifact) => `- ${artifact.kind}: ${artifact.path}${artifact.sizeBytes !== undefined ? ` (${artifact.sizeBytes} bytes)` : ""}`);
+	const deliveryState = readDeliveryState(manifest);
+	const ackTimeoutMs = loadConfig(ctx.cwd).config.runtime?.groupJoinAckTimeoutMs;
+	const groupJoinLines = readMailbox(manifest, "outbox")
+		.filter((message) => message.data?.kind === "group_join")
+		.slice(-5)
+		.map((message) => {
+			const ack = deliveryState.messages[message.id] === "acknowledged" ? "acknowledged" : "pending";
+			const ageMs = Date.now() - new Date(message.createdAt).getTime();
+			const requestId = String(message.data?.requestId ?? "unknown");
+			const timedOut = ack === "pending" && ackTimeoutMs !== undefined && Number.isFinite(ageMs) && ageMs > ackTimeoutMs;
+			if (timedOut && !allEvents.some((event) => event.type === "agent.group_join.ack_timeout" && event.data?.requestId === requestId)) {
+				appendEvent(manifest.eventsPath, { type: "agent.group_join.ack_timeout", runId: manifest.runId, message: "Group join delivery ack timed out; mailbox delivery remains the fallback.", data: { requestId, messageId: message.id, batchId: message.data?.batchId, partial: message.data?.partial, ageMs, ackTimeoutMs } });
+			}
+			return `- ${String(message.data?.partial) === "true" ? "partial" : "completed"} request=${requestId} message=${message.id} ack=${timedOut ? "timeout" : ack}`;
+		});
 	const totalUsage = aggregateUsage(tasks);
 	const activeAgents = crewAgents.filter((agent) => agent.status === "running");
 	const completedAgents = crewAgents.filter((agent) => agent.status !== "running");
 	const waitingTasks = tasks.filter((task) => task.status === "queued");
-	const agentLine = (agent: typeof crewAgents[number]): string => `- ${agent.id} [${agent.status}] ${agent.role} -> ${agent.agent} runtime=${agent.runtime}${agent.model ? ` model=${agent.model}` : ""}${agent.usage ? ` usage=${formatUsage(agent.usage)}` : ""}${agent.progress?.activityState === "needs_attention" ? " needs_attention" : ""}${formatActivityAge(agent) ? ` activity=${formatActivityAge(agent)}` : ""}${agent.progress?.currentTool ? ` tool=${agent.progress.currentTool}` : ""}${agent.toolUses ? ` tools=${agent.toolUses}` : ""}${!agent.usage && agent.progress?.tokens ? ` tokens=${agent.progress.tokens}` : ""}${agent.progress?.turns ? ` turns=${agent.progress.turns}` : ""}${agent.jsonEvents !== undefined ? ` jsonEvents=${agent.jsonEvents}` : ""}${agent.statusPath ? ` status=${agent.statusPath}` : ""}${agent.error ? ` error=${agent.error}` : ""}`;
+	const agentLine = (agent: typeof crewAgents[number]): string => `- ${agent.id} [${agent.status}] ${agent.role} -> ${agent.agent} runtime=${agent.runtime}${agent.model ? ` model=${agent.model}` : ""}${agent.usage ? ` usage=${formatUsage(agent.usage)}` : ""}${agent.progress?.activityState ? ` activityState=${agent.progress.activityState}` : ""}${formatActivityAge(agent) ? ` activity=${formatActivityAge(agent)}` : ""}${agent.progress?.currentTool ? ` tool=${agent.progress.currentTool}` : ""}${agent.toolUses ? ` tools=${agent.toolUses}` : ""}${!agent.usage && agent.progress?.tokens ? ` tokens=${agent.progress.tokens}` : ""}${agent.progress?.turns ? ` turns=${agent.progress.turns}` : ""}${agent.jsonEvents !== undefined ? ` jsonEvents=${agent.jsonEvents}` : ""}${agent.outputPath ? ` output=${agent.outputPath}` : ""}${agent.transcriptPath ? ` transcript=${agent.transcriptPath}` : ""}${agent.statusPath ? ` status=${agent.statusPath}` : ""}${agent.error ? ` error=${agent.error}` : ""}`;
 	const lines = [
 		`Run: ${manifest.runId}`,
 		`Team: ${manifest.team}`,
@@ -51,7 +69,7 @@ export function handleStatus(params: TeamToolParamsValue, ctx: TeamContext): PiT
 		"Task graph:",
 		...formatTaskGraphLines(tasks),
 		"Tasks:",
-		...(tasks.length ? tasks.map((task) => `- ${task.id} [${task.status}] ${task.role} -> ${task.agent}${task.taskPacket ? ` scope=${task.taskPacket.scope}` : ""}${task.verification ? ` green=${task.verification.observedGreenLevel}/${task.verification.requiredGreenLevel}` : ""}${task.modelAttempts?.length ? ` attempts=${task.modelAttempts.length}` : ""}${task.modelRouting ? ` modelRouting=${task.modelRouting.requested ? `${task.modelRouting.requested}->` : ""}${task.modelRouting.resolved}${task.modelRouting.usedAttempt ? ` attempt=${task.modelRouting.usedAttempt + 1}` : ""}` : ""}${task.jsonEvents !== undefined ? ` jsonEvents=${task.jsonEvents}` : ""}${task.usage ? ` usage=${JSON.stringify(task.usage)}` : ""}${task.worktree ? ` worktree=${task.worktree.path}` : ""}${task.error ? ` error=${task.error}` : ""}`) : ["- (none)"]),
+		...(tasks.length ? tasks.map((task) => `- ${task.id} [${task.status}] ${task.role} -> ${task.agent}${task.taskPacket ? ` scope=${task.taskPacket.scope}` : ""}${task.verification ? ` green=${task.verification.observedGreenLevel}/${task.verification.requiredGreenLevel}` : ""}${task.modelAttempts?.length ? ` attempts=${task.modelAttempts.length}` : ""}${task.modelRouting ? ` modelRouting=${task.modelRouting.requested ? `${task.modelRouting.requested}->` : ""}${task.modelRouting.resolved}${task.modelRouting.usedAttempt ? ` attempt=${task.modelRouting.usedAttempt + 1}` : ""}` : ""}${task.agentProgress?.activityState ? ` activityState=${task.agentProgress.activityState}` : ""}${attentionByTask.get(task.id)?.data?.reason ? ` attention=${String(attentionByTask.get(task.id)?.data?.reason)}` : ""}${task.jsonEvents !== undefined ? ` jsonEvents=${task.jsonEvents}` : ""}${task.usage ? ` usage=${JSON.stringify(task.usage)}` : ""}${task.resultArtifact ? ` result=${task.resultArtifact.path}` : ""}${task.transcriptArtifact ? ` transcript=${task.transcriptArtifact.path}` : ""}${task.worktree ? ` worktree=${task.worktree.path}` : ""}${task.error ? ` error=${task.error}` : ""}`) : ["- (none)"]),
 		`Task counts: ${[...counts.entries()].map(([status, count]) => `${status}=${count}`).join(", ") || "none"}`,
 		"Active agents:",
 		...(activeAgents.length ? activeAgents.map(agentLine) : ["- (none)"]),
@@ -62,6 +80,8 @@ export function handleStatus(params: TeamToolParamsValue, ctx: TeamContext): PiT
 		"Policy decisions:",
 		...(manifest.policyDecisions?.length ? manifest.policyDecisions.map((item) => `- ${item.action} (${item.reason})${item.taskId ? ` ${item.taskId}` : ""}: ${item.message}`) : ["- (none)"]),
 		`Total usage: ${formatUsage(totalUsage)}`,
+		"Group joins:",
+		...(groupJoinLines.length ? groupJoinLines : ["- (none)"]),
 		"",
 		"Recent artifacts:",
 		...(artifactLines.length ? artifactLines : ["- (none)"]),

@@ -18,6 +18,7 @@ export interface MailboxMessage {
 	status: MailboxMessageStatus;
 	taskId?: string;
 	acknowledgedAt?: string;
+	data?: Record<string, unknown>;
 }
 
 export interface MailboxDeliveryState {
@@ -134,7 +135,7 @@ function parseMailboxMessage(raw: unknown, expectedDirection: MailboxDirection):
 	const obj = raw as Record<string, unknown>;
 	if (typeof obj.id !== "string" || typeof obj.runId !== "string" || !isDirection(obj.direction) || typeof obj.from !== "string" || typeof obj.to !== "string" || typeof obj.body !== "string" || typeof obj.createdAt !== "string" || !isStatus(obj.status)) return undefined;
 	if (obj.direction !== expectedDirection) return undefined;
-	return { id: obj.id, runId: obj.runId, direction: obj.direction, from: obj.from, to: obj.to, body: obj.body, createdAt: obj.createdAt, status: obj.status, taskId: typeof obj.taskId === "string" ? obj.taskId : undefined, acknowledgedAt: typeof obj.acknowledgedAt === "string" ? obj.acknowledgedAt : undefined };
+	return { id: obj.id, runId: obj.runId, direction: obj.direction, from: obj.from, to: obj.to, body: obj.body, createdAt: obj.createdAt, status: obj.status, taskId: typeof obj.taskId === "string" ? obj.taskId : undefined, acknowledgedAt: typeof obj.acknowledgedAt === "string" ? obj.acknowledgedAt : undefined, data: obj.data && typeof obj.data === "object" && !Array.isArray(obj.data) ? obj.data as Record<string, unknown> : undefined };
 }
 
 function readMailboxFile(filePath: string, direction: MailboxDirection): MailboxMessage[] {
@@ -208,6 +209,7 @@ export function appendMailboxMessage(manifest: TeamRunManifest, message: Omit<Ma
 		createdAt,
 		status: message.status ?? "queued",
 		taskId: message.taskId,
+		data: message.data,
 	};
 	fs.appendFileSync(mailboxFile(manifest, complete.direction, complete.taskId), `${JSON.stringify(redactSecrets(complete))}\n`, "utf-8");
 	const delivery = readDeliveryState(manifest);
@@ -215,6 +217,14 @@ export function appendMailboxMessage(manifest: TeamRunManifest, message: Omit<Ma
 	delivery.updatedAt = createdAt;
 	writeDeliveryState(manifest, delivery);
 	return complete;
+}
+
+export function findMailboxMessageByRequestId(manifest: TeamRunManifest, requestId: string): MailboxMessage | undefined {
+	return readMailbox(manifest).find((message) => message.data?.requestId === requestId);
+}
+
+export function readMailboxMessage(manifest: TeamRunManifest, messageId: string): MailboxMessage | undefined {
+	return readMailbox(manifest).find((message) => message.id === messageId);
 }
 
 export function acknowledgeMailboxMessage(manifest: TeamRunManifest, messageId: string): MailboxDeliveryState {

@@ -21,7 +21,11 @@ test("doctor report includes structured sections", () => {
 	assert.match(report.text, /\nFilesystem\n/);
 	assert.match(report.text, /\nDiscovery\n/);
 	assert.match(report.text, /\nResource validation\n/);
+	assert.match(report.text, /\nSchema\n/);
+	assert.match(report.text, /\nAsync\/result delivery\n/);
+	assert.match(report.text, /\nWorktrees\n/);
 	assert.match(report.text, /resource model hints/);
+	assert.match(report.text, /strict-provider schema/);
 	assert.match(report.text, /child Pi smoke/);
 	assert.equal(report.hasErrors, false);
 });

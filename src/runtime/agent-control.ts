@@ -1,6 +1,6 @@
 import type { PiTeamsConfig } from "../config/config.ts";
 import type { TeamRunManifest } from "../state/types.ts";
-import { appendEvent } from "../state/event-log.ts";
+import { appendTaskAttentionEvent } from "./attention-events.ts";
 import type { CrewAgentRecord } from "./crew-agent-runtime.ts";
 import { upsertCrewAgent } from "./crew-agent-records.ts";
 
@@ -53,12 +53,11 @@ export function applyAttentionState(manifest: TeamRunManifest, agent: CrewAgentR
 		},
 	};
 	upsertCrewAgent(manifest, updated);
-	appendEvent(manifest.eventsPath, {
-		type: "agent.needs_attention",
-		runId: manifest.runId,
+	appendTaskAttentionEvent({
+		manifest,
 		taskId: agent.taskId,
 		message: `${agent.agent} needs attention (no observed activity for ${Math.floor(age / 1000)}s).`,
-		data: { agentId: agent.id, ageMs: age, needsAttentionAfterMs: config.needsAttentionAfterMs },
+		data: { activityState: "needs_attention", reason: "idle", elapsedMs: age, taskId: agent.taskId, agentName: agent.agent, suggestedAction: "Check worker status, wait, steer, or cancel if needed." },
 	});
 	return updated;
 }

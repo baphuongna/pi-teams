@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { ChildPiLineObserver } from "../../src/runtime/child-pi.ts";
 import { deliverGroupJoin, resolveGroupJoinMode, shouldGroupJoin } from "../../src/runtime/group-join.ts";
+import { handleTeamTool } from "../../src/extension/team-tool.ts";
 import { parseSessionUsageFromJsonlText } from "../../src/runtime/session-usage.ts";
 import { readMailbox } from "../../src/state/mailbox.ts";
 import { createRunManifest } from "../../src/state/state-store.ts";
@@ -131,7 +132,36 @@ test("group join writes metadata artifact, event, and mailbox delivery", () => {
 		const mailbox = readMailbox(manifest, "outbox");
 		assert.equal(mailbox.length, 1);
 		assert.match(mailbox[0]!.body, /Group join completed/);
+		assert.equal(mailbox[0]!.data?.kind, "group_join");
+		assert.equal(mailbox[0]!.data?.requestId, delivery.requestId);
+		const reused = deliverGroupJoin({ manifest, mode: "smart", batch: tasks, allTasks: completed });
+		assert.equal(reused?.messageId, delivery.messageId);
+		assert.equal(readMailbox(manifest, "outbox").length, 1);
 		assert.match(fs.readFileSync(manifest.eventsPath, "utf-8"), /agent\.group_join\.completed/);
+		assert.match(fs.readFileSync(manifest.eventsPath, "utf-8"), /agent\.group_join\.delivery_reused/);
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("group join mailbox ack emits acknowledged event", async () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-group-join-ack-"));
+	try {
+		fs.mkdirSync(path.join(cwd, ".crew"), { recursive: true });
+		const { manifest, tasks } = createRunManifest({ cwd, team, workflow, goal: "phase4 ack" });
+		const completed = tasks.map((task) => ({ ...task, status: "completed" as const, finishedAt: new Date().toISOString() }));
+		const delivery = deliverGroupJoin({ manifest, mode: "smart", batch: tasks, allTasks: completed });
+		assert.ok(delivery?.messageId);
+		const pendingStatus = await handleTeamTool({ action: "status", runId: manifest.runId, config: { runtime: { groupJoinAckTimeoutMs: 1 } } }, { cwd });
+		assert.equal(pendingStatus.isError, false);
+		const pendingText = pendingStatus.content.map((item) => item.type === "text" ? item.text : "").join("\n");
+		assert.match(pendingText, /Group joins:/);
+		const ack = await handleTeamTool({ action: "api", runId: manifest.runId, config: { operation: "ack-message", messageId: delivery.messageId } }, { cwd });
+		assert.equal(ack.isError, false);
+		const acknowledgedStatus = await handleTeamTool({ action: "status", runId: manifest.runId }, { cwd });
+		const acknowledgedText = acknowledgedStatus.content.map((item) => item.type === "text" ? item.text : "").join("\n");
+		assert.match(acknowledgedText, /ack=acknowledged/);
+		assert.match(fs.readFileSync(manifest.eventsPath, "utf-8"), /agent\.group_join\.acknowledged/);
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}

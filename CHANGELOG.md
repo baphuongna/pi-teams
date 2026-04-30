@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added
+
+- Added strict-provider-friendly team tool schema shapes and config schema coverage for result delivery controls.
+- Added resilient result watcher fallback polling for resource-limit watch failures and partial JSON retry handling.
+- Added `runtime.completionMutationGuard` (`off`/`warn`/`fail`) with structured `task.attention` events when implementation-style workers complete without observed mutations.
+- Added group-join mailbox delivery metadata, request-id dedupe, ack observability, timeout events, and dashboard/status visibility.
+- Expanded `team doctor` and `team status` with schema, async/result delivery, worktree/readiness, attention, transcript, and group-join diagnostics.
+
+### Fixed
+
+- Recovered adaptive implementation planner output when compaction truncates the end marker but complete phase objects are still present.
+
 ## 0.1.40
 
 ### Added

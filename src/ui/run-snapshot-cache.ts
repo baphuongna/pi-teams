@@ -8,7 +8,7 @@ import { readEvents, type TeamEvent } from "../state/event-log.ts";
 import type { MailboxMessageStatus } from "../state/mailbox.ts";
 import { loadRunManifestById } from "../state/state-store.ts";
 import type { TeamRunManifest, TeamTaskState } from "../state/types.ts";
-import type { RunSnapshotCache, RunUiMailbox, RunUiProgress, RunUiSnapshot, RunUiUsage } from "./snapshot-types.ts";
+import type { RunSnapshotCache, RunUiGroupJoin, RunUiMailbox, RunUiProgress, RunUiSnapshot, RunUiUsage } from "./snapshot-types.ts";
 
 const DEFAULT_TTL_MS = 250;
 const DEFAULT_MAX_ENTRIES = 24;
@@ -195,6 +195,25 @@ function readDeliveryMessages(filePath: string): Record<string, MailboxMessageSt
 	}
 }
 
+function readGroupJoinMailbox(filePath: string, delivery: Record<string, MailboxMessageStatus>): RunUiGroupJoin[] {
+	try {
+		return fs.readFileSync(filePath, "utf-8").split(/\r?\n/).filter(Boolean).flatMap((line) => {
+			try {
+				const parsed = JSON.parse(line) as unknown;
+				if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+				const message = parsed as { id?: unknown; data?: unknown };
+				const data = message.data && typeof message.data === "object" && !Array.isArray(message.data) ? message.data as Record<string, unknown> : undefined;
+				if (typeof message.id !== "string" || data?.kind !== "group_join" || typeof data.requestId !== "string") return [];
+				return [{ requestId: data.requestId, messageId: message.id, partial: data.partial === true, ack: delivery[message.id] === "acknowledged" ? "acknowledged" as const : "pending" as const }];
+			} catch {
+				return [];
+			}
+		});
+	} catch {
+		return [];
+	}
+}
+
 function readMailboxCounts(filePath: string, delivery: Record<string, MailboxMessageStatus>): number {
 	try {
 		return fs.readFileSync(filePath, "utf-8").split(/\r?\n/).filter(Boolean).reduce((count, line) => {
@@ -211,6 +230,12 @@ function readMailboxCounts(filePath: string, delivery: Record<string, MailboxMes
 	} catch {
 		return 0;
 	}
+}
+
+function groupJoinsFrom(manifest: TeamRunManifest): RunUiGroupJoin[] {
+	const root = path.join(manifest.stateRoot, "mailbox");
+	const delivery = readDeliveryMessages(path.join(root, "delivery.json"));
+	return readGroupJoinMailbox(path.join(root, "outbox.jsonl"), delivery).slice(-5);
 }
 
 function mailboxFrom(manifest: TeamRunManifest, agents: CrewAgentRecord[]): RunUiMailbox {
@@ -241,6 +266,7 @@ function signatureFor(input: Omit<RunUiSnapshot, "signature" | "fetchedAt">, sta
 		progress: input.progress,
 		usage: input.usage,
 		mailbox: input.mailbox,
+		groupJoins: input.groupJoins,
 		events: input.recentEvents.map((event) => [event.metadata?.seq, event.time, event.type, event.taskId, event.message]),
 		output: input.recentOutputLines,
 		stamps,
@@ -306,6 +332,7 @@ export function createRunSnapshotCache(cwd: string, options: RunSnapshotCacheOpt
 			throw new Error(`Run '${runId}' could not be parsed.`);
 		}
 		const mailbox = mailboxFrom(loaded.manifest, agents);
+		const groupJoins = groupJoinsFrom(loaded.manifest);
 		const base = {
 			runId: loaded.manifest.runId,
 			cwd: loaded.manifest.cwd,
@@ -315,6 +342,7 @@ export function createRunSnapshotCache(cwd: string, options: RunSnapshotCacheOpt
 			progress: progressFromTasks(tasks),
 			usage: usageFrom(tasks, agents),
 			mailbox,
+			groupJoins,
 			recentEvents: safeRecentEvents(loaded.manifest.eventsPath, recentEventsLimit),
 			recentOutputLines: recentOutputLines(loaded.manifest, agents, recentOutputLimit),
 		};

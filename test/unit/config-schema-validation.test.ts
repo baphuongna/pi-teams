@@ -83,6 +83,8 @@ test("configPatchFromConfig validates config updates with TypeBox and drops inva
 		notifierIntervalMs: "2500",
 		runtime: {
 			groupJoin: "smart",
+			groupJoinAckTimeoutMs: 5000,
+			completionMutationGuard: "fail",
 			mode: 123,
 			graceTurns: 99,
 		},
@@ -95,6 +97,8 @@ test("configPatchFromConfig validates config updates with TypeBox and drops inva
 	assert.equal(patch.notifierIntervalMs, undefined);
 	assert.equal(patch.runtime?.mode, undefined);
 	assert.equal(patch.runtime?.groupJoin, "smart");
+	assert.equal(patch.runtime?.groupJoinAckTimeoutMs, 5000);
+	assert.equal(patch.runtime?.completionMutationGuard, "fail");
 	assert.equal(patch.runtime?.graceTurns, 99);
 	assert.equal(patch.limits?.maxTasksPerRun, 20);
 	assert.equal(patch.limits?.maxRunMinutes, undefined);

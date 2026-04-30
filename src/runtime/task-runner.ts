@@ -25,6 +25,8 @@ import { coordinationBridgeInstructions, renderTaskPrompt } from "./task-runner/
 import { applyAgentProgressEvent, applyUsageToProgress, progressEventSummary, shouldFlushProgressEvent } from "./task-runner/progress.ts";
 import { checkpointTask, persistSingleTaskUpdate, updateTask } from "./task-runner/state-helpers.ts";
 import { cleanResultText, isFinalChildEvent } from "./task-runner/result-utils.ts";
+import { evaluateCompletionMutationGuard } from "./completion-guard.ts";
+import { appendTaskAttentionEvent } from "./attention-events.ts";
 
 export interface TaskRunnerInput {
 	manifest: TeamRunManifest;
@@ -86,6 +88,8 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 	let error: string | undefined;
 	let modelAttempts: ModelAttemptSummary[] | undefined;
 	let parsedOutput: ParsedPiJsonOutput | undefined;
+	let finalStdout = "";
+	let transcriptPath: string | undefined;
 
 	let startupEvidence = createStartupEvidence({ command: runtimeKind === "child-process" ? "pi" : runtimeKind === "live-session" ? "live-session" : "safe-scaffold", startedAt: new Date(task.startedAt ?? new Date().toISOString()), finishedAt: new Date(), promptSentAt: new Date(task.startedAt ?? new Date().toISOString()), promptAccepted: true, exitCode: 0 });
 	const inputsArtifact = writeTaskInputsArtifact(manifest, task, dependencyContext);
@@ -100,10 +104,9 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 		const candidates = modelRoutingPlan.candidates;
 		const attemptModels = candidates.length > 0 ? candidates : [undefined];
 		const logs: string[] = [];
-		let finalStdout = "";
 		let finalStderr = "";
 		modelAttempts = [];
-		const transcriptPath = `${manifest.artifactsRoot}/transcripts/${task.id}.jsonl`;
+		transcriptPath = `${manifest.artifactsRoot}/transcripts/${task.id}.jsonl`;
 		let finalCheckpointWritten = false;
 		let lastAgentRecordPersistedAt = 0;
 		let lastHeartbeatPersistedAt = 0;
@@ -257,6 +260,26 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 		content: `${JSON.stringify({ ...captureWorktreeDiffStat(workspace.worktreePath), syntheticPaths: workspace.syntheticPaths ?? [], nodeModulesLinked: workspace.nodeModulesLinked ?? false }, null, 2)}\n`,
 		producer: task.id,
 	}) : undefined;
+
+	const mutationGuardMode = input.runtimeConfig?.completionMutationGuard ?? "warn";
+	const mutationGuard = !error && mutationGuardMode !== "off" ? evaluateCompletionMutationGuard({ role: task.role, taskText: `${task.title}\n${input.step.task}`, transcriptPath: runtimeKind === "child-process" ? transcriptPath : transcriptArtifact?.path, stdout: finalStdout }) : undefined;
+	if (mutationGuard?.reason === "no_mutation_observed") {
+		appendTaskAttentionEvent({
+			manifest,
+			taskId: task.id,
+			message: "Implementation-style task completed without an observed mutation tool call.",
+			data: { activityState: "needs_attention", reason: "completion_guard", taskId: task.id, agentName: task.agent, observedTools: mutationGuard.observedTools, suggestedAction: mutationGuardMode === "fail" ? "Review the worker output and rerun with a concrete implementation task." : "Review the worker output; set runtime.completionMutationGuard='fail' to enforce this." },
+		});
+		task = { ...task, agentProgress: { ...(task.agentProgress ?? emptyCrewAgentProgress()), activityState: "needs_attention" } };
+		if (mutationGuardMode === "fail") {
+			error = "Completion mutation guard failed: implementation-style task completed without an observed mutation tool call.";
+			exitCode = exitCode === 0 ? 1 : exitCode;
+			if (modelAttempts?.length) {
+				modelAttempts = modelAttempts.map((attempt, index) => index === modelAttempts!.length - 1 ? { ...attempt, success: false, exitCode, error } : attempt);
+			}
+		}
+		tasks = updateTask(tasks, task);
+	}
 
 	task = {
 		...task,

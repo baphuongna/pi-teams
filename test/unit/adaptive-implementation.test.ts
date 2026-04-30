@@ -45,6 +45,11 @@ test("adaptive plan repair recovers malformed, oversized, and aliased-role plans
 	const aliased = __test__repairAdaptivePlan(`ADAPTIVE_PLAN_JSON_START\n${JSON.stringify({ phases: [{ name: "review", tasks: [{ role: "code-review", task: "Review" }, { role: "mystery", task: "Skip me" }] }] })}\nADAPTIVE_PLAN_JSON_END`, roles);
 	assert.equal(aliased.plan?.phases[0]!.tasks.length, 1);
 	assert.equal(aliased.plan?.phases[0]!.tasks[0]!.role, "reviewer");
+
+	const compactedTail = __test__repairAdaptivePlan(`ADAPTIVE_PLAN_JSON_START\n{"phases":[{"name":"build","tasks":[{"role":"executor","task":"Implement"}]},{"name":"handoff","tasks":[{"role":"writer","task":"Prepare notes:\n[pi-crew compacted 303 chars]\n`, roles);
+	assert.equal(compactedTail.plan?.phases.length, 1);
+	assert.equal(compactedTail.plan?.phases[0]!.name, "build");
+	assert.equal(compactedTail.plan?.phases[0]!.tasks[0]!.role, "executor");
 });
 
 test("adaptive implementation workflow is planner-assessed, not a fixed specialist template", () => {

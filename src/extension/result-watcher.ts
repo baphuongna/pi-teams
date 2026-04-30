@@ -26,6 +26,12 @@ export interface ResultWatcherOptions extends ResultWatcherDependencies {
 }
 
 const RESULT_WATCHER_RESTART_MS = 3000;
+const RESULT_WATCHER_POLL_MS = 1000;
+
+function shouldFallBackToPolling(error: unknown): boolean {
+	const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
+	return code === "EMFILE" || code === "ENOSPC" || code === "EPERM";
+}
 
 function readJson(filePath: string): unknown | undefined {
 	try {
@@ -45,16 +51,19 @@ export function createResultWatcher(events: ResultWatcherEvents, resultsDir: str
 	const seen = getGlobalSeenMap("pi-crew.result-watcher");
 	let watcher: fs.FSWatcher | null | undefined;
 	let restartTimer: ReturnType<typeof setTimeout> | undefined;
+	let pollTimer: ReturnType<typeof setInterval> | undefined;
 	const coalescer = createFileCoalescer((file) => {
 		if (!isCurrent()) return;
 		const filePath = path.join(resultsDir, file);
 		if (!file.endsWith(".json") || !fs.existsSync(filePath)) return;
 		const payload = readJson(filePath);
-		if (payload !== undefined) {
-			const key = buildCompletionKey(payload as Record<string, unknown>, `file:${file}`);
-			if (!markSeenWithTtl(seen, key, Date.now(), completionTtlMs)) {
-				events.emit(eventName, payload);
-			}
+		if (payload === undefined) {
+			coalescer.schedule(file, RESULT_WATCHER_POLL_MS);
+			return;
+		}
+		const key = buildCompletionKey(payload as Record<string, unknown>, `file:${file}`);
+		if (!markSeenWithTtl(seen, key, Date.now(), completionTtlMs)) {
+			events.emit(eventName, payload);
 		}
 		try {
 			fs.unlinkSync(filePath);
@@ -62,7 +71,22 @@ export function createResultWatcher(events: ResultWatcherEvents, resultsDir: str
 			logInternalError("result-watcher.unlink", error, `filePath=${filePath}`);
 		}
 	}, 50);
-	const scheduleRestart = () => {
+	const poll = () => {
+		if (!isCurrent() || !fs.existsSync(resultsDir)) return;
+		for (const file of fs.readdirSync(resultsDir).filter((entry) => entry.endsWith(".json"))) coalescer.schedule(file, 0);
+	};
+	const startPolling = () => {
+		if (pollTimer) return;
+		pollTimer = setInterval(poll, RESULT_WATCHER_POLL_MS);
+		pollTimer.unref?.();
+		poll();
+	};
+	const stopPolling = () => {
+		if (pollTimer) clearInterval(pollTimer);
+		pollTimer = undefined;
+	};
+	const scheduleRestart = (error?: unknown) => {
+		if (shouldFallBackToPolling(error)) startPolling();
 		if (restartTimer) clearTimeout(restartTimer);
 		restartTimer = setTimeout(() => {
 			restartTimer = undefined;
@@ -85,17 +109,18 @@ export function createResultWatcher(events: ResultWatcherEvents, resultsDir: str
 				if (event !== "rename" || !fileName) return;
 				coalescer.schedule(fileName.toString());
 			}, scheduleRestart);
+			if (watcher) stopPolling();
 			watcher?.unref?.();
 		},
 		prime() {
-			if (!isCurrent() || !fs.existsSync(resultsDir)) return;
-			for (const file of fs.readdirSync(resultsDir).filter((entry) => entry.endsWith(".json"))) coalescer.schedule(file, 0);
+			poll();
 		},
 		stop() {
 			if (restartTimer) clearTimeout(restartTimer);
 			restartTimer = undefined;
 			closeWatcher(watcher);
 			watcher = undefined;
+			stopPolling();
 			coalescer.clear();
 		},
 	};

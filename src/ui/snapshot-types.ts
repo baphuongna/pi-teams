@@ -22,6 +22,13 @@ export interface RunUiMailbox {
 	needsAttention: number;
 }
 
+export interface RunUiGroupJoin {
+	requestId: string;
+	messageId: string;
+	partial: boolean;
+	ack: "pending" | "acknowledged";
+}
+
 export interface RunUiSnapshot {
 	runId: string;
 	cwd: string;
@@ -33,6 +40,7 @@ export interface RunUiSnapshot {
 	progress: RunUiProgress;
 	usage: RunUiUsage;
 	mailbox: RunUiMailbox;
+	groupJoins?: RunUiGroupJoin[];
 	recentEvents: TeamEvent[];
 	recentOutputLines: string[];
 }

@@ -92,6 +92,19 @@ export interface PlanApprovalState {
 	planArtifactPath?: string;
 }
 
+export type CrewActivityState = "active" | "active_long_running" | "needs_attention" | "stale";
+export type CrewAttentionReason = "idle" | "tool_failures" | "completion_guard" | "heartbeat_stale" | "plan_approval_pending";
+
+export interface CrewAttentionEventData {
+	activityState: CrewActivityState;
+	reason: CrewAttentionReason;
+	elapsedMs?: number;
+	taskId?: string;
+	agentName?: string;
+	suggestedAction?: string;
+	observedTools?: string[];
+}
+
 export interface TeamRunManifest {
 	schemaVersion: 1;
 	runId: string;

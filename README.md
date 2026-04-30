@@ -60,6 +60,8 @@ Current highlights:
 - reliability hardening: heartbeat gradient watcher, opt-in retry executor with attempt trace, crash-recovery detection, deadletter queue
 - background `Agent`/`crew_agent` completion wake-up so parent sessions can automatically join completed subagent results
 - optional `runtime.requirePlanApproval` gate for planner-first approval before mutating adaptive implementation workers run
+- optional `runtime.completionMutationGuard` to warn or fail implementation-style workers that complete without observed mutation tool calls
+- grouped result delivery is correlated through mailbox metadata, deduped by request id, and acknowledged via existing `ack-message`
 - shared redaction for common secrets before durable event/log/mailbox/artifact/metric/diagnostic persistence
 - package polish: `schema.json`, TypeScript semantic check, strip-types import smoke, cross-platform CI workflow, dry-run package verification
 
@@ -176,7 +178,10 @@ Supported config:
   },
   "runtime": {
     "mode": "auto",
-    "requirePlanApproval": false
+    "groupJoin": "smart",
+    "groupJoinAckTimeoutMs": 300000,
+    "requirePlanApproval": false,
+    "completionMutationGuard": "warn"
   },
   "limits": {
     "maxConcurrentWorkers": 3,
@@ -237,6 +242,8 @@ Safety notes:
 - Background `Agent`/`crew_agent` runs notify the parent session when they reach a terminal state; the parent can then call `get_subagent_result`/`crew_agent_result` and continue the original task.
 - `tools.terminateOnForeground` is an opt-in power-user setting. When true, foreground `Agent`/`crew_agent` calls return with `terminate: true` after the child result is available, saving one follow-up LLM turn. Default is false so the assistant can still summarize raw worker output.
 - Runtime state paths are treated as untrusted data: run ids, import bundles, artifact/transcript paths, mailbox files, and agent control/log files are validated with containment checks before reads or writes.
+- `runtime.completionMutationGuard` defaults to `warn`; set `off` to disable or `fail` to fail implementation-style tasks that report success without observed mutation tool calls.
+- Group-join result messages use normal mailbox delivery and normal `ack-message`; missing acknowledgements never block run completion, and duplicate delivery attempts reuse the same request id/message instead of appending spam.
 - Common secret patterns (`token=`, `apiKey=`, `Authorization: Bearer ...`, private keys, etc.) are redacted before durable logs/events/mailbox/artifacts/metrics/diagnostics are written.
 - `observability.enabled` defaults to true for in-memory metrics and heartbeat watching. Metric JSONL snapshots are gated by `telemetry.enabled`; set `telemetry.enabled=false` to opt out of local telemetry files.
 - `reliability.autoRetry` and `reliability.autoRecover` default to false. Enabling retry may execute an idempotent task more than once; each attempt is recorded in `task.attempts`, and exhausted retries append a deadletter entry.
@@ -472,7 +479,7 @@ Manual slash commands are ops/debug controls. Autonomous tool use via policy/rec
 /team-api team_... send-message taskId=task_... direction=inbox to=worker body="task scoped message"
 /team-api team_... read-mailbox direction=outbox
 /team-api team_... read-mailbox taskId=task_... direction=inbox
-/team-api team_... ack-message messageId=msg_...
+/team-api team_... ack-message messageId=msg_...   # also acknowledges group-join result messages
 /team-api team_... read-delivery
 /team-api team_... validate-mailbox repair=true
 /team-api team_... approve-plan

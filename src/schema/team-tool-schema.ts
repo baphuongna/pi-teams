@@ -1,9 +1,18 @@
 import { Type } from "typebox";
 
 const SkillOverride = Type.Unsafe({
-	type: ["string", "array", "boolean"],
-	items: { type: "string" },
 	description: "Skill name(s) to inject, array of skill names, or false to disable role defaults.",
+	anyOf: [
+		{ type: "string" },
+		{ type: "array", items: { type: "string" } },
+		{ type: "boolean" },
+	],
+});
+
+const FreeformConfig = Type.Unsafe({
+	description: "Resource config for management actions.",
+	type: "object",
+	additionalProperties: true,
 });
 
 export const TeamToolParams = Type.Object({
@@ -66,7 +75,7 @@ export const TeamToolParams = Type.Object({
 		Type.Literal("project"),
 		Type.Literal("both"),
 	], { description: "Resource scope for discovery or management." })),
-	config: Type.Optional(Type.Unsafe({ description: "Resource config for management actions." })),
+	config: Type.Optional(FreeformConfig),
 	dryRun: Type.Optional(Type.Boolean({ description: "Preview a management mutation without writing files." })),
 	confirm: Type.Optional(Type.Boolean({ description: "Required for destructive management actions." })),
 	force: Type.Optional(Type.Boolean({ description: "Override reference checks for destructive management actions." })),

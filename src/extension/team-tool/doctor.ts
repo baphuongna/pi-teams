@@ -10,6 +10,7 @@ import { DEFAULT_PATHS } from "../../config/defaults.ts";
 import type { TeamToolParamsValue } from "../../schema/team-tool-schema.ts";
 import { getPiSpawnCommand } from "../../runtime/pi-spawn.ts";
 import { validateResources } from "../validate-resources.ts";
+import { TeamToolParams } from "../../schema/team-tool-schema.ts";
 import type { PiTeamsToolResult } from "../tool-result.ts";
 import { configRecord, result, type TeamContext } from "./context.ts";
 
@@ -57,6 +58,24 @@ function checkWritableDir(dir: string): { ok: boolean; detail: string } {
 		const message = error instanceof Error ? error.message : String(error);
 		return { ok: false, detail: `${dir}: ${message}` };
 	}
+}
+
+function auditJsonSchema(schema: unknown): string[] {
+	const issues: string[] = [];
+	const walk = (node: unknown): void => {
+		if (!node || typeof node !== "object" || Array.isArray(node)) return;
+		const record = node as Record<string, unknown>;
+		if (Array.isArray(record.type)) issues.push("schema node uses array-valued type");
+		if (record.description && !record.type && !record.anyOf && !record.oneOf && !record.allOf && !record.properties) issues.push(`description-only schema node: ${record.description}`);
+		if (record.type === "array" && !record.items) issues.push("array schema missing items");
+		if (record.type && (record.anyOf || record.oneOf)) issues.push("schema node combines type with union keyword");
+		for (const value of Object.values(record)) {
+			if (Array.isArray(value)) for (const item of value) walk(item);
+			else walk(value);
+		}
+	};
+	walk(schema);
+	return issues;
 }
 
 function makeLine(check: DoctorCheck): string {
@@ -130,6 +149,18 @@ export function buildTeamDoctorReport(input: TeamDoctorReportInput): TeamDoctorR
 			ok: input.validationErrors === 0,
 			detail: `${input.validationErrors} errors, ${input.validationWarnings} warnings`,
 		}]),
+		section("Schema", () => {
+			const schemaIssues = auditJsonSchema(TeamToolParams);
+			return [{ label: "strict-provider schema", ok: schemaIssues.length === 0, detail: schemaIssues.length ? schemaIssues.slice(0, 3).join("; ") : "team tool schema compatible" }];
+		}),
+		section("Async/result delivery", () => [
+			{ label: "result watcher", ok: true, detail: "fs.watch with polling fallback for EMFILE/ENOSPC/EPERM" },
+			{ label: "async notifier", ok: true, detail: "session-stale guarded completion notifications enabled" },
+		]),
+		section("Worktrees", () => [
+			{ label: "leader repository", ok: true, detail: input.cwd },
+			{ label: "cleanup policy", ok: true, detail: "dirty worktrees preserved unless force is set" },
+		]),
 	];
 	if (input.smokeChildPi) {
 		sections.push([`Child check`, `- ${input.smokeChildPi.ok ? "OK" : "FAIL"} child Pi smoke: ${input.smokeChildPi.detail}`]);

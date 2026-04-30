@@ -36,7 +36,9 @@ export const PiTeamsRuntimeConfigSchema = Type.Object({
 	inheritContext: Type.Optional(Type.Boolean()),
 	promptMode: Type.Optional(Type.Union([Type.Literal("replace"), Type.Literal("append")])),
 	groupJoin: Type.Optional(Type.Union([Type.Literal("off"), Type.Literal("group"), Type.Literal("smart")])),
+	groupJoinAckTimeoutMs: Type.Optional(Type.Integer({ minimum: 1 })),
 	requirePlanApproval: Type.Optional(Type.Boolean()),
+	completionMutationGuard: Type.Optional(Type.Union([Type.Literal("off"), Type.Literal("warn"), Type.Literal("fail")])),
 }, { additionalProperties: false });
 
 export const PiTeamsControlConfigSchema = Type.Object({

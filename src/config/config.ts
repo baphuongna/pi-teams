@@ -30,6 +30,8 @@ export interface CrewLimitsConfig {
 
 export type CrewRuntimeMode = "auto" | "scaffold" | "child-process" | "live-session";
 
+export type CompletionMutationGuardMode = "off" | "warn" | "fail";
+
 export interface CrewRuntimeConfig {
 	mode?: CrewRuntimeMode;
 	preferLiveSession?: boolean;
@@ -39,7 +41,9 @@ export interface CrewRuntimeConfig {
 	inheritContext?: boolean;
 	promptMode?: "replace" | "append";
 	groupJoin?: "off" | "group" | "smart";
+	groupJoinAckTimeoutMs?: number;
 	requirePlanApproval?: boolean;
+	completionMutationGuard?: CompletionMutationGuardMode;
 }
 
 export interface CrewControlConfig {
@@ -493,7 +497,9 @@ function parseRuntimeConfig(value: unknown): CrewRuntimeConfig | undefined {
 		inheritContext: parseWithSchema(Type.Boolean(), obj.inheritContext),
 		promptMode: parseWithSchema(Type.Union([Type.Literal("replace"), Type.Literal("append")]), obj.promptMode),
 		groupJoin: parseWithSchema(Type.Union([Type.Literal("off"), Type.Literal("group"), Type.Literal("smart")]), obj.groupJoin),
+		groupJoinAckTimeoutMs: parsePositiveInteger(obj.groupJoinAckTimeoutMs, 86_400_000),
 		requirePlanApproval: parseWithSchema(Type.Boolean(), obj.requirePlanApproval),
+		completionMutationGuard: parseWithSchema(Type.Union([Type.Literal("off"), Type.Literal("warn"), Type.Literal("fail")]), obj.completionMutationGuard),
 	};
 	return Object.values(runtime).some((entry) => entry !== undefined) ? runtime : undefined;
 }

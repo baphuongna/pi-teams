@@ -118,8 +118,11 @@ function slug(value: string): string {
 
 function extractAdaptivePlanJson(text: string): string | undefined {
 	const markerMatch = text.match(/ADAPTIVE_PLAN_JSON_START\s*([\s\S]*?)\s*ADAPTIVE_PLAN_JSON_END/);
-	const fencedMatch = markerMatch ? undefined : text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-	return markerMatch?.[1] ?? fencedMatch?.[1];
+	if (markerMatch?.[1]) return markerMatch[1];
+	const startIndex = text.indexOf("ADAPTIVE_PLAN_JSON_START");
+	if (startIndex >= 0) return text.slice(startIndex + "ADAPTIVE_PLAN_JSON_START".length).trim();
+	const fencedMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+	return fencedMatch?.[1];
 }
 
 export function __test__parseAdaptivePlan(text: string, allowedRoles: string[]): AdaptivePlan | undefined {
@@ -179,6 +182,52 @@ function closeUnbalancedJson(raw: string): string {
 	return result;
 }
 
+function salvageCompletePhaseObjects(raw: string): unknown | undefined {
+	const phasesIndex = raw.indexOf('"phases"');
+	if (phasesIndex < 0) return undefined;
+	const arrayStart = raw.indexOf("[", phasesIndex);
+	if (arrayStart < 0) return undefined;
+	const phases: unknown[] = [];
+	let objectStart = -1;
+	let depth = 0;
+	let inString = false;
+	let escaped = false;
+	for (let index = arrayStart + 1; index < raw.length; index++) {
+		const char = raw[index];
+		if (escaped) {
+			escaped = false;
+			continue;
+		}
+		if (char === "\\" && inString) {
+			escaped = true;
+			continue;
+		}
+		if (char === '"') {
+			inString = !inString;
+			continue;
+		}
+		if (inString) continue;
+		if (char === "{") {
+			if (depth === 0) objectStart = index;
+			depth++;
+			continue;
+		}
+		if (char === "}") {
+			if (depth <= 0) continue;
+			depth--;
+			if (depth === 0 && objectStart >= 0) {
+				try {
+					phases.push(JSON.parse(raw.slice(objectStart, index + 1)));
+				} catch {
+					// Ignore malformed trailing phase objects and keep earlier complete phases.
+				}
+				objectStart = -1;
+			}
+		}
+	}
+	return phases.length ? { phases } : undefined;
+}
+
 function adaptiveRoleAlias(role: string, allowed: Set<string>): string | undefined {
 	if (allowed.has(role)) return role;
 	const normalized = slug(role);
@@ -199,6 +248,7 @@ export function __test__repairAdaptivePlan(text: string, allowedRoles: string[])
 	if (!raw) return { repaired: false, reason: "missing-json" };
 	const candidates = [raw, closeUnbalancedJson(raw)];
 	let parsed: unknown;
+	let salvageUsed = false;
 	for (const candidate of candidates) {
 		try {
 			parsed = JSON.parse(candidate);
@@ -207,13 +257,17 @@ export function __test__repairAdaptivePlan(text: string, allowedRoles: string[])
 			// Try the next repair candidate.
 		}
 	}
+	if (!parsed) {
+		parsed = salvageCompletePhaseObjects(raw);
+		salvageUsed = parsed !== undefined;
+	}
 	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { repaired: false, reason: "invalid-json" };
 	const phasesRaw = Array.isArray((parsed as { phases?: unknown }).phases) ? (parsed as { phases: unknown[] }).phases : Array.isArray((parsed as { tasks?: unknown }).tasks) ? [{ name: "adaptive", tasks: (parsed as { tasks: unknown[] }).tasks }] : undefined;
 	if (!phasesRaw) return { repaired: false, reason: "missing-phases" };
 	const allowed = new Set(allowedRoles);
 	const phases: AdaptivePlanPhase[] = [];
 	let total = 0;
-	let repaired = raw !== closeUnbalancedJson(raw);
+	let repaired = salvageUsed || raw !== closeUnbalancedJson(raw);
 	for (const [phaseIndex, phaseRaw] of phasesRaw.entries()) {
 		if (!phaseRaw || typeof phaseRaw !== "object" || Array.isArray(phaseRaw)) continue;
 		const phaseObj = phaseRaw as { name?: unknown; tasks?: unknown };

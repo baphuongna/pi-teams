@@ -29,6 +29,13 @@ Supported fields:
     "preferAsyncForLongTasks": false,
     "allowWorktreeSuggestion": true
   },
+  "runtime": {
+    "mode": "auto",
+    "groupJoin": "smart",
+    "groupJoinAckTimeoutMs": 300000,
+    "completionMutationGuard": "warn",
+    "requirePlanApproval": false
+  },
   "ui": {
     "widgetPlacement": "aboveEditor",
     "widgetMaxLines": 8,
@@ -112,6 +119,10 @@ Background `Agent`/`crew_agent` subagents wake the parent Pi session when they c
 ## State and API safety
 
 State paths are validated before read/write operations. Run ids, imported bundles, artifact and transcript references, mailbox files, and agent control/log files must stay inside their expected `.crew` roots and symlink escapes are rejected. Read-only mailbox APIs return default state without creating mailbox files when no messages exist.
+
+Group-join result delivery uses the normal outbox mailbox and normal `/team-api ... ack-message`. `runtime.groupJoinAckTimeoutMs` only emits observability (`agent.group_join.ack_timeout`) and does not block run completion.
+
+`runtime.completionMutationGuard` defaults to `warn`. Use `off` to disable or `fail` to fail implementation-style workers that complete without observed mutation tool calls.
 
 ## Worktree mode
 

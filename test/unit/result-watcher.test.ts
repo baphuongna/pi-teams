@@ -82,6 +82,46 @@ test("result watcher does not restart when generation is stale", async () => {
 	}
 });
 
+test("result watcher retries partial JSON without unlinking", async () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-result-watcher-partial-"));
+	const emitted: unknown[] = [];
+	try {
+		const filePath = path.join(dir, "partial.json");
+		fs.writeFileSync(filePath, "{", "utf-8");
+		const watcher = createResultWatcher({ emit: (_event, data) => emitted.push(data) }, dir);
+		watcher.prime();
+		await wait(80);
+		assert.equal(fs.existsSync(filePath), true);
+		fs.writeFileSync(filePath, JSON.stringify({ runId: "partial", status: "completed" }), "utf-8");
+		await wait(1200);
+		watcher.stop();
+		assert.deepEqual(emitted, [{ runId: "partial", status: "completed" }]);
+		assert.equal(fs.existsSync(filePath), false);
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("result watcher polls when fs.watch hits resource limits", async () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-result-watcher-poll-"));
+	const emitted: unknown[] = [];
+	try {
+		const watcher = createResultWatcher({ emit: (_event, data) => emitted.push(data) }, dir, {
+			watch: (_resultsDir, _listener, onError) => {
+				onError(Object.assign(new Error("too many watchers"), { code: "EMFILE" }));
+				return null;
+			},
+		});
+		watcher.start();
+		fs.writeFileSync(path.join(dir, "poll.json"), JSON.stringify({ runId: "poll", status: "completed" }), "utf-8");
+		await wait(1200);
+		watcher.stop();
+		assert.deepEqual(emitted, [{ runId: "poll", status: "completed" }]);
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test("result watcher restarts after watch error", async () => {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-result-watcher-restart-"));
 	let watchCalls = 0;

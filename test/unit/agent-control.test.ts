@@ -34,7 +34,7 @@ test("agent control marks stale running agents as needs_attention", () => {
 		const updated = applyAttentionState(manifest, record, resolveCrewControlConfig({ control: { needsAttentionAfterMs: 1000 } }));
 		assert.equal(updated.progress?.activityState, "needs_attention");
 		assert.equal(readCrewAgents(manifest)[0]!.progress?.activityState, "needs_attention");
-		assert.equal(readEvents(manifest.eventsPath).some((event) => event.type === "agent.needs_attention"), true);
+		assert.equal(readEvents(manifest.eventsPath).some((event) => event.type === "task.attention" && event.data?.reason === "idle"), true);
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}

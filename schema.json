@@ -69,7 +69,9 @@
         "inheritContext": { "type": "boolean" },
         "promptMode": { "type": "string", "enum": ["replace", "append"] },
         "groupJoin": { "type": "string", "enum": ["off", "group", "smart"] },
-        "requirePlanApproval": { "type": "boolean" }
+        "groupJoinAckTimeoutMs": { "type": "integer", "minimum": 1 },
+        "requirePlanApproval": { "type": "boolean" },
+        "completionMutationGuard": { "type": "string", "enum": ["off", "warn", "fail"] }
       }
     },
     "control": {

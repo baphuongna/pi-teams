@@ -18,14 +18,14 @@ export function closeWatcher(watcher: FSWatcher | null | undefined): void {
 export function watchWithErrorHandler(
 	path: string,
 	listener: WatchListener<string>,
-	onError: () => void,
+	onError: (error?: unknown) => void,
 ): FSWatcher | null {
 	try {
 		const watcher = fs.watch(path, listener);
 		watcher.on("error", onError);
 		return watcher;
-	} catch {
-		onError();
+	} catch (error) {
+		onError(error);
 		return null;
 	}
 }
