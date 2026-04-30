@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.41
+
 ### Added
 
 - Added strict-provider-friendly team tool schema shapes and config schema coverage for result delivery controls.
