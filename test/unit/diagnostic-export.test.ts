@@ -40,11 +40,11 @@ test("exportDiagnostic includes redacted metrics snapshot when registry is provi
 		const workflow = { name: "wf", description: "", steps: [{ id: "one", role: "worker" }], source: "test", filePath: "builtin" } as never;
 		const created = createRunManifest({ cwd, team, workflow, goal: "diag" });
 		const registry = createMetricRegistry();
-		registry.counter("crew.run.count", "runs").inc({ auth_token: "abc" });
+		registry.counter("crew.run.count", "runs").inc({ auth_token: "PI_CREW_TEST_SECRET_VALUE" });
 		const exported = await exportDiagnostic({ cwd }, created.manifest.runId, { registry });
 		assert.equal(exported.report.schemaVersion, 2);
 		assert.ok(exported.report.metricsSnapshot);
-		assert.doesNotMatch(fs.readFileSync(exported.path, "utf-8"), /abc/);
+		assert.doesNotMatch(fs.readFileSync(exported.path, "utf-8"), /PI_CREW_TEST_SECRET_VALUE/);
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}
