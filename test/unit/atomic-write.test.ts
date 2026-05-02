@@ -37,7 +37,7 @@ test("atomicWriteFileAsync writes through a temp file", async () => {
 
 test("renameWithRetry retries transient Windows rename failures", () => {
 	let calls = 0;
-	__test__renameWithRetry("from.tmp", "to.json", 3, () => {
+	__test__renameWithRetry("from.tmp", "to.json", 2, () => {
 		calls++;
 		if (calls < 3) throw eperm();
 	});
@@ -46,7 +46,7 @@ test("renameWithRetry retries transient Windows rename failures", () => {
 
 test("renameWithRetryAsync retries transient Windows rename failures", async () => {
 	let calls = 0;
-	await __test__renameWithRetryAsync("from.tmp", "to.json", 3, async () => {
+	await __test__renameWithRetryAsync("from.tmp", "to.json", 2, async () => {
 		calls++;
 		if (calls < 3) throw eperm();
 	});

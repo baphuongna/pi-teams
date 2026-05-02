@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+## 0.1.42
+
+### Fixed
+
+- Reduced atomic-write rename retries from 20 to 5 and added busy-wait fallback for `Atomics.wait` to avoid event-loop stalls on Windows with aggressive file-locking.
+- Applied the same `sleepSync` fallback pattern to `locks.ts` for consistent lock-acquisition resilience.
+- Removed dead `findReadyTask` function in team-runner.
+- Eliminated a redundant `refreshTaskGraphQueues` O(n) call per batch iteration by reusing the already-computed `taskGraphSnapshot` for ready-task selection.
+- Expanded `appendTaskAttentionEvent` dedup window from 100 to 200 events and switched to a computed dedup key.
+
+### Changed
+
+- Extended `MUTATING_TOOLS` set in completion guard with `replace_in_file`, `insert`, `delete_files`, `create_file`, `overwrite`, and `patch`.
+- Extended `MUTATING_COMMANDS` regex with `sed -i`, `tee`, `wget -O`, and `curl -o` patterns.
+- Reordered bash-command mutation check so mutating patterns (`sed -i`) take priority over read-only patterns (`sed`).
+- Unknown bash commands that don't match the read-only list are now treated as potentially mutating (conservative default).
+
+### Hardened
+
+- Replaced `timer.unref?.()` with `timer.unref()` in `SubagentManager` blocked-poll and stuck-notify timers.
+- Added session-liveness guard to `notifyOperator` fallback so it won't attempt `sendFollowUp` after extension cleanup.
+
 ## 0.1.41
 
 ### Added

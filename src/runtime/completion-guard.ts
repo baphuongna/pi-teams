@@ -15,9 +15,9 @@ export interface CompletionMutationGuardResult {
 }
 
 const MUTATING_ROLES = new Set(["executor", "test-engineer"]);
-const MUTATING_TOOLS = new Set(["edit", "write", "multi_edit", "apply_patch"]);
+const MUTATING_TOOLS = new Set(["edit", "write", "multi_edit", "apply_patch", "replace_in_file", "insert", "delete_files", "create_file", "overwrite", "patch"]);
 const READ_ONLY_COMMANDS = /^(pwd|ls|dir|cat|type|sed|grep|rg|find|git\s+(status|diff|log|show|branch|remote|rev-parse|ls-files)|npm\s+(test|run\s+(typecheck|check|lint|test|ci))|node\s+--test)\b/i;
-const MUTATING_COMMANDS = /\b(rm\s+-|del\s+|erase\s+|mv\s+|move\s+|cp\s+|copy\s+|mkdir\b|touch\b|git\s+(add|commit|push|reset|clean|checkout|switch|merge|rebase|stash)|npm\s+(install|i|uninstall|publish|version)|pnpm\s+(add|install|remove)|yarn\s+(add|install|remove)|python\b.*>|node\b.*>|echo\b.*>|Set-Content|Out-File)\b/i;
+const MUTATING_COMMANDS = /\b(rm\s+-|del\s+|erase\s+|mv\s+|move\s+|cp\s+|copy\s+|mkdir\b|touch\b|git\s+(add|commit|push|reset|clean|checkout|switch|merge|rebase|stash)|npm\s+(install|i|uninstall|publish|version)|pnpm\s+(add|install|remove)|yarn\s+(add|install|remove)|python\b.*>|node\b.*>|echo\b.*>|Set-Content|Out-File|sed\s+-i|tee\b|dd\b.*of=|wget\b.*-O|curl\b.*-o)\b/i;
 const READ_ONLY_HINTS = /\b(read-only|no edits?|do not edit|không sửa|khong sua|chỉ đọc|chi doc|plan only|chỉ lập plan|review only|audit only)\b/i;
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -39,8 +39,12 @@ function isMutatingTool(tool: string, args: unknown): boolean {
 	if (MUTATING_TOOLS.has(normalized)) return true;
 	if (normalized === "bash" || normalized === "shell" || normalized === "powershell") {
 		const command = commandText(args).trim();
-		if (!command || READ_ONLY_COMMANDS.test(command)) return false;
-		return MUTATING_COMMANDS.test(command);
+		if (!command) return false;
+		// Check mutating patterns first: sed -i is mutating even though plain sed is read-only.
+		if (MUTATING_COMMANDS.test(command)) return true;
+		if (READ_ONLY_COMMANDS.test(command)) return false;
+		// If the command doesn't match either list, treat unknown bash calls as potentially mutating.
+		return true;
 	}
 	return false;
 }

@@ -344,7 +344,7 @@ export class SubagentManager {
 			const loaded = loadRunManifestById(cwd, current.runId);
 			if (!loaded || loaded.manifest.status === "blocked" || loaded.manifest.status === "running" || loaded.manifest.status === "planning" || loaded.manifest.status === "queued") {
 				const timer = setTimeout(poll, this.pollIntervalMs);
-				timer.unref?.();
+				timer.unref();
 				return;
 			}
 			const persisted = readPersistedSubagentRecord(cwd, current.id);
@@ -363,7 +363,7 @@ export class SubagentManager {
 			this.onComplete?.(current);
 		};
 		const timer = setTimeout(poll, this.pollIntervalMs);
-		timer.unref?.();
+		timer.unref();
 	}
 
 	private scheduleStuckBlockedNotify(cwd: string, record: SubagentRecord): void {
@@ -386,6 +386,6 @@ export class SubagentManager {
 			return;
 		}
 		const timer = setTimeout(fire, threshold);
-		timer.unref?.();
+		timer.unref();
 	}
 }

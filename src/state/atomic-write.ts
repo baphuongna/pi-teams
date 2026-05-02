@@ -5,8 +5,16 @@ import { logInternalError } from "../utils/internal-error.ts";
 const RETRYABLE_RENAME_CODES = new Set(["EPERM", "EBUSY", "EACCES"]);
 
 function sleepSync(ms: number): void {
-	const buffer = new SharedArrayBuffer(4);
-	Atomics.wait(new Int32Array(buffer), 0, 0, ms);
+	try {
+		const buffer = new SharedArrayBuffer(4);
+		Atomics.wait(new Int32Array(buffer), 0, 0, ms);
+	} catch {
+		// Fallback for environments without SharedArrayBuffer / Atomics.wait support.
+		const deadline = Date.now() + ms;
+		while (Date.now() < deadline) {
+			// Busy-wait — only used as last-resort, retry counts are capped.
+		}
+	}
 }
 
 function sleep(ms: number): Promise<void> {
@@ -17,7 +25,7 @@ function isRetryableRenameError(error: unknown): boolean {
 	return Boolean(error && typeof error === "object" && "code" in error && RETRYABLE_RENAME_CODES.has(String((error as NodeJS.ErrnoException).code)));
 }
 
-export function __test__renameWithRetry(tempPath: string, filePath: string, retries = 20, rename: (oldPath: string, newPath: string) => void = fs.renameSync): void {
+export function __test__renameWithRetry(tempPath: string, filePath: string, retries = 5, rename: (oldPath: string, newPath: string) => void = fs.renameSync): void {
 	let lastError: unknown;
 	for (let attempt = 0; attempt <= retries; attempt++) {
 		try {
@@ -32,7 +40,7 @@ export function __test__renameWithRetry(tempPath: string, filePath: string, retr
 	throw lastError;
 }
 
-export async function __test__renameWithRetryAsync(tempPath: string, filePath: string, retries = 20, rename: (oldPath: string, newPath: string) => Promise<void> = (source, destination) => fs.promises.rename(source, destination)): Promise<void> {
+export async function __test__renameWithRetryAsync(tempPath: string, filePath: string, retries = 5, rename: (oldPath: string, newPath: string) => Promise<void> = (source, destination) => fs.promises.rename(source, destination)): Promise<void> {
 	let lastError: unknown;
 	for (let attempt = 0; attempt <= retries; attempt++) {
 		try {

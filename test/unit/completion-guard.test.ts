@@ -47,6 +47,26 @@ test("completion guard detects tool_execution_start bash mutation", () => {
 	});
 });
 
+test("completion guard detects replace_in_file, insert, delete_files, patch tools", () => {
+	const mutatingTools = ["replace_in_file", "insert", "delete_files", "create_file", "overwrite", "patch"];
+	for (const tool of mutatingTools) {
+		withTranscript([{ message: { content: [{ type: "toolCall", name: tool, input: {} }] } }], (transcriptPath) => {
+			const result = evaluateCompletionMutationGuard({ role: "executor", taskText: "Implement fix", transcriptPath });
+			assert.equal(result.observedMutation, true, `Tool ${tool} should be mutating`);
+		});
+	}
+});
+
+test("completion guard detects sed -i, tee, wget -O, curl -o as bash mutations", () => {
+	const mutatingCommands = ["sed -i 's/a/b/' file.txt", "tee output.log", "wget https://x -O out", "curl https://x -o out"];
+	for (const command of mutatingCommands) {
+		withTranscript([{ type: "tool_execution_start", toolName: "bash", args: { command } }], (transcriptPath) => {
+			const result = evaluateCompletionMutationGuard({ role: "executor", taskText: "Implement fix", transcriptPath });
+			assert.equal(result.observedMutation, true, `Command "${command}" should be mutating`);
+		});
+	}
+});
+
 test("completion guard warns for implementation without mutation but not read-only commands", () => {
 	withTranscript([{ type: "tool_execution_start", toolName: "bash", args: { command: "rg TODO src" } }], (transcriptPath) => {
 		const result = evaluateCompletionMutationGuard({ role: "executor", taskText: "Implement fix", transcriptPath });

@@ -9,8 +9,13 @@ export interface AppendTaskAttentionInput {
 }
 
 export function appendTaskAttentionEvent(input: AppendTaskAttentionInput): boolean {
-	const recent = readEvents(input.manifest.eventsPath).slice(-100);
-	const duplicate = recent.some((event) => event.type === "task.attention" && event.taskId === input.taskId && event.data?.reason === input.data.reason && event.data?.activityState === input.data.activityState);
+	const recent = readEvents(input.manifest.eventsPath).slice(-200);
+	const dedupKey = `${input.taskId ?? ""}:${input.data.reason}:${input.data.activityState}`;
+	const duplicate = recent.some(
+		(event) =>
+			event.type === "task.attention" &&
+			`${event.taskId ?? ""}:${event.data?.reason ?? ""}:${event.data?.activityState ?? ""}` === dedupKey,
+	);
 	if (duplicate) return false;
 	appendEvent(input.manifest.eventsPath, {
 		type: "task.attention",

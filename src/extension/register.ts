@@ -151,7 +151,10 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 			notificationRouter?.enqueue(notification);
 		} catch (error) {
 			logInternalError("register.notification", error);
-			sendFollowUp(pi, [notification.title, notification.body].filter((line): line is string => Boolean(line)).join("\n"));
+			// Only fall back to Pi follow-up when a session context is still active.
+			if (currentCtx && !cleanedUp) {
+				sendFollowUp(pi, [notification.title, notification.body].filter((line): line is string => Boolean(line)).join("\n"));
+			}
 		}
 	};
 	const captureSessionGeneration = (): number => sessionGeneration;

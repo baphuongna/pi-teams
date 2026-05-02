@@ -11,7 +11,7 @@ import { aggregateUsage, formatUsage } from "../state/usage.ts";
 import type { WorkflowConfig, WorkflowStep } from "../workflows/workflow-config.ts";
 import { evaluateCrewPolicy, summarizePolicyDecisions } from "./policy-engine.ts";
 import { buildRecoveryLedger } from "./recovery-recipes.ts";
-import { buildTaskGraphIndex, getReadyTasks, refreshTaskGraphQueues, taskGraphSnapshot } from "./task-graph-scheduler.ts";
+import { buildTaskGraphIndex, refreshTaskGraphQueues, taskGraphSnapshot } from "./task-graph-scheduler.ts";
 import { checkBranchFreshness } from "../worktree/branch-freshness.ts";
 import { aggregateTaskOutputs } from "./task-output-context.ts";
 import { saveCrewAgents } from "./crew-agent-records.ts";
@@ -43,10 +43,6 @@ export interface ExecuteTeamRunInput {
 	signal?: AbortSignal;
 	reliability?: CrewReliabilityConfig;
 	metricRegistry?: MetricRegistry;
-}
-
-function findReadyTask(tasks: TeamTaskState[]): TeamTaskState | undefined {
-	return getReadyTasks(tasks, 1)[0];
 }
 
 function findStep(workflow: WorkflowConfig, task: TeamTaskState): WorkflowStep {
@@ -559,7 +555,8 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 			appendEvent(manifest.eventsPath, { type: "limits.unbounded", runId: manifest.runId, message: "Unbounded worker concurrency was explicitly enabled for this run.", data: { concurrencyReason: concurrency.reason, maxConcurrent: concurrency.maxConcurrent } });
 		}
 		const approvalPending = isPlanApprovalPending(manifest);
-		const candidateBatch = approvalPending ? getReadyTasks(tasks, tasks.length, queueIndex) : getReadyTasks(tasks, concurrency.selectedCount, queueIndex);
+		const readyIds = approvalPending ? snapshot.ready : snapshot.ready.slice(0, concurrency.selectedCount);
+		const candidateBatch = readyIds.map((id) => tasks.find((task) => task.id === id)).filter((task): task is TeamTaskState => Boolean(task));
 		const readyBatch = approvalPending ? candidateBatch.filter((task) => !isMutatingTask(task)).slice(0, concurrency.selectedCount) : candidateBatch;
 		if (readyBatch.length === 0) {
 			if (approvalPending && candidateBatch.some(isMutatingTask)) {

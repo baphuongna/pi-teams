@@ -14,7 +14,15 @@ function lockPath(manifest: TeamRunManifest): string {
 }
 
 function sleepSync(ms: number): void {
-	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+	try {
+		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+	} catch {
+		// Fallback for environments without SharedArrayBuffer / Atomics.wait support.
+		const deadline = Date.now() + ms;
+		while (Date.now() < deadline) {
+			// Busy-wait — only used as last-resort, retry counts are capped.
+		}
+	}
 }
 
 function parseCreatedAtFromLock(raw: string): number | undefined {
