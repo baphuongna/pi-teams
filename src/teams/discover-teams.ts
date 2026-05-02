@@ -81,7 +81,7 @@ function parseTeamFile(filePath: string, source: ResourceSource): TeamConfig | u
 			filePath,
 			roles,
 			defaultWorkflow: frontmatter.defaultWorkflow || frontmatter.workflow || undefined,
-			workspaceMode: frontmatter.workspaceMode === "worktree" ? "worktree" : "single",
+			workspaceMode: frontmatter.workspaceMode?.trim() === "worktree" ? "worktree" : "single",
 			maxConcurrency: frontmatter.maxConcurrency ? Number.parseInt(frontmatter.maxConcurrency, 10) : undefined,
 			routing: triggers || useWhen || avoidWhen || cost || category ? { triggers, useWhen, avoidWhen, cost, category } : undefined,
 		};

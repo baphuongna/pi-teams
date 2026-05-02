@@ -74,6 +74,7 @@ async function handleMailboxDashboardAction(ctx: ExtensionCommandContext, runId:
 }
 
 function depsNotify(ctx: ExtensionCommandContext, message: string, level: "info" | "warning" | "error"): void {
+	if (!ctx.hasUI) return;
 	ctx.ui.notify(message, level);
 }
 

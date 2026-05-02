@@ -2,6 +2,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { TeamRunManifest } from "../state/types.ts";
 
+import { logInternalError } from "../utils/internal-error.ts";
+
 export type DeadletterReason = "max-retries" | "heartbeat-dead" | "manual";
 
 export interface DeadletterEntry {
@@ -18,14 +20,22 @@ export function deadletterPath(manifest: TeamRunManifest): string {
 }
 
 export function appendDeadletter(manifest: TeamRunManifest, entry: DeadletterEntry): void {
-	fs.mkdirSync(manifest.stateRoot, { recursive: true });
-	fs.appendFileSync(deadletterPath(manifest), `${JSON.stringify(entry)}\n`, "utf-8");
+	try {
+		fs.mkdirSync(manifest.stateRoot, { recursive: true });
+		fs.appendFileSync(deadletterPath(manifest), `${JSON.stringify(entry)}\n`, "utf-8");
+	} catch (error) {
+		logInternalError("deadletter.append", error, `taskId=${entry.taskId}`);
+	}
 }
 
-export function readDeadletter(manifest: TeamRunManifest): DeadletterEntry[] {
+export function readDeadletter(manifest: TeamRunManifest, maxEntries = 1000): DeadletterEntry[] {
 	const filePath = deadletterPath(manifest);
 	if (!fs.existsSync(filePath)) return [];
-	return fs.readFileSync(filePath, "utf-8").split(/\r?\n/).filter(Boolean).flatMap((line) => {
+	// Read last maxEntries lines only to limit memory.
+	const raw = fs.readFileSync(filePath, "utf-8");
+	const lines = raw.split(/\r?\n/).filter(Boolean);
+	const tail = lines.slice(-maxEntries);
+	return tail.flatMap((line) => {
 		try {
 			const parsed = JSON.parse(line) as DeadletterEntry;
 			return parsed && typeof parsed.taskId === "string" && typeof parsed.runId === "string" ? [parsed] : [];
