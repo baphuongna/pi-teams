@@ -129,11 +129,16 @@ export function readRunTranscript(manifest: TeamRunManifest, taskId?: string, op
 	const agents = readCrewAgents(manifest);
 	const agent = taskId ? agents.find((item) => item.taskId === taskId || item.id === taskId) : agents.find((item) => item.transcriptPath) ?? agents[0];
 	const selectedTaskId = agent?.taskId ?? taskId ?? "unknown";
-	let transcriptPath: string;
+	let transcriptPath = "";
 	try {
 		transcriptPath = agentOutputPath(manifest, selectedTaskId);
 	} catch {
-		transcriptPath = agentOutputPath(manifest, "unknown");
+		try {
+			transcriptPath = agentOutputPath(manifest, "unknown");
+		} catch {
+			// Both fallbacks failed — transcript will be empty.
+			transcriptPath = "";
+		}
 	}
 	if (agent?.transcriptPath) {
 		try {

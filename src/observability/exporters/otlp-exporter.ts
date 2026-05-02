@@ -11,6 +11,15 @@ export interface OTLPExporterOptions {
 }
 
 function pointValues(snapshot: MetricSnapshot): unknown[] {
+	if (snapshot.type === "histogram") {
+		return snapshot.values.map((value) => ({
+			attributes: Object.entries(value.labels).map(([key, item]) => ({ key, value: { stringValue: String(item) } })),
+			count: "count" in value ? value.count : undefined,
+			sum: "sum" in value ? value.sum : undefined,
+			bucketCounts: "counts" in value ? value.counts : undefined,
+			explicitBounds: "buckets" in value ? value.buckets : undefined,
+		}));
+	}
 	return snapshot.values.map((value) => ({ attributes: Object.entries(value.labels).map(([key, item]) => ({ key, value: { stringValue: String(item) } })), asDouble: "value" in value ? value.value : undefined, count: "count" in value ? value.count : undefined, sum: "sum" in value ? value.sum : undefined }));
 }
 

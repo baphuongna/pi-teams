@@ -10,6 +10,7 @@ export class TimeWindowedCounter {
 	private events: WindowEvent[] = [];
 	private readonly windowMs: number;
 	private readonly now: () => number;
+	private static readonly MAX_EVENTS = 100_000;
 
 	constructor(windowMs = 3_600_000, now: () => number = () => Date.now()) {
 		this.windowMs = windowMs;
@@ -18,6 +19,8 @@ export class TimeWindowedCounter {
 
 	inc(labels: MetricLabels = {}, delta = 1): void {
 		if (!Number.isFinite(delta)) return;
+		// Cap the event array to prevent unbounded memory growth.
+		if (this.events.length >= TimeWindowedCounter.MAX_EVENTS) this.prune();
 		this.events.push({ timestamp: this.now(), labels: { ...labels }, delta });
 		this.prune();
 	}

@@ -156,14 +156,6 @@ const RETRYABLE_MODEL_FAILURE_PATTERNS = [
 	/too many requests/i,
 	/\b429\b/,
 	/quota/i,
-	/billing/i,
-	/credit/i,
-	/auth(?:entication)?/i,
-	/unauthori[sz]ed/i,
-	/forbidden/i,
-	/api key/i,
-	/token expired/i,
-	/invalid key/i,
 	/provider.*unavailable/i,
 	/model.*unavailable/i,
 	/model.*disabled/i,
@@ -184,8 +176,22 @@ const RETRYABLE_MODEL_FAILURE_PATTERNS = [
 	/\b504\b/,
 ];
 
+// These patterns indicate auth/key/billing issues that will never succeed on retry.
+const NON_RETRYABLE_MODEL_FAILURE_PATTERNS = [
+	/auth(?:entication)?/i,
+	/unauthori[sz]ed/i,
+	/forbidden/i,
+	/api key/i,
+	/token expired/i,
+	/invalid key/i,
+	/billing/i,
+	/credit/i,
+];
+
 export function isRetryableModelFailure(error: string | undefined): boolean {
 	if (!error) return false;
+	// Auth / billing / invalid-key failures will never succeed on retry.
+	if (NON_RETRYABLE_MODEL_FAILURE_PATTERNS.some((pattern) => pattern.test(error))) return false;
 	return RETRYABLE_MODEL_FAILURE_PATTERNS.some((pattern) => pattern.test(error));
 }
 

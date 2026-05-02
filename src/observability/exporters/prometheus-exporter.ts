@@ -22,6 +22,13 @@ function isHistogramPoint(value: MetricPoint | HistogramPoint): value is Histogr
 	return "buckets" in value && "counts" in value;
 }
 
+function formatPrometheusValue(num: number): string {
+	if (Number.isNaN(num)) return "Nan";
+	if (num === Number.POSITIVE_INFINITY) return "+Inf";
+	if (num === Number.NEGATIVE_INFINITY) return "-Inf";
+	return String(num);
+}
+
 export function formatPrometheus(snapshots: MetricSnapshot[]): string {
 	const lines: string[] = [];
 	for (const snapshot of snapshots) {
@@ -39,7 +46,7 @@ export function formatPrometheus(snapshots: MetricSnapshot[]): string {
 				lines.push(`${name}_sum${labelsText(value.labels)} ${value.sum}`);
 				lines.push(`${name}_count${labelsText(value.labels)} ${value.count}`);
 			} else {
-				lines.push(`${name}${labelsText(value.labels)} ${value.value}`);
+				lines.push(`${name}${labelsText(value.labels)} ${formatPrometheusValue(value.value)}`);
 			}
 		}
 	}

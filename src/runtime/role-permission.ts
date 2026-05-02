@@ -18,7 +18,7 @@ export function permissionForRole(role: string): RolePermissionMode {
 
 export function isReadOnlyCommand(command: string): boolean {
 	const first = command.trim().split(/\s+/)[0]?.split(/[\\/]/).pop() ?? "";
-	return READ_ONLY_COMMANDS.has(first) && !/\s(-i|--in-place)\b|\s>{1,2}\s|\brm\b|\bmv\b|\bcp\b|\bnpm\s+install\b|\bgit\s+(commit|push|merge|rebase|reset|checkout)\b/.test(command);
+	return READ_ONLY_COMMANDS.has(first) && !/\s(-i|--in-place)\b|\s>{1,2}\s|\brm\b|\bmv\b|\bcp\b|\b(?:npm|pnpm|yarn|bun)\s+(install|add|ci|remove)\b|\bgit\s+(commit|push|merge|rebase|reset|checkout|clean)\b/.test(command);
 }
 
 export function checkRolePermission(role: string, command: string): PermissionCheckResult {
