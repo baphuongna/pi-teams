@@ -61,7 +61,7 @@ export function createResultWatcher(events: ResultWatcherEvents, resultsDir: str
 			coalescer.schedule(file, RESULT_WATCHER_POLL_MS);
 			return;
 		}
-		const key = buildCompletionKey(payload as Record<string, unknown>, `file:${file}`);
+		const key = buildCompletionKey(payload && typeof payload === "object" && !Array.isArray(payload) ? payload as Record<string, unknown> : {}, `file:${file}`);
 		if (!markSeenWithTtl(seen, key, Date.now(), completionTtlMs)) {
 			events.emit(eventName, payload);
 		}

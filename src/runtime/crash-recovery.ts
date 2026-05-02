@@ -51,6 +51,7 @@ export async function applyRecoveryPlan(plan: RecoveryPlan, ctx: Pick<ExtensionC
 export function declineRecoveryPlan(plan: RecoveryPlan, ctx: Pick<ExtensionContext, "cwd">): void {
 	const loaded = loadRunManifestById(ctx.cwd, plan.runId);
 	if (!loaded) throw new Error(`Run '${plan.runId}' not found.`);
-	updateRunStatus(loaded.manifest, "cancelled", "interrupted-not-resumed");
+	// Log the event first — if appendEvent fails, state remains consistent.
 	appendEvent(loaded.manifest.eventsPath, { type: "crew.run.recovery_declined", runId: plan.runId, message: "Interrupted run was not resumed.", data: { recoveredFromSeq: plan.lastEventSeq } });
+	updateRunStatus(loaded.manifest, "cancelled", "interrupted-not-resumed");
 }

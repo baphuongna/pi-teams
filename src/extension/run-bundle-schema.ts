@@ -17,12 +17,13 @@ function validateArtifact(value: unknown, index: number, errors: string[]): valu
 		errors.push(`manifest.artifacts[${index}] must be an object.`);
 		return false;
 	}
+	const before = errors.length;
 	if (typeof value.kind !== "string") errors.push(`manifest.artifacts[${index}].kind must be a string.`);
 	if (typeof value.path !== "string") errors.push(`manifest.artifacts[${index}].path must be a string.`);
 	if (typeof value.createdAt !== "string") errors.push(`manifest.artifacts[${index}].createdAt must be a string.`);
 	if (typeof value.producer !== "string") errors.push(`manifest.artifacts[${index}].producer must be a string.`);
 	if (value.retention !== "run" && value.retention !== "project" && value.retention !== "temporary") errors.push(`manifest.artifacts[${index}].retention is invalid.`);
-	return true;
+	return errors.length === before;
 }
 
 function validateManifest(value: unknown, errors: string[]): value is TeamRunManifest {
@@ -30,6 +31,7 @@ function validateManifest(value: unknown, errors: string[]): value is TeamRunMan
 		errors.push("manifest must be an object.");
 		return false;
 	}
+	const before = errors.length;
 	if (value.schemaVersion !== 1) errors.push("manifest.schemaVersion must be 1.");
 	for (const field of ["runId", "team", "goal", "createdAt", "updatedAt", "cwd", "stateRoot", "artifactsRoot", "tasksPath", "eventsPath"] as const) {
 		if (typeof value[field] !== "string") errors.push(`manifest.${field} must be a string.`);
@@ -38,7 +40,7 @@ function validateManifest(value: unknown, errors: string[]): value is TeamRunMan
 	if (value.workspaceMode !== "single" && value.workspaceMode !== "worktree") errors.push("manifest.workspaceMode must be single or worktree.");
 	if (!Array.isArray(value.artifacts)) errors.push("manifest.artifacts must be an array.");
 	else value.artifacts.forEach((artifact, index) => validateArtifact(artifact, index, errors));
-	return true;
+	return errors.length === before;
 }
 
 function validateTask(value: unknown, index: number, errors: string[]): value is TeamTaskState {
@@ -46,12 +48,13 @@ function validateTask(value: unknown, index: number, errors: string[]): value is
 		errors.push(`tasks[${index}] must be an object.`);
 		return false;
 	}
+	const before = errors.length;
 	for (const field of ["id", "runId", "role", "agent", "title", "cwd"] as const) {
 		if (typeof value[field] !== "string") errors.push(`tasks[${index}].${field} must be a string.`);
 	}
 	if (!isTeamTaskStatus(value.status)) errors.push(`tasks[${index}].status is invalid.`);
 	if (!Array.isArray(value.dependsOn)) errors.push(`tasks[${index}].dependsOn must be an array.`);
-	return true;
+	return errors.length === before;
 }
 
 function validateEvent(value: unknown, index: number, errors: string[]): value is TeamEvent {
@@ -59,10 +62,11 @@ function validateEvent(value: unknown, index: number, errors: string[]): value i
 		errors.push(`events[${index}] must be an object.`);
 		return false;
 	}
+	const before = errors.length;
 	for (const field of ["time", "type", "runId"] as const) {
 		if (typeof value[field] !== "string") errors.push(`events[${index}].${field} must be a string.`);
 	}
-	return true;
+	return errors.length === before;
 }
 
 export function validateRunBundle(value: unknown): BundleValidationResult {

@@ -43,10 +43,10 @@ function parseAgentFile(filePath: string, source: ResourceSource): AgentConfig |
 			extensions: frontmatter.extensions === "" ? [] : parseCsv(frontmatter.extensions),
 			skills: parseCsv(frontmatter.skills ?? frontmatter.skill),
 			systemPromptMode: frontmatter.systemPromptMode === "append" ? "append" : "replace",
-			inheritProjectContext: frontmatter.inheritProjectContext === "true",
-			inheritSkills: frontmatter.inheritSkills === "true",
-			memory: parseMemory(frontmatter.memory),
-			disabled: frontmatter.disabled === "true" || frontmatter.enabled === "false",
+			inheritProjectContext: frontmatter.inheritProjectContext as unknown === true || frontmatter.inheritProjectContext === "true",
+		inheritSkills: frontmatter.inheritSkills as unknown === true || frontmatter.inheritSkills === "true",
+		memory: parseMemory(frontmatter.memory),
+		disabled: frontmatter.disabled as unknown === true || frontmatter.disabled === "true" || frontmatter.enabled as unknown === false || frontmatter.enabled === "false",
 			routing: triggers || useWhen || avoidWhen || cost || category ? { triggers, useWhen, avoidWhen, cost, category } : undefined,
 		};
 	} catch {
