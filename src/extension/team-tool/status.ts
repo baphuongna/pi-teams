@@ -2,7 +2,7 @@ import { loadConfig } from "../../config/config.ts";
 import type { TeamToolParamsValue } from "../../schema/team-tool-schema.ts";
 import { appendEvent, readEvents } from "../../state/event-log.ts";
 import { readDeliveryState, readMailbox } from "../../state/mailbox.ts";
-import { loadRunManifestById, updateRunStatus } from "../../state/state-store.ts";
+import { loadRunManifestById, updateRunStatus, saveRunTasks } from "../../state/state-store.ts";
 import { aggregateUsage, formatUsage } from "../../state/usage.ts";
 import { applyAttentionState, formatActivityAge, resolveCrewControlConfig } from "../../runtime/agent-control.ts";
 import { readCrewAgents } from "../../runtime/crew-agent-records.ts";
@@ -23,6 +23,8 @@ export function handleStatus(params: TeamToolParamsValue, ctx: TeamContext): PiT
 		asyncLivenessLine = `Async: pid=${asyncState.pid ?? "unknown"} alive=${liveness.alive ? "true" : "false"} detail=${liveness.detail} log=${asyncState.logPath} spawnedAt=${asyncState.spawnedAt}`;
 		if (!liveness.alive && isActiveRunStatus(manifest.status)) {
 			manifest = updateRunStatus(manifest, "failed", `Async process stale: ${liveness.detail}`);
+			tasks = tasks.map((task) => task.status === "running" ? { ...task, status: "cancelled" as const, finishedAt: new Date().toISOString(), error: "Async process died; task was not completed." } : task);
+			saveRunTasks(manifest, tasks);
 			appendEvent(manifest.eventsPath, { type: "async.stale", runId: manifest.runId, message: liveness.detail, data: { pid: asyncState.pid } });
 		}
 	}
@@ -36,19 +38,17 @@ export function handleStatus(params: TeamToolParamsValue, ctx: TeamContext): PiT
 	const artifactLines = manifest.artifacts.slice(-10).map((artifact) => `- ${artifact.kind}: ${artifact.path}${artifact.sizeBytes !== undefined ? ` (${artifact.sizeBytes} bytes)` : ""}`);
 	const deliveryState = readDeliveryState(manifest);
 	const ackTimeoutMs = loadConfig(ctx.cwd).config.runtime?.groupJoinAckTimeoutMs;
-	const groupJoinLines = readMailbox(manifest, "outbox")
-		.filter((message) => message.data?.kind === "group_join")
-		.slice(-5)
-		.map((message) => {
-			const ack = deliveryState.messages[message.id] === "acknowledged" ? "acknowledged" : "pending";
-			const ageMs = Date.now() - new Date(message.createdAt).getTime();
-			const requestId = String(message.data?.requestId ?? "unknown");
-			const timedOut = ack === "pending" && ackTimeoutMs !== undefined && Number.isFinite(ageMs) && ageMs > ackTimeoutMs;
-			if (timedOut && !allEvents.some((event) => event.type === "agent.group_join.ack_timeout" && event.data?.requestId === requestId)) {
-				appendEvent(manifest.eventsPath, { type: "agent.group_join.ack_timeout", runId: manifest.runId, message: "Group join delivery ack timed out; mailbox delivery remains the fallback.", data: { requestId, messageId: message.id, batchId: message.data?.batchId, partial: message.data?.partial, ageMs, ackTimeoutMs } });
-			}
-			return `- ${String(message.data?.partial) === "true" ? "partial" : "completed"} request=${requestId} message=${message.id} ack=${timedOut ? "timeout" : ack}`;
-		});
+	const groupJoinLines: string[] = [];
+	for (const message of readMailbox(manifest, "outbox").filter((m) => m.data?.kind === "group_join").slice(-5)) {
+		const ack = deliveryState.messages[message.id] === "acknowledged" ? "acknowledged" : "pending";
+		const ageMs = Date.now() - new Date(message.createdAt).getTime();
+		const requestId = String(message.data?.requestId ?? "unknown");
+		const timedOut = ack === "pending" && ackTimeoutMs !== undefined && Number.isFinite(ageMs) && ageMs > ackTimeoutMs;
+		if (timedOut && !allEvents.some((event) => event.type === "agent.group_join.ack_timeout" && event.data?.requestId === requestId)) {
+			appendEvent(manifest.eventsPath, { type: "agent.group_join.ack_timeout", runId: manifest.runId, message: "Group join delivery ack timed out; mailbox delivery remains the fallback.", data: { requestId, messageId: message.id, batchId: message.data?.batchId, partial: message.data?.partial, ageMs, ackTimeoutMs } });
+		}
+		groupJoinLines.push(`- ${String(message.data?.partial) === "true" ? "partial" : "completed"} request=${requestId} message=${message.id} ack=${timedOut ? "timeout" : ack}`);
+	}
 	const totalUsage = aggregateUsage(tasks);
 	const activeAgents = crewAgents.filter((agent) => agent.status === "running");
 	const completedAgents = crewAgents.filter((agent) => agent.status !== "running");

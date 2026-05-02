@@ -21,8 +21,10 @@ import { effectiveRunConfig } from "./config-patch.ts";
 
 function tailFile(filePath: string, maxBytes = 4096): string | undefined {
 	try {
+		// Cap at 512KB to prevent OOM from misconfigured callers.
+		const safeMaxBytes = Math.min(maxBytes, 512 * 1024);
 		const stat = fs.statSync(filePath);
-		const start = Math.max(0, stat.size - maxBytes);
+		const start = Math.max(0, stat.size - safeMaxBytes);
 		const fd = fs.openSync(filePath, "r");
 		try {
 			const buffer = Buffer.alloc(stat.size - start);

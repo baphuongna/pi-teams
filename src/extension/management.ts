@@ -252,7 +252,11 @@ export function handleCreate(params: TeamToolParamsValue, ctx: ManagementContext
 	}
 
 	if (params.dryRun) return result(`[dry-run] Would create ${params.resource} '${name}' at ${filePath}:\n\n${content}`);
-	fs.writeFileSync(filePath, content, "utf-8");
+	try {
+		fs.writeFileSync(filePath, content, "utf-8");
+	} catch (writeError) {
+		return result(`Failed to create ${params.resource}: ${writeError instanceof Error ? writeError.message : String(writeError)}`, "error", true);
+	}
 	return result(`Created ${params.resource} '${name}' at ${filePath}.`);
 }
 
@@ -331,8 +335,23 @@ export function handleUpdate(params: TeamToolParamsValue, ctx: ManagementContext
 		return result([`[dry-run] Would update ${params.resource} at ${current.filePath}:`, "", content, ...(referenceUpdates.length ? ["", "Would update references in:", ...referenceUpdates.map((filePath) => `- ${filePath}`)] : [])].join("\n"));
 	}
 	const backupPath = backupFile(current.filePath);
-	if (nextPath !== current.filePath) fs.renameSync(current.filePath, nextPath);
-	fs.writeFileSync(nextPath, content, "utf-8");
+	try {
+		if (nextPath !== current.filePath) {
+			try {
+				fs.renameSync(current.filePath, nextPath);
+			} catch (renameError) {
+				if ((renameError as NodeJS.ErrnoException).code === "EXDEV") {
+					fs.copyFileSync(current.filePath, nextPath);
+					fs.unlinkSync(current.filePath);
+				} else {
+					throw renameError;
+				}
+			}
+		}
+		fs.writeFileSync(nextPath, content, "utf-8");
+	} catch (updateError) {
+		return result(`Failed to update ${params.resource}: ${updateError instanceof Error ? updateError.message : String(updateError)}`, "error", true);
+	}
 	const updatedRefs = params.updateReferences ? updateReferencesForRename(ctx, params.resource!, current.name, nextName, source, false) : [];
 	return result([`Updated ${params.resource} at ${nextPath}. Backup: ${backupPath}.`, ...(updatedRefs.length ? ["Updated references:", ...updatedRefs.map((filePath) => `- ${filePath}`)] : [])].join("\n"));
 }
@@ -347,6 +366,10 @@ export function handleDelete(params: TeamToolParamsValue, ctx: ManagementContext
 	}
 	if (params.dryRun) return result(`[dry-run] Would delete ${params.resource} at ${resolved.resource!.filePath}.${refs.length ? `\nReferences:\n${refs.map((ref) => `- ${ref}`).join("\n")}` : ""}`);
 	const backupPath = backupFile(resolved.resource!.filePath);
-	fs.unlinkSync(resolved.resource!.filePath);
+	try {
+		fs.unlinkSync(resolved.resource!.filePath);
+	} catch (deleteError) {
+		return result(`Failed to delete ${params.resource}: ${deleteError instanceof Error ? deleteError.message : String(deleteError)}`, "error", true);
+	}
 	return result(`Deleted ${params.resource} at ${resolved.resource!.filePath}. Backup: ${backupPath}.`);
 }

@@ -22,7 +22,7 @@ import type { PiTeamsToolResult } from "../tool-result.ts";
 import { configRecord, result, type TeamContext } from "./context.ts";
 
 function globMatch(value: string, pattern: string): boolean {
-	const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+	const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\?/g, "\\?").replace(/\*/g, ".*");
 	return new RegExp(`^${escaped}$`).test(value);
 }
 
