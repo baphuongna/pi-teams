@@ -44,7 +44,7 @@ export function resolveBatchConcurrency(input: ResolveBatchConcurrencyInput): Ba
 	else source = "workflow";
 	const hardCap = positiveInteger(input.hardCap) ?? DEFAULT_CONCURRENCY.hardCap;
 	const maxConcurrent = input.allowUnboundedConcurrency ? requested : Math.min(requested, hardCap);
-	const readyCount = Math.max(0, Math.trunc(input.readyCount));
+	const readyCount = Math.max(0, Math.trunc(Number.isFinite(input.readyCount) ? input.readyCount : 0));
 	const cappedReason = maxConcurrent < requested ? `;capped:${hardCap}` : "";
 	const unboundedReason = input.allowUnboundedConcurrency && requested > hardCap ? `;unbounded:${hardCap}` : "";
 	return {

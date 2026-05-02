@@ -13,7 +13,9 @@ export function createTaskClaim(owner: string, leaseMs = 5 * 60_000, now = new D
 
 export function isTaskClaimExpired(claim: TaskClaimState | undefined, now = new Date()): boolean {
 	if (!claim) return false;
-	return Date.parse(claim.leasedUntil) <= now.getTime();
+	const parsed = Date.parse(claim.leasedUntil);
+	// Corrupt or invalid date strings produce NaN — treat as expired immediately.
+	return Number.isFinite(parsed) ? parsed <= now.getTime() : true;
 }
 
 export function canUseTaskClaim(task: Pick<TeamTaskState, "claim">, owner: string, token: string, now = new Date()): boolean {

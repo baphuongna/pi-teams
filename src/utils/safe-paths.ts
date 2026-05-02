@@ -20,8 +20,21 @@ export function resolveContainedPath(baseDir: string, targetPath: string): strin
 
 export function resolveRealContainedPath(baseDir: string, targetPath: string): string {
 	const resolved = resolveContainedPath(baseDir, targetPath);
-	const realBase = fs.realpathSync.native(baseDir);
-	const realTarget = fs.realpathSync.native(resolved);
+	let realBase: string;
+	let realTarget: string;
+	try {
+		realBase = fs.realpathSync.native(baseDir);
+	} catch (baseError) {
+		throw new Error(`Cannot resolve real path of base directory ${baseDir}: ${baseError instanceof Error ? baseError.message : String(baseError)}`);
+	}
+	try {
+		realTarget = fs.realpathSync.native(resolved);
+	} catch (targetError) {
+		if ((targetError as NodeJS.ErrnoException).code === "ENOENT") {
+			throw new Error(`Path does not exist: ${resolved}`);
+		}
+		throw new Error(`Cannot resolve real path of ${resolved}: ${targetError instanceof Error ? targetError.message : String(targetError)}`);
+	}
 	const relative = path.relative(realBase, realTarget);
 	if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`Path is outside ${baseDir}: ${targetPath}`);
 	return realTarget;

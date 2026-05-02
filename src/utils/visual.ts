@@ -57,7 +57,7 @@ export function truncateToWidth(value: string, width: number, ellipsis = "…"):
 			continue;
 		}
 		const char = value[i] as string;
-		const nextIndex = i + (char.codePointAt(0) ?? 0) > 0xFFFF ? i + 2 : i + 1;
+		const nextIndex = ((char.codePointAt(0) ?? 0) > 0xFFFF) ? i + 2 : i + 1;
 		const segment = value.slice(i, nextIndex);
 		const charWidth = visibleWidth(segment);
 		if (renderedWidth + charWidth > width - ellipsis.length) {

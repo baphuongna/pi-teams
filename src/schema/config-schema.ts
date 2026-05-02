@@ -57,7 +57,7 @@ export const AgentOverrideSchema = Type.Object({
 	model: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Literal(false)])),
 	fallbackModels: Type.Optional(Type.Union([Type.Array(Type.String({ minLength: 1 })), Type.Literal(false)])),
 	thinking: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Literal(false)])),
-	tools: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+	tools: Type.Optional(Type.Union([Type.Array(Type.String({ minLength: 1 })), Type.Literal(false)])),
 }, { additionalProperties: false });
 
 export const PiTeamsAgentsConfigSchema = Type.Object({

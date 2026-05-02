@@ -34,13 +34,14 @@ function taskDepth(task: TeamTaskState, tasksById: Map<string, TeamTaskState>): 
 
 export function evaluateCrewPolicy(input: PolicyEngineInput): PolicyDecision[] {
 	const decisions: PolicyDecision[] = [];
-	const maxTasksPerRun = input.limits?.maxTasksPerRun;
+	const maxTasksPerRun = Number.isFinite(input.limits?.maxTasksPerRun) ? input.limits!.maxTasksPerRun : undefined;
 	if (maxTasksPerRun !== undefined && input.tasks.length > maxTasksPerRun) {
 		decisions.push(decision("block", "limit_exceeded", `Run has ${input.tasks.length} tasks, exceeding maxTasksPerRun=${maxTasksPerRun}.`));
 	}
 	const runningCount = input.tasks.filter((task) => task.status === "running").length;
-	if (input.limits?.maxConcurrentWorkers !== undefined && runningCount > input.limits.maxConcurrentWorkers) {
-		decisions.push(decision("block", "limit_exceeded", `Run has ${runningCount} running workers, exceeding maxConcurrentWorkers=${input.limits.maxConcurrentWorkers}.`));
+	const maxConcurrentWorkers = Number.isFinite(input.limits?.maxConcurrentWorkers) ? input.limits!.maxConcurrentWorkers : undefined;
+	if (maxConcurrentWorkers !== undefined && runningCount > maxConcurrentWorkers) {
+		decisions.push(decision("block", "limit_exceeded", `Run has ${runningCount} running workers, exceeding maxConcurrentWorkers=${maxConcurrentWorkers}.`));
 	}
 	const tasksById = new Map(input.tasks.map((task) => [task.id, task]));
 

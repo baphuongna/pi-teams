@@ -87,7 +87,7 @@ function parseRoles(value: unknown): { roles?: TeamRole[]; error?: string } {
 			agent: sanitizeName(agent.value!),
 			description: typeof obj.description === "string" ? obj.description.trim() : undefined,
 			model: typeof obj.model === "string" ? obj.model.trim() : undefined,
-			maxConcurrency: typeof obj.maxConcurrency === "number" && Number.isInteger(obj.maxConcurrency) ? obj.maxConcurrency : undefined,
+			maxConcurrency: typeof obj.maxConcurrency === "number" && Number.isInteger(obj.maxConcurrency) && obj.maxConcurrency > 0 ? obj.maxConcurrency : undefined,
 		});
 	}
 	return { roles };
@@ -235,7 +235,7 @@ export function handleCreate(params: TeamToolParamsValue, ctx: ManagementContext
 			roles: parsedRoles.roles!,
 			defaultWorkflow: typeof cfg.defaultWorkflow === "string" ? sanitizeName(cfg.defaultWorkflow) : undefined,
 			workspaceMode: cfg.workspaceMode === "worktree" ? "worktree" : "single",
-			maxConcurrency: typeof cfg.maxConcurrency === "number" && Number.isInteger(cfg.maxConcurrency) ? cfg.maxConcurrency : undefined,
+			maxConcurrency: typeof cfg.maxConcurrency === "number" && Number.isInteger(cfg.maxConcurrency) && cfg.maxConcurrency > 0 ? cfg.maxConcurrency : undefined,
 			routing: parseRouting(cfg),
 		});
 	} else {
@@ -305,7 +305,7 @@ export function handleUpdate(params: TeamToolParamsValue, ctx: ManagementContext
 			roles,
 			defaultWorkflow: hasOwn(cfg, "defaultWorkflow") ? (typeof cfg.defaultWorkflow === "string" ? sanitizeName(cfg.defaultWorkflow) : undefined) : team.defaultWorkflow,
 			workspaceMode: cfg.workspaceMode === "worktree" ? "worktree" : cfg.workspaceMode === "single" ? "single" : team.workspaceMode,
-			maxConcurrency: typeof cfg.maxConcurrency === "number" && Number.isInteger(cfg.maxConcurrency) ? cfg.maxConcurrency : team.maxConcurrency,
+			maxConcurrency: typeof cfg.maxConcurrency === "number" && Number.isInteger(cfg.maxConcurrency) && cfg.maxConcurrency > 0 ? cfg.maxConcurrency : team.maxConcurrency,
 			routing: parseRouting(cfg, team.routing),
 		});
 	} else {
