@@ -41,7 +41,11 @@ function extensionFor(resource: "agent" | "team" | "workflow"): string {
 }
 
 function backupFile(filePath: string): string {
-	const backupPath = `${filePath}.bak-${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}`;
+	// Include milliseconds and a short random suffix to prevent collision
+	// when multiple backups happen within the same second.
+	const ts = new Date().toISOString().replace(/[-:.TZ]/g, "");
+	const random = Math.random().toString(36).slice(2, 6);
+	const backupPath = `${filePath}.bak-${ts.slice(0, 17)}-${random}`;
 	fs.copyFileSync(filePath, backupPath);
 	return backupPath;
 }

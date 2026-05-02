@@ -66,7 +66,10 @@ export function createJsonlWriter(filePath: string | undefined, source: Drainabl
 						if (!closed) source.resume();
 					});
 				}
-			} catch {}
+			} catch (writeError) {
+				// Log the error — silently dropping events is dangerous.
+				process.stderr.write(`[pi-crew] jsonl-writer: write failed ${filePath}: ${writeError instanceof Error ? writeError.message : String(writeError)}\n`);
+			}
 		},
 		async close() {
 			if (!stream || closed) return;

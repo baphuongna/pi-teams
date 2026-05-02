@@ -12,7 +12,11 @@ const DATE_HEADER = "\nCurrent date:";
 function readBooleanEnv(name: string): boolean | undefined {
 	const value = process.env[name];
 	if (value === undefined) return undefined;
-	return value !== "0";
+	const normalized = value.trim().toLowerCase();
+	if (normalized === "1" || normalized === "true" || normalized === "yes") return true;
+	if (normalized === "0" || normalized === "false" || normalized === "no") return false;
+	// Ambiguous value — treat as undefined so callers apply their default.
+	return undefined;
 }
 
 function readBooleanEnvAny(...names: string[]): boolean | undefined {

@@ -46,6 +46,11 @@ export async function executeWithRetry<T>(fn: (attempt: number) => Promise<T>, p
 			return await fn(attempt);
 		} catch (error) {
 			lastError = asError(error);
+			// Never retry if aborted — sleep() would immediately reject on every attempt.
+			if (hooks.signal?.aborted) {
+				hooks.onRetryGivenUp?.(attempt, lastError);
+				throw lastError;
+			}
 			if (attempt >= normalized.maxAttempts || !isRetryable(lastError, normalized)) {
 				hooks.onRetryGivenUp?.(attempt, lastError);
 				throw lastError;

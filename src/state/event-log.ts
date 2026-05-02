@@ -28,6 +28,7 @@ export interface TeamEventMetadata {
 	sessionIdentity?: TeamEventSessionIdentity;
 	ownership?: TeamEventOwnership;
 	nudgeId?: string;
+	appended?: boolean;
 	fingerprint?: string;
 	confidence?: "low" | "medium" | "high";
 }
@@ -131,7 +132,7 @@ export function appendEvent(eventsPath: string, event: AppendTeamEvent): TeamEve
 	try {
 		if (fs.existsSync(eventsPath) && fs.statSync(eventsPath).size > MAX_EVENTS_BYTES) {
 			logInternalError("event-log.size-limit", new Error(`events file ${eventsPath} exceeds ${MAX_EVENTS_BYTES} bytes`), `eventsPath=${eventsPath}`);
-			return fullEvent;
+			return { ...fullEvent, metadata: { ...(fullEvent.metadata ?? { seq: 0, provenance: "team_runner" }), appended: false } };
 		}
 	} catch (error) {
 		logInternalError("event-log.size-check", error, `eventsPath=${eventsPath}`);

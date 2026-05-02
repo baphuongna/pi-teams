@@ -649,9 +649,14 @@ function parseReliabilityConfig(value: unknown): CrewReliabilityConfig | undefin
 function parseOtlpConfig(value: unknown): CrewOtlpConfig | undefined {
 	const obj = asRecord(value);
 	if (!obj) return undefined;
-	const headers: Record<string, string> = {};
+	const headers: Record<string, string> = Object.create(null);
 	const rawHeaders = asRecord(obj.headers);
-	if (rawHeaders) for (const [key, entry] of Object.entries(rawHeaders)) if (typeof entry === "string") headers[key] = entry;
+	if (rawHeaders) for (const [key, entry] of Object.entries(rawHeaders)) {
+		if (typeof entry !== "string") continue;
+		// Prevent prototype pollution via __proto__ / constructor / prototype keys.
+		if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
+		headers[key] = entry;
+	}
 	const otlp: CrewOtlpConfig = {
 		enabled: parseWithSchema(Type.Boolean(), obj.enabled),
 		endpoint: parseWithSchema(Type.String({ minLength: 1 }), obj.endpoint),
