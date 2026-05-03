@@ -23,10 +23,21 @@ export interface HeartbeatWatcherOptions {
 	onDeadletterTrigger?: (manifest: TeamRunManifest, taskId: string) => void;
 }
 
+/**
+ * Polls running runs for heartbeat staleness.
+ *
+ * Uses recursive setTimeout to avoid timer storms.
+ * Cleanup is done in the same pass — no second scan over manifests.
+ * Keys for runs that disappear from the cache are cleaned via staleness-age policy
+ * rather than being leaked forever.
+ */
 export class HeartbeatWatcher {
-	private timer?: ReturnType<typeof setInterval>;
+	private timer?: ReturnType<typeof setTimeout>;
 	private lastLevel = new Map<string, HeartbeatLevel>();
 	private consecutiveDead = new Map<string, number>();
+	private lastSeen = new Map<string, number>(); // key → last time it was active
+	/** Max age (ms) to retain a stale key before garbage-collecting it. */
+	private readonly maxKeyAgeMs = 600_000; // 10 minutes
 	private readonly opts: HeartbeatWatcherOptions;
 
 	constructor(opts: HeartbeatWatcherOptions) {
@@ -35,13 +46,29 @@ export class HeartbeatWatcher {
 
 	start(): void {
 		this.dispose();
-		this.timer = setInterval(() => this.tick(), this.opts.pollIntervalMs ?? 5000);
+		this.scheduleTick();
+	}
+
+	private scheduleTick(): void {
+		this.timer = setTimeout(() => this.tick(), this.opts.pollIntervalMs ?? 5000);
 		this.timer.unref();
 	}
 
 	tick(now = Date.now()): void {
+		try {
+			this.tickUnsafe(now);
+		} catch (error) {
+			logInternalError("heartbeat-watcher.tick", error);
+		} finally {
+			this.scheduleTick();
+		}
+	}
+
+	private tickUnsafe(now: number): void {
 		const thresholds = this.opts.thresholds ?? DEFAULT_GRADIENT_THRESHOLDS;
 		const tickThreshold = this.opts.deadletterTickThreshold ?? 3;
+		const activeKeys = new Set<string>();
+
 		for (const run of this.opts.manifestCache.list(50)) {
 			if (run.status !== "running") continue;
 			const loaded = loadRunManifestById(this.opts.cwd, run.runId);
@@ -49,6 +76,9 @@ export class HeartbeatWatcher {
 			for (const task of loaded.tasks) {
 				if (task.status !== "running") continue;
 				const key = `${run.runId}:${task.id}`;
+				activeKeys.add(key);
+				this.lastSeen.set(key, now);
+
 				const elapsed = heartbeatAgeMs(task.heartbeat, now);
 				const level = classifyHeartbeat(task.heartbeat, thresholds, now);
 				this.opts.registry.gauge("crew.heartbeat.staleness_ms", "Heartbeat elapsed since last seen, milliseconds").set({ runId: run.runId, taskId: task.id }, Number.isFinite(elapsed) ? elapsed : thresholds.deadMs);
@@ -70,23 +100,25 @@ export class HeartbeatWatcher {
 				}
 			}
 		}
-		// Remove stale entries for tasks that are no longer running.
-		const activeKeys = new Set<string>();
-		for (const run of this.opts.manifestCache.list(50)) {
-			const loaded = loadRunManifestById(this.opts.cwd, run.runId);
-			if (!loaded) continue;
-			for (const task of loaded.tasks) {
-				if (task.status === "running") activeKeys.add(`${run.runId}:${task.id}`);
+
+		// Cleanup: drop keys that were NOT in this tick's active set AND
+		// haven't been seen for > maxKeyAgeMs.  This covers runs that
+		// completed or fell out of the manifest cache's top-50 window.
+		const cutoff = now - this.maxKeyAgeMs;
+		for (const [key, ts] of this.lastSeen) {
+			if (!activeKeys.has(key) && ts < cutoff) {
+				this.lastLevel.delete(key);
+				this.consecutiveDead.delete(key);
+				this.lastSeen.delete(key);
 			}
 		}
-		for (const key of this.lastLevel.keys()) if (!activeKeys.has(key)) this.lastLevel.delete(key);
-		for (const key of this.consecutiveDead.keys()) if (!activeKeys.has(key)) this.consecutiveDead.delete(key);
 	}
 
 	dispose(): void {
-		if (this.timer) clearInterval(this.timer);
+		if (this.timer) clearTimeout(this.timer);
 		this.timer = undefined;
 		this.lastLevel.clear();
 		this.consecutiveDead.clear();
+		this.lastSeen.clear();
 	}
 }

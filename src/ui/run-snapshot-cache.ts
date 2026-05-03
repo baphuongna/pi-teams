@@ -4,17 +4,19 @@ import * as path from "node:path";
 import { readCrewAgents, agentsPath, agentOutputPath } from "../runtime/crew-agent-records.ts";
 import type { CrewAgentRecord } from "../runtime/crew-agent-runtime.ts";
 import { isActiveRunStatus } from "../runtime/process-status.ts";
-import { readEvents, type TeamEvent } from "../state/event-log.ts";
+import type { TeamEvent } from "../state/event-log.ts";
 import type { MailboxMessageStatus } from "../state/mailbox.ts";
 import { loadRunManifestById } from "../state/state-store.ts";
 import type { TeamRunManifest, TeamTaskState } from "../state/types.ts";
 import type { RunSnapshotCache, RunUiGroupJoin, RunUiMailbox, RunUiProgress, RunUiSnapshot, RunUiUsage } from "./snapshot-types.ts";
 
-const DEFAULT_TTL_MS = 250;
+const DEFAULT_TTL_MS = 500;
 const DEFAULT_MAX_ENTRIES = 24;
 const DEFAULT_RECENT_EVENTS = 20;
 const DEFAULT_RECENT_OUTPUT_LINES = 20;
 const MAX_TAIL_BYTES = 32 * 1024;
+/** Max JSONL lines to tail when reading growing files (events, mailbox). */
+const MAX_TAIL_LINES = 500;
 
 interface FileStamp {
 	mtimeMs: number;
@@ -116,12 +118,38 @@ function readTasks(tasksPath: string): TeamTaskState[] {
 	}
 }
 
-function safeRecentEvents(eventsPath: string, limit: number): TeamEvent[] {
+/** Tail-read JSONL lines from a file, returning parsed objects (limited). */
+function tailJsonlLines<T>(filePath: string, limit: number, parse: (line: string) => T | undefined): T[] {
+	if (limit <= 0) return [];
 	try {
-		return readEvents(eventsPath).slice(-limit);
+		const stat = fs.statSync(filePath);
+		const bytesToRead = Math.min(stat.size, MAX_TAIL_BYTES);
+		const fd = fs.openSync(filePath, "r");
+		try {
+			const buffer = Buffer.alloc(bytesToRead);
+			fs.readSync(fd, buffer, 0, bytesToRead, stat.size - bytesToRead);
+			const lines = buffer.toString("utf-8").split(/\r?\n/).filter(Boolean);
+			return lines.flatMap((line) => {
+				const item = parse(line);
+				return item ? [item] : [];
+			}).slice(-limit);
+		} finally {
+			fs.closeSync(fd);
+		}
 	} catch {
 		return [];
 	}
+}
+
+function safeRecentEvents(eventsPath: string, limit: number): TeamEvent[] {
+	return tailJsonlLines(eventsPath, limit, (line) => {
+		try {
+			const parsed = JSON.parse(line) as unknown;
+			return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as TeamEvent) : undefined;
+		} catch {
+			return undefined;
+		}
+	});
 }
 
 function tailLines(filePath: string, limit: number): string[] {
@@ -196,40 +224,33 @@ function readDeliveryMessages(filePath: string): Record<string, MailboxMessageSt
 }
 
 function readGroupJoinMailbox(filePath: string, delivery: Record<string, MailboxMessageStatus>): RunUiGroupJoin[] {
-	try {
-		return fs.readFileSync(filePath, "utf-8").split(/\r?\n/).filter(Boolean).flatMap((line) => {
-			try {
-				const parsed = JSON.parse(line) as unknown;
-				if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
-				const message = parsed as { id?: unknown; data?: unknown };
-				const data = message.data && typeof message.data === "object" && !Array.isArray(message.data) ? message.data as Record<string, unknown> : undefined;
-				if (typeof message.id !== "string" || data?.kind !== "group_join" || typeof data.requestId !== "string") return [];
-				return [{ requestId: data.requestId, messageId: message.id, partial: data.partial === true, ack: delivery[message.id] === "acknowledged" ? "acknowledged" as const : "pending" as const }];
-			} catch {
-				return [];
-			}
-		});
-	} catch {
-		return [];
-	}
+	return tailJsonlLines(filePath, MAX_TAIL_LINES, (line) => {
+		try {
+			const parsed = JSON.parse(line) as unknown;
+			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+			const message = parsed as { id?: unknown; data?: unknown };
+			const data = message.data && typeof message.data === "object" && !Array.isArray(message.data) ? message.data as Record<string, unknown> : undefined;
+			if (typeof message.id !== "string" || data?.kind !== "group_join" || typeof data.requestId !== "string") return undefined;
+			return { requestId: data.requestId, messageId: message.id, partial: data.partial === true, ack: delivery[message.id] === "acknowledged" ? "acknowledged" as const : "pending" as const };
+		} catch {
+			return undefined;
+		}
+	});
 }
 
 function readMailboxCounts(filePath: string, delivery: Record<string, MailboxMessageStatus>): number {
-	try {
-		return fs.readFileSync(filePath, "utf-8").split(/\r?\n/).filter(Boolean).reduce((count, line) => {
-			try {
-				const parsed = JSON.parse(line) as unknown;
-				if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return count;
-				const message = parsed as { id?: unknown; status?: unknown };
-				if (typeof message.id !== "string" || !isMailboxStatus(message.status)) return count;
-				return message.status !== "acknowledged" && delivery[message.id] !== "acknowledged" ? count + 1 : count;
-			} catch {
-				return count;
-			}
-		}, 0);
-	} catch {
-		return 0;
-	}
+	const items = tailJsonlLines(filePath, MAX_TAIL_LINES, (line) => {
+		try {
+			const parsed = JSON.parse(line) as unknown;
+			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return 0;
+			const message = parsed as { id?: unknown; status?: unknown };
+			if (typeof message.id !== "string" || !isMailboxStatus(message.status)) return 0;
+			return message.status !== "acknowledged" && delivery[message.id] !== "acknowledged" ? 1 : 0;
+		} catch {
+			return 0;
+		}
+	}) as number[];
+	return items.reduce((sum, val) => sum + val, 0);
 }
 
 function groupJoinsFrom(manifest: TeamRunManifest): RunUiGroupJoin[] {

@@ -22,15 +22,26 @@ const DEFAULT_EVENTS = [
 	"crew.mailbox.message",
 ];
 
+/**
+ * Coordinates UI renders with debounce + fallback polling.
+ *
+ * Critical: uses recursive setTimeout instead of setInterval + a rendering
+ * guard (`rendering` / `pendingRender`) so that when render() takes longer
+ * than the fallback interval, callbacks do NOT pile up and storm the event
+ * loop.  Instead, overlapping schedules are collapsed into a single deferred
+ * re-render.
+ */
 export class RenderScheduler {
 	private readonly render: () => void;
 	private readonly onInvalidate?: (payload: unknown) => void;
 	private readonly debounceMs: number;
 	private readonly fallbackMs: number;
 	private debounceTimer: ReturnType<typeof setTimeout> | undefined;
-	private fallbackTimer: ReturnType<typeof setInterval> | undefined;
+	private fallbackTimer: ReturnType<typeof setTimeout> | undefined;
 	private disposed = false;
 	private lastEventAt = 0;
+	private rendering = false;
+	private pendingRender = false;
 	private readonly unsubs: Array<() => void> = [];
 
 	constructor(events: RenderSchedulerEventBus | undefined, render: () => void, options: RenderSchedulerOptions = {}) {
@@ -39,7 +50,7 @@ export class RenderScheduler {
 		this.debounceMs = options.debounceMs ?? 75;
 		this.fallbackMs = options.fallbackMs ?? 750;
 		for (const event of options.events ?? DEFAULT_EVENTS) this.subscribe(events, event);
-		this.fallbackTimer = setInterval(() => this.fallback(), this.fallbackMs);
+		this.fallbackTimer = setTimeout(() => this.fallbackLoop(), this.fallbackMs);
 		this.fallbackTimer.unref();
 	}
 
@@ -54,10 +65,17 @@ export class RenderScheduler {
 		}
 	}
 
-	private fallback(): void {
+	/** Recursive setTimeout — avoids setInterval timer storms. */
+	private fallbackLoop(): void {
 		if (this.disposed) return;
-		if (Date.now() - this.lastEventAt < this.fallbackMs) return;
-		this.flush();
+		if (Date.now() - this.lastEventAt < this.fallbackMs) {
+			this.fallbackTimer = setTimeout(() => this.fallbackLoop(), this.fallbackMs);
+			this.fallbackTimer.unref();
+			return;
+		}
+		this.schedule();
+		this.fallbackTimer = setTimeout(() => this.fallbackLoop(), this.fallbackMs);
+		this.fallbackTimer.unref();
 	}
 
 	schedule(payload?: unknown): void {
@@ -76,12 +94,28 @@ export class RenderScheduler {
 		this.debounceTimer.unref();
 	}
 
+	/**
+	 * Flush a render.  If a render is already in progress the request is
+	 * collapsed: `pendingRender` is set and the caller that holds
+	 * `rendering==true` will loop one more time after finishing.
+	 */
 	flush(): void {
 		if (this.disposed) return;
+		if (this.rendering) {
+			this.pendingRender = true;
+			return;
+		}
+		this.rendering = true;
+		this.pendingRender = false;
 		try {
-			this.render();
+			do {
+				this.pendingRender = false;
+				this.render();
+			} while (this.pendingRender && !this.disposed);
 		} catch (error) {
 			logInternalError("render-scheduler.render", error);
+		} finally {
+			this.rendering = false;
 		}
 	}
 
@@ -89,15 +123,11 @@ export class RenderScheduler {
 		if (this.disposed) return;
 		this.disposed = true;
 		if (this.debounceTimer) clearTimeout(this.debounceTimer);
-		if (this.fallbackTimer) clearInterval(this.fallbackTimer);
+		if (this.fallbackTimer) clearTimeout(this.fallbackTimer);
 		this.debounceTimer = undefined;
 		this.fallbackTimer = undefined;
 		for (const unsub of this.unsubs.splice(0)) {
-			try {
-				unsub();
-			} catch (error) {
-				logInternalError("render-scheduler.unsubscribe", error);
-			}
+			try { unsub(); } catch (error) { logInternalError("render-scheduler.unsubscribe", error); }
 		}
 	}
 }

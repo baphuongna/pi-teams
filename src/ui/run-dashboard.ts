@@ -200,12 +200,32 @@ function runLabel(run: TeamRunManifest, selected: boolean, snapshotCache?: RunSn
 	return `${marker} ${iconForStatus(status, { runningGlyph: spinnerFrame(run.runId) })} ${run.runId.slice(-8)} ${status} | ${run.team}/${run.workflow ?? "none"} | ${step} | ${run.goal}`;
 }
 
+interface ResolvedRun {
+	manifest: TeamRunManifest;
+	snapshot: RunUiSnapshot | undefined;
+	agents: CrewAgentRecord[];
+	status: RunStatus;
+}
+
+function resolveRuns(runs: TeamRunManifest[], snapshotCache?: RunSnapshotCache): Map<string, ResolvedRun> {
+	const map = new Map<string, ResolvedRun>();
+	for (const run of runs) {
+		const snapshot = snapshotFor(run, snapshotCache);
+		const agents = snapshot?.agents ?? agentsFor(run, snapshotCache);
+		const displayRun = snapshot?.manifest ?? run;
+		const status: RunStatus = isLikelyOrphanedActiveRun(displayRun, agents) ? "stale" : (displayRun.status as RunStatus);
+		map.set(run.runId, { manifest: run, snapshot, agents, status });
+	}
+	return map;
+}
+
 function groupedRuns(runs: TeamRunManifest[], snapshotCache?: RunSnapshotCache): Array<{ label: string; run?: TeamRunManifest }> {
-	const active = runs.filter((run) => isDisplayActiveRun(snapshotFor(run, snapshotCache)?.manifest ?? run, agentsFor(run, snapshotCache)));
-	const recent = runs.filter((run) => !isDisplayActiveRun(snapshotFor(run, snapshotCache)?.manifest ?? run, agentsFor(run, snapshotCache)));
+	const resolved = resolveRuns(runs, snapshotCache);
 	const rows: Array<{ label: string; run?: TeamRunManifest }> = [];
+	const active = runs.filter((run) => isDisplayActiveRun(resolved.get(run.runId)?.snapshot?.manifest ?? run, resolved.get(run.runId)?.agents ?? []));
+	const rest = runs.filter((run) => !isDisplayActiveRun(resolved.get(run.runId)?.snapshot?.manifest ?? run, resolved.get(run.runId)?.agents ?? []));
 	if (active.length) rows.push({ label: "Active" }, ...active.map((run) => ({ label: run.runId, run })));
-	if (recent.length) rows.push({ label: "Recent" }, ...recent.map((run) => ({ label: run.runId, run })));
+	if (rest.length) rows.push({ label: "Recent" }, ...rest.map((run) => ({ label: run.runId, run })));
 	return rows;
 }
 
@@ -214,13 +234,9 @@ function selectedRunFromGrouped(runs: TeamRunManifest[], selected: number, snaps
 }
 
 function countByStatus(runs: TeamRunManifest[], snapshotCache?: RunSnapshotCache): string {
+	const resolved = resolveRuns(runs, snapshotCache);
 	const counts = new Map<RunStatus, number>();
-	for (const run of runs) {
-		const snapshot = snapshotFor(run, snapshotCache);
-		const displayRun = snapshot?.manifest ?? run;
-		const status: RunStatus = isLikelyOrphanedActiveRun(displayRun, snapshot?.agents ?? agentsFor(run, snapshotCache)) ? "stale" : (displayRun.status as RunStatus);
-		counts.set(status, (counts.get(status) ?? 0) + 1);
-	}
+	for (const r of resolved.values()) counts.set(r.status, (counts.get(r.status) ?? 0) + 1);
 	return [...counts.entries()].map(([status, count]) => `${status}=${count}`).join(", ") || "none";
 }
 
