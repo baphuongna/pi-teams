@@ -5,6 +5,7 @@
 
 const ENABLED = process.env.PI_TIMING === "1";
 const timings: Array<{ label: string; ms: number }> = [];
+const MAX_TIMINGS = 500;
 let lastTime = Date.now();
 
 export function resetTimings(): void {
@@ -15,6 +16,7 @@ export function resetTimings(): void {
 
 export function time(label: string): void {
 	if (!ENABLED) return;
+	if (timings.length >= MAX_TIMINGS) timings.shift();
 	const now = Date.now();
 	timings.push({ label, ms: now - lastTime });
 	lastTime = now;

@@ -5,7 +5,10 @@ const BEARER_PATTERN = /\b(Bearer\s+)([A-Za-z0-9._~+/=-]{8,})\b/g;
 const PEM_PRIVATE_KEY_PATTERN = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	// Exclude built-in types whose Object.entries() would produce empty arrays.
+	if (value instanceof Date || value instanceof RegExp || value instanceof Error || value instanceof Map || value instanceof Set) return false;
+	return true;
 }
 
 function isSecretKey(keyName: string): boolean {

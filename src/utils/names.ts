@@ -1,5 +1,6 @@
 export function sanitizeName(name: string): string {
-	return name.toLowerCase().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+	const result = name.toLowerCase().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+	return result || "unnamed";
 }
 
 export function requireString(value: unknown, label: string): { value?: string; error?: string } {

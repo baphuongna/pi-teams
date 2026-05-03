@@ -40,8 +40,12 @@ export function createMetricFileSink(opts: MetricFileSinkOptions): MetricSink {
 			const date = now.toISOString().slice(0, 10);
 			fs.mkdirSync(dir, { recursive: true });
 			rotateOldFiles(dir, retentionDays);
-			const redacted = redactSecrets(snapshots) as MetricSnapshot[];
-			fs.appendFileSync(path.join(dir, `${date}.jsonl`), `${JSON.stringify({ exportedAt: now.toISOString(), snapshots: redacted })}\n`, "utf-8");
+			const redacted = redactSecrets(snapshots);
+			if (!Array.isArray(redacted)) {
+				logInternalError("metric-sink.type", new Error("redactSecrets did not return an array"), `got=${typeof redacted}`);
+				return;
+			}
+			fs.appendFileSync(path.join(dir, `${date}.jsonl`), `${JSON.stringify({ exportedAt: now.toISOString(), snapshots: redacted as MetricSnapshot[] })}\n`, "utf-8");
 		} catch (error) {
 			logInternalError("metric-sink.write", error);
 		}
