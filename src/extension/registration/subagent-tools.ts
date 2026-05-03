@@ -94,7 +94,7 @@ export function registerSubagentTools(pi: ExtensionAPI, subagentManager: Subagen
 							break;
 						}
 						if (Date.now() - waitStartMs > maxWaitMs) {
-							current = { ...current, status: "error", error: "Timed out waiting for subagent result.", completedAt: Date.now() };
+							current = { ...current, status: "error", error: t("result.waitTimeout"), completedAt: Date.now() };
 							savePersistedSubagentRecord(ctx.cwd, current);
 							break;
 						}
