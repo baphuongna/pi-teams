@@ -1,4 +1,4 @@
-import type { TeamContext } from "../team-tool.ts";
+import type { TeamContext } from "../team-tool/context.ts";
 import { loadConfig, updateConfig } from "../../config/config.ts";
 import { configPatchFromConfig } from "../team-tool/config-patch.ts";
 import { result } from "../team-tool/context.ts";

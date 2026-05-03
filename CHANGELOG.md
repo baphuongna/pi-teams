@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## 0.1.43
+
+### Added
+
+- `/team-settings` command: view and manage all pi-crew config from Pi CLI (`list`, `get`, `set`, `unset`, `path`, `scope`).
+- `addTranslations(locale, bundle)` and `listLocales()` for runtime-extensible i18n.
+
+### Fixed
+
+- **UI freeze crash**: replaced `setInterval` with recursive `setTimeout` in `RenderScheduler` and `HeartbeatWatcher` to prevent timer storms when renders exceed the interval.
+- **Growing-file I/O bottleneck**: `safeRecentEvents`, `readMailboxCounts`, `readGroupJoinMailbox` now use tail-reading (last 32 KB) instead of reading entire `.jsonl` files that grow unbounded over long runs.
+- **Snapshot cache TTL** increased from 250 ms to 500 ms, halving unnecessary I/O.
+- **Heartbeat watcher memory leak**: stale keys are now cleaned after 10 minutes of inactivity instead of being held forever.
+- **Dashboard crash guard**: `render()` is wrapped in `try/catch` with a fallback error display.
+- **Dashboard selected-index mismatch**: reset `selected` to 0 when the selected run disappears from the manifest cache.
+- **`live-run-sidebar.ts` crash**: fixed missing optional chaining on `agent.progress?.recentOutput?.at(-1)`.
+- **`signatureFor` crash**: `JSON.stringify` in snapshot cache wrapped in `try/catch` with a timestamp fallback.
+- **Render scheduler timer leak**: added a `disposed` guard after `schedule()` to prevent orphaned timers.
+- **Render scheduler loop guard**: capped at 5 iterations per `flush()` to prevent infinite loops when `render()` re-enters `flush()`.
+- **`powerbar-publisher.ts`**: replaced `.filter().length` with `.reduce()` counting to avoid temporary array allocations.
+
+### Changed
+
+- **i18n module hardened**: locale validated at runtime (not hardcoded union type), `currentLocale` reset on dispose, missing-key guard (`fallback[key] ?? key`), `__test__resetI18n()` helper.
+
 ## 0.1.42
 
 ### Fixed
