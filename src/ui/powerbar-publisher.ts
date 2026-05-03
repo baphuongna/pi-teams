@@ -92,8 +92,8 @@ export function updatePiCrewPowerbar(events: EventBus, cwd: string, config?: Cre
 	const agents = active.flatMap((item) => item.agents);
 	const tasks = active.flatMap((item) => item.tasks);
 	const running = agents.filter((agent) => agent.status === "running").length;
-	const waiting = active.reduce((sum, item) => sum + (item.snapshot?.progress.queued ?? item.tasks.filter((task) => task.status === "queued").length), 0);
-	const completed = active.reduce((sum, item) => sum + (item.snapshot?.progress.completed ?? item.tasks.filter((task) => task.status === "completed").length), 0);
+	const waiting = active.reduce((sum, item) => sum + (item.snapshot?.progress.queued ?? item.tasks.reduce((s, t) => s + (t.status === "queued" ? 1 : 0), 0)), 0);
+	const completed = active.reduce((sum, item) => sum + (item.snapshot?.progress.completed ?? item.tasks.reduce((s, t) => s + (t.status === "completed" ? 1 : 0), 0)), 0);
 	const total = Math.max(1, active.reduce((sum, item) => sum + (item.snapshot?.progress.total ?? item.tasks.length), 0) || agents.length);
 	const usage = aggregateUsage(tasks);
 	const snapshotTokens = active.reduce((sum, item) => sum + (item.snapshot ? item.snapshot.usage.tokensIn + item.snapshot.usage.tokensOut : 0), 0);
