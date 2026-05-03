@@ -31,8 +31,8 @@ export function findRepoRoot(cwd: string): string | undefined {
 	const home = path.resolve(os.homedir());
 	const tempRoot = path.resolve(os.tmpdir());
 	while (current !== root) {
-		if (current === home || current === tempRoot) return undefined;
 		if (hasProjectMarker(current)) return current;
+		if (current === home || current === tempRoot) return undefined;
 		const parent = path.dirname(current);
 		if (parent === current) break;
 		current = parent;

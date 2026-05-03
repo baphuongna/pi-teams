@@ -28,8 +28,8 @@ export function childCorrelation(runId: string, taskId: string): CorrelationCont
 	return { traceId: parent?.traceId ?? spanId, parentSpanId: parent?.spanId, spanId };
 }
 
-export function correlatedEvent<T extends { runId?: string; data?: Record<string, unknown> }>(event: T): T {
+export function correlatedEvent<T extends { runId?: string; data?: Record<string, unknown> }>(event: T): T & { data: Record<string, unknown> } {
 	const ctx = getCurrentContext();
-	if (!ctx) return event;
+	if (!ctx) return event as T & { data: Record<string, unknown> };
 	return { ...event, data: { ...(event.data ?? {}), traceId: ctx.traceId, spanId: ctx.spanId, parentSpanId: ctx.parentSpanId } };
 }

@@ -66,8 +66,8 @@ export class NotificationRouter {
 		const withTime = { ...notification, timestamp: notification.timestamp ?? now };
 		try {
 			this.opts.sink?.(withTime);
-		} catch {
-			// Notification delivery must never crash the extension.
+		} catch (sinkError) {
+			process.stderr.write(`[pi-crew] notification-sink: ${sinkError instanceof Error ? sinkError.message : String(sinkError)}\n`);
 		}
 		const filter = this.opts.severityFilter ?? DEFAULT_SEVERITY_FILTER;
 		if (!filter.includes(withTime.severity)) return false;

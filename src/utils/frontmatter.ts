@@ -10,12 +10,25 @@ export function parseFrontmatter(content: string): ParsedFrontmatter {
 
 	const normalized = content.replaceAll("\r\n", "\n");
 	const end = normalized.indexOf("\n---\n", 4);
-	if (end === -1) return { frontmatter: {}, body: content };
+	if (end === -1) {
+		// Support frontmatter that ends at EOF without trailing newline after ---.
+		const altEnd = normalized.indexOf("\n---", 4);
+		if (altEnd !== -1 && altEnd + 4 === normalized.length) {
+			const raw = normalized.slice(4, altEnd);
+			const frontmatter = parseLines(raw);
+			return { frontmatter, body: "" };
+		}
+		return { frontmatter: {}, body: content };
+	}
 
 	const raw = normalized.slice(4, end);
 	const body = normalized.slice(end + "\n---\n".length);
-	const frontmatter: Record<string, string> = {};
+	const frontmatter = parseLines(raw);
+	return { frontmatter, body };
+}
 
+function parseLines(raw: string): Record<string, string> {
+	const frontmatter: Record<string, string> = {};
 	for (const line of raw.split("\n")) {
 		const trimmed = line.trim();
 		if (!trimmed || trimmed.startsWith("#")) continue;
@@ -25,12 +38,31 @@ export function parseFrontmatter(content: string): ParsedFrontmatter {
 		const value = trimmed.slice(separator + 1).trim();
 		if (key) frontmatter[key] = value;
 	}
-
-	return { frontmatter, body };
+	return frontmatter;
 }
 
 export function parseCsv(value: string | undefined): string[] | undefined {
 	if (value === undefined) return undefined;
-	const values = value.split(",").map((item) => item.trim()).filter(Boolean);
+	// Handle quoted values with commas inside.
+	const values = splitCsv(value).map((item) => item.trim()).filter(Boolean);
 	return values.length > 0 ? [...new Set(values)] : undefined;
+}
+
+function splitCsv(input: string): string[] {
+	const result: string[] = [];
+	let current = "";
+	let inQuotes = false;
+	for (let i = 0; i < input.length; i++) {
+		const char = input[i];
+		if (char === '"') {
+			inQuotes = !inQuotes;
+		} else if (char === "," && !inQuotes) {
+			result.push(current);
+			current = "";
+		} else {
+			current += char;
+		}
+	}
+	result.push(current);
+	return result;
 }

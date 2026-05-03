@@ -4,6 +4,14 @@ const WIDTH_CACHE_LIMIT = 256;
 const widthCache = new Map<string, number>();
 
 export function visibleWidth(value: string): number {
+	// Skip caching for very long strings to avoid memory pressure.
+	if (value.length > 4096) {
+		let length = 0;
+		for (const char of value.replace(ANSI_PATTERN, "")) {
+			if (char !== "\n") length += 1;
+		}
+		return length;
+	}
 	const cached = widthCache.get(value);
 	if (cached !== undefined) return cached;
 	let length = 0;
