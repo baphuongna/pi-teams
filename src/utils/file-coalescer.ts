@@ -46,10 +46,9 @@ const readCacheSizeLimit = 128;
 
 function evictOldestCacheEntry(): void {
 	if (readCache.size < readCacheSizeLimit) return;
+	// Map iteration order is insertion order; first key is LRU.
 	const oldestKey = readCache.keys().next().value;
-	if (oldestKey !== undefined) {
-		readCache.delete(oldestKey);
-	}
+	if (oldestKey !== undefined) readCache.delete(oldestKey);
 }
 
 export function clearReadCache(): void {
@@ -68,6 +67,9 @@ export function readJsonFileCoalesced<T>(filePath: string, ttlMs: number, read: 
 	})();
 	const cached = readCache.get(filePath);
 	if (cached && stat && cached.expiresAt > now && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+		// Re-insert to implement LRU: move to end of Map.
+		readCache.delete(filePath);
+		readCache.set(filePath, cached);
 		return cached.value as T;
 	}
 	const value = read();
