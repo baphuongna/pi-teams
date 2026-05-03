@@ -279,8 +279,9 @@ function mailboxFrom(manifest: TeamRunManifest, agents: CrewAgentRecord[]): RunU
 }
 
 function signatureFor(input: Omit<RunUiSnapshot, "signature" | "fetchedAt">, stamps: SnapshotStamps): string {
-	const digest = createHash("sha256");
-	digest.update(JSON.stringify({
+	try {
+		const digest = createHash("sha256");
+		digest.update(JSON.stringify({
 		run: [input.manifest.runId, input.manifest.status, input.manifest.updatedAt, input.manifest.artifacts.length],
 		tasks: input.tasks.map((task) => [task.id, task.status, task.startedAt, task.finishedAt, task.agentProgress, task.usage]),
 		agents: input.agents.map((agent) => [agent.id, agent.status, agent.startedAt, agent.completedAt, agent.toolUses, agent.progress, agent.usage, agent.model]),
@@ -293,6 +294,10 @@ function signatureFor(input: Omit<RunUiSnapshot, "signature" | "fetchedAt">, sta
 		stamps,
 	}));
 	return digest.digest("hex").slice(0, 16);
+	} catch {
+		// Circular reference or non-serializable data — fall back to timestamp.
+		return String(Date.now());
+	}
 }
 
 function stampsFor(manifest: TeamRunManifest, agents: CrewAgentRecord[]): SnapshotStamps {

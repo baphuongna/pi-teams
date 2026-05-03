@@ -435,6 +435,7 @@ export class AnimatedMascot {
 	}
 
 	dispose(): void {
+		this.doneGuard.called = true;
 		if (this.interval) clearInterval(this.interval);
 		if (this.timeout) clearTimeout(this.timeout);
 	}

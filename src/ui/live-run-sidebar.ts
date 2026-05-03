@@ -78,7 +78,7 @@ export class LiveRunSidebar {
 		const animation = agents.some((agent) => agent.status === "running") ? `:spin=${spinnerBucket()}` : "";
 		if (snapshot) return `${snapshot.signature}:${waitingCount}${animation}`;
 		const taskSig = tasks.map((task) => `${task.id}:${task.status}:${task.startedAt ?? ""}:${task.finishedAt ?? ""}:${task.agentProgress?.currentTool ?? ""}:${task.agentProgress?.toolCount ?? 0}:${task.agentProgress?.tokens ?? 0}:${task.usage ? JSON.stringify(task.usage) : ""}`).join("|");
-		const agentSig = agents.map((agent) => [agent.id, agent.status, agent.startedAt, agent.completedAt ?? "", agent.progress?.currentTool ?? "", agent.progress?.toolCount ?? 0, agent.progress?.tokens ?? 0, agent.progress?.turns ?? 0, agent.progress?.lastActivityAt ?? "", agent.progress?.recentOutput.at(-1) ?? "", agent.toolUses ?? 0].join(":")).join("|");
+		const agentSig = agents.map((agent) => [agent.id, agent.status, agent.startedAt, agent.completedAt ?? "", agent.progress?.currentTool ?? "", agent.progress?.toolCount ?? 0, agent.progress?.tokens ?? 0, agent.progress?.turns ?? 0, agent.progress?.lastActivityAt ?? "", agent.progress?.recentOutput?.at(-1) ?? "", agent.toolUses ?? 0].join(":")).join("|");
 		return `${manifestStatus}|${agents.length}|${waitingCount}|${taskSig}|${agentSig}${animation}`;
 	}
 

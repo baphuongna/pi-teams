@@ -69,11 +69,13 @@ export class RenderScheduler {
 	private fallbackLoop(): void {
 		if (this.disposed) return;
 		if (Date.now() - this.lastEventAt < this.fallbackMs) {
+			if (this.disposed) return;
 			this.fallbackTimer = setTimeout(() => this.fallbackLoop(), this.fallbackMs);
 			this.fallbackTimer.unref();
 			return;
 		}
 		this.schedule();
+		if (this.disposed) return;
 		this.fallbackTimer = setTimeout(() => this.fallbackLoop(), this.fallbackMs);
 		this.fallbackTimer.unref();
 	}
@@ -107,15 +109,23 @@ export class RenderScheduler {
 		}
 		this.rendering = true;
 		this.pendingRender = false;
+		let iterations = 0;
 		try {
 			do {
 				this.pendingRender = false;
 				this.render();
-			} while (this.pendingRender && !this.disposed);
+				iterations += 1;
+				// Safety valve: 5 re-renders max per flush to prevent infinite loops
+				// if render() itself calls flush() synchronously.
+			} while (this.pendingRender && !this.disposed && iterations < 5);
 		} catch (error) {
 			logInternalError("render-scheduler.render", error);
 		} finally {
 			this.rendering = false;
+			// If we hit the iteration cap, schedule one more render to drain.
+			if (iterations >= 5 && this.pendingRender && !this.disposed) {
+				this.schedule();
+			}
 		}
 	}
 

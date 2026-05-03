@@ -12,6 +12,7 @@ import { Box, Text } from "./layout-primitives.ts";
 import { DynamicCrewBorder } from "./dynamic-border.ts";
 import { CrewFooter } from "./crew-footer.ts";
 import { aggregateUsage } from "../state/usage.ts";
+import { logInternalError } from "../utils/internal-error.ts";
 import { renderAgentsPane } from "./dashboard-panes/agents-pane.ts";
 import { renderMailboxPane } from "./dashboard-panes/mailbox-pane.ts";
 import { renderProgressPane } from "./dashboard-panes/progress-pane.ts";
@@ -269,10 +270,12 @@ export class RunDashboard implements DashboardComponent {
 	private refreshRuns(): void {
 		if (!this.options.runProvider) return;
 		const selectedRunId = this.selectedRunId();
-		this.runs = this.options.runProvider();
+		const next = this.options.runProvider();
+		this.runs = Array.isArray(next) ? next : this.runs;
 		if (selectedRunId) {
 			const nextIndex = groupedRuns(this.runs, this.options.snapshotCache).filter((row) => row.run).findIndex((row) => row.run?.runId === selectedRunId);
 			if (nextIndex >= 0) this.selected = nextIndex;
+			else this.selected = 0;
 		}
 	}
 
@@ -305,6 +308,15 @@ export class RunDashboard implements DashboardComponent {
 	}
 
 	render(width: number): string[] {
+		try {
+			return this.renderUnsafe(width);
+		} catch (error) {
+			logInternalError("run-dashboard.render", error);
+			return renderLines(["Dashboard error — see logs for details."], width);
+		}
+	}
+
+	private renderUnsafe(width: number): string[] {
 		this.refreshRuns();
 		const signature = this.buildSignature();
 		if (signature !== this.cachedVersion || this.cachedWidth !== width) {
