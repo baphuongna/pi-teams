@@ -26,9 +26,10 @@ export class TimeWindowedCounter {
 	}
 
 	count(labels: MetricLabels = {}, durationMs = this.windowMs): number {
-		this.prune();
+		const now = this.now();
+		this.pruneAt(now);
 		const key = labelKey(labels);
-		const cutoff = this.now() - durationMs;
+		const cutoff = now - durationMs;
 		return this.events.filter((event) => event.timestamp >= cutoff && labelKey(event.labels) === key).reduce((sum, event) => sum + event.delta, 0);
 	}
 
@@ -43,7 +44,11 @@ export class TimeWindowedCounter {
 	}
 
 	private prune(): void {
-		const cutoff = this.now() - this.windowMs;
+		this.pruneAt(this.now());
+	}
+
+	private pruneAt(now: number): void {
+		const cutoff = now - this.windowMs;
 		this.events = this.events.filter((event) => event.timestamp >= cutoff);
 	}
 }
