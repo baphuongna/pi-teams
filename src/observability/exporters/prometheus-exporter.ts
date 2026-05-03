@@ -1,7 +1,7 @@
 import type { HistogramPoint, MetricLabels, MetricPoint, MetricSnapshot } from "../metrics-primitives.ts";
 
 function prometheusName(name: string): string {
-	return name.replace(/\./g, "_");
+	return name.replace(/[^a-zA-Z0-9_:]/g, "_").replace(/^[0-9]/, "_$&");
 }
 
 function escapeLabel(value: string): string {

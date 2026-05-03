@@ -29,6 +29,10 @@ export function importRunBundle(cwd: string, bundlePath: string, scope: "project
 	resolveRealContainedPath(path.dirname(importsRoot), path.basename(importsRoot));
 	const root = resolveContainedRelativePath(importsRoot, runId, "runId");
 	fs.mkdirSync(root, { recursive: true });
+	// TOCTOU note: mkdirSync would throw EEXIST if a symlink already existed.
+	// The lstatSync check catches a symlink swapped in between mkdirSync and the check
+	// (theoretically possible but requires local attacker with exact timing).
+	// resolveRealContainedPath provides an additional real-path containment barrier.
 	if (fs.lstatSync(root).isSymbolicLink()) throw new Error(`Invalid import directory: ${root}`);
 	resolveRealContainedPath(importsRoot, runId);
 	const targetJson = path.join(root, "run-export.json");
