@@ -84,16 +84,24 @@ export function registerSubagentTools(pi: ExtensionAPI, subagentManager: Subagen
 					current.resultConsumed = false;
 					if (inMemory) inMemory.resultConsumed = false;
 					savePersistedSubagentRecord(ctx.cwd, current);
-				}
-				else while (current.status === "running" || current.status === "queued") {
-					if (signal?.aborted) {
-						current = { ...current, status: "error", error: t("result.waitAborted"), completedAt: Date.now() };
-						savePersistedSubagentRecord(ctx.cwd, current);
-						break;
+				} else {
+					const waitStartMs = Date.now();
+					const maxWaitMs = 300_000; // 5 minutes
+					while (current.status === "running" || current.status === "queued") {
+						if (signal?.aborted) {
+							current = { ...current, status: "error", error: t("result.waitAborted"), completedAt: Date.now() };
+							savePersistedSubagentRecord(ctx.cwd, current);
+							break;
+						}
+						if (Date.now() - waitStartMs > maxWaitMs) {
+							current = { ...current, status: "error", error: "Timed out waiting for subagent result.", completedAt: Date.now() };
+							savePersistedSubagentRecord(ctx.cwd, current);
+							break;
+						}
+						await new Promise((resolve) => setTimeout(resolve, 1000));
+						current = refreshPersistedSubagentRecord(ctx, current);
+						if (!current.runId) break;
 					}
-					await new Promise((resolve) => setTimeout(resolve, 1000));
-					current = refreshPersistedSubagentRecord(ctx, current);
-					if (!current.runId) break;
 				}
 			}
 			const output = readSubagentRunResult(ctx, current);

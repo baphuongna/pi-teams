@@ -34,10 +34,12 @@ import { OTLPExporter } from "../observability/exporters/otlp-exporter.ts";
 import { HeartbeatWatcher } from "../runtime/heartbeat-watcher.ts";
 import { appendDeadletter } from "../runtime/deadletter.ts";
 import { detectInterruptedRuns } from "../runtime/crash-recovery.ts";
+import { initI18n } from "../i18n.ts";
 
 export { __test__subagentSpawnParams };
 
 export function registerPiTeams(pi: ExtensionAPI): void {
+	const disposeI18n = initI18n(pi);
 	resetTimings();
 	time("register:start");
 	const globalStore = globalThis as Record<string, unknown>;
@@ -151,10 +153,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 			notificationRouter?.enqueue(notification);
 		} catch (error) {
 			logInternalError("register.notification", error);
-			// Only fall back to Pi follow-up when a session context is still active.
-			if (currentCtx && !cleanedUp) {
-				sendFollowUp(pi, [notification.title, notification.body].filter((line): line is string => Boolean(line)).join("\n"));
-			}
+			sendFollowUp(pi, [notification.title, notification.body].filter((line): line is string => Boolean(line)).join("\n"));
 		}
 	};
 	const captureSessionGeneration = (): number => sessionGeneration;
@@ -340,6 +339,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		notificationSink = undefined;
 		rpcHandle?.unsubscribe();
 		rpcHandle = undefined;
+		disposeI18n();
 		sessionGeneration += 1;
 		currentCtx = undefined;
 		if (globalStore[runtimeCleanupStoreKey] === cleanupRuntime) delete globalStore[runtimeCleanupStoreKey];
