@@ -7,10 +7,10 @@ import { readPersistedSubagentRecord, savePersistedSubagentRecord, type Subagent
 import { loadConfig } from "../../config/config.ts";
 import { logInternalError } from "../../utils/internal-error.ts";
 import { __test__subagentSpawnParams, formatSubagentRecord, readSubagentRunResult, refreshPersistedSubagentRecord, subagentToolResult } from "./subagent-helpers.ts";
+import { t } from "../../i18n.ts";
 
 export interface SubagentToolRegistrationOptions {
 	ownerSessionGeneration?: () => number;
-	cwd?: string;
 }
 
 export function registerSubagentTools(pi: ExtensionAPI, subagentManager: SubagentManager, options: SubagentToolRegistrationOptions = {}): void {
@@ -38,17 +38,19 @@ export function registerSubagentTools(pi: ExtensionAPI, subagentManager: Subagen
 			if (!permission.allowed) return subagentToolResult(permission.reason ?? "Current role cannot spawn subagents.", { role: currentRole, mode: permission.mode }, true);
 			const spawnOptions = __test__subagentSpawnParams(params as Record<string, unknown>, ctx);
 			spawnOptions.ownerSessionGeneration = options.ownerSessionGeneration?.();
-			if (!spawnOptions.prompt.trim()) return subagentToolResult("Agent requires prompt.", {}, true);
+			if (!spawnOptions.prompt.trim()) return subagentToolResult(t("agent.requiresPrompt"), {}, true);
 			const runner = async (currentOptions: SubagentSpawnOptions, childSignal?: AbortSignal) => handleTeamTool({ action: "run", agent: currentOptions.type, goal: currentOptions.prompt, model: currentOptions.model, async: currentOptions.background, config: currentOptions.maxTurns ? { runtime: { maxTurns: currentOptions.maxTurns } } : undefined } as TeamToolParamsValue, currentOptions.background ? { ...ctx, signal: childSignal } : { ...ctx, signal: childSignal });
 			const record = subagentManager.spawn(spawnOptions, runner, spawnOptions.background ? undefined : signal);
 			if (spawnOptions.background || record.status === "queued") {
+				// Phase 1.1a: Terminate turn for background queued — no LLM follow-up needed.
+				// Phase 1.6: Record was terminated for telemetry.
 				record.terminated = true;
 				savePersistedSubagentRecord(ctx.cwd, record);
-				return { ...subagentToolResult([`Agent ${record.status === "queued" ? "queued" : "started"}.`, `Agent ID: ${record.id}`, `Type: ${record.type}`, `Description: ${record.description}`, "Use get_subagent_result to retrieve output. Do not duplicate this agent's work."].join("\n"), { agentId: record.id, status: record.status }), terminate: true };
+				return { ...subagentToolResult([t("agent.started", { state: record.status === "queued" ? "queued" : "started" }), t("agent.id", { id: record.id }), t("agent.type", { type: record.type }), t("agent.description", { description: record.description }), t("agent.retrieveHint")].join("\n"), { agentId: record.id, status: record.status }), terminate: true };
 			}
 			await record.promise;
-			const output = readSubagentRunResult(ctx, record) ?? record.result ?? "No output.";
-			const foregroundResult = subagentToolResult([`Agent ${record.id} ${record.status}.`, "", output].join("\n"), { agentId: record.id, runId: record.runId, status: record.status }, record.status === "failed" || record.status === "error");
+			const output = readSubagentRunResult(ctx, record) ?? record.result ?? t("agent.noOutput");
+			const foregroundResult = subagentToolResult([t("agent.foregroundStatus", { id: record.id, status: record.status }), "", output].join("\n"), { agentId: record.id, runId: record.runId, status: record.status }, record.status === "failed" || record.status === "error");
 			if (loadConfig(ctx.cwd).config.tools?.terminateOnForeground === true) {
 				record.terminated = true;
 				savePersistedSubagentRecord(ctx.cwd, record);
@@ -65,14 +67,14 @@ export function registerSubagentTools(pi: ExtensionAPI, subagentManager: Subagen
 		parameters: Type.Object({ agent_id: Type.String({ description: "Agent ID returned by Agent." }), wait: Type.Optional(Type.Boolean({ description: "Wait for completion before returning." })), verbose: Type.Optional(Type.Boolean({ description: "Include status metadata before output." })) }) as never,
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			const p = params as { agent_id?: string; wait?: boolean; verbose?: boolean };
-			if (!p.agent_id) return subagentToolResult("get_subagent_result requires agent_id.", {}, true);
+			if (!p.agent_id) return subagentToolResult(t("result.requiresAgentId"), {}, true);
 			const inMemory = subagentManager.getRecord(p.agent_id);
 			const record = inMemory ?? readPersistedSubagentRecord(ctx.cwd, p.agent_id);
-			if (!record) return subagentToolResult(`Agent not found: ${p.agent_id}`, {}, true);
+			if (!record) return subagentToolResult(t("result.notFound", { id: p.agent_id }), {}, true);
 			let current = refreshPersistedSubagentRecord(ctx, record);
 			if (inMemory && current !== inMemory) Object.assign(inMemory, current);
 			if (!inMemory && !current.runId && (current.status === "running" || current.status === "queued")) {
-				current = { ...current, status: "error", error: "Subagent was interrupted before its durable run id was recorded; it cannot be recovered after restart.", completedAt: current.completedAt ?? Date.now() };
+				current = { ...current, status: "error", error: t("result.unrecoverable"), completedAt: current.completedAt ?? Date.now() };
 				savePersistedSubagentRecord(ctx.cwd, current);
 			}
 			if (p.wait && (current.status === "running" || current.status === "queued")) {
@@ -82,24 +84,16 @@ export function registerSubagentTools(pi: ExtensionAPI, subagentManager: Subagen
 					current.resultConsumed = false;
 					if (inMemory) inMemory.resultConsumed = false;
 					savePersistedSubagentRecord(ctx.cwd, current);
-				} else {
-					const waitStartMs = Date.now();
-					const maxWaitMs = 300_000; // 5 minutes
-					while (current.status === "running" || current.status === "queued") {
-						if (signal?.aborted) {
-							current = { ...current, status: "error", error: "Waiting for subagent result was aborted.", completedAt: Date.now() };
-							savePersistedSubagentRecord(ctx.cwd, current);
-							break;
-						}
-						if (Date.now() - waitStartMs > maxWaitMs) {
-							current = { ...current, status: "error", error: "Timed out waiting for subagent result.", completedAt: Date.now() };
-							savePersistedSubagentRecord(ctx.cwd, current);
-							break;
-						}
-						await new Promise((resolve) => setTimeout(resolve, 1000));
-						current = refreshPersistedSubagentRecord(ctx, current);
-						if (!current.runId) break;
+				}
+				else while (current.status === "running" || current.status === "queued") {
+					if (signal?.aborted) {
+						current = { ...current, status: "error", error: t("result.waitAborted"), completedAt: Date.now() };
+						savePersistedSubagentRecord(ctx.cwd, current);
+						break;
 					}
+					await new Promise((resolve) => setTimeout(resolve, 1000));
+					current = refreshPersistedSubagentRecord(ctx, current);
+					if (!current.runId) break;
 				}
 			}
 			const output = readSubagentRunResult(ctx, current);
@@ -108,7 +102,7 @@ export function registerSubagentTools(pi: ExtensionAPI, subagentManager: Subagen
 				if (inMemory) inMemory.resultConsumed = true;
 				savePersistedSubagentRecord(ctx.cwd, current);
 			}
-			const text = [p.verbose ? formatSubagentRecord(current) : undefined, output ? `${p.verbose ? "\n" : ""}${output}` : current.status === "running" || current.status === "queued" ? "Agent is still running. Use wait=true or check again later." : current.error ?? "No output."].filter((line): line is string => Boolean(line)).join("\n");
+			const text = [p.verbose ? formatSubagentRecord(current) : undefined, output ? `${p.verbose ? "\n" : ""}${output}` : current.status === "running" || current.status === "queued" ? t("result.stillRunning") : current.error ?? t("agent.noOutput")].filter((line): line is string => Boolean(line)).join("\n");
 			return subagentToolResult(text, { agentId: current.id, runId: current.runId, status: current.status }, current.status === "failed" || current.status === "error");
 		},
 	};
@@ -121,15 +115,15 @@ export function registerSubagentTools(pi: ExtensionAPI, subagentManager: Subagen
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			const p = params as { agent_id?: string; message?: string };
 			const record = p.agent_id ? subagentManager.getRecord(p.agent_id) ?? readPersistedSubagentRecord(ctx.cwd, p.agent_id) : undefined;
-			if (!record) return subagentToolResult(`Agent not found: ${p.agent_id ?? ""}`, {}, true);
-			return subagentToolResult([`Steering request noted for ${record.id}.`, "Current default pi-crew backend is child-process, so mid-turn session.steer is not available yet.", record.runId ? `Use team cancel runId=${record.runId} if the agent must be interrupted.` : undefined].filter((line): line is string => Boolean(line)).join("\n"), { agentId: record.id, runId: record.runId, status: record.status });
+			if (!record) return subagentToolResult(t("result.notFound", { id: p.agent_id ?? "" }), {}, true);
+			return subagentToolResult([t("steer.noted", { id: record.id }), t("steer.unavailable"), record.runId ? t("steer.cancelHint", { runId: record.runId }) : undefined].filter((line): line is string => Boolean(line)).join("\n"), { agentId: record.id, runId: record.runId, status: record.status });
 		},
 	};
 
 	const crewAgentTool: ToolDefinition = { ...agentTool, name: "crew_agent", label: "Crew Agent", description: "Launch a real pi-crew subagent using a conflict-safe pi-crew-specific tool name.", promptSnippet: "Use crew_agent when you need pi-crew subagents and another extension may own the generic Agent tool." };
 	const crewAgentResultTool: ToolDefinition = { ...getSubagentResultTool, name: "crew_agent_result", label: "Get Crew Agent Result", description: "Check status and retrieve results from a pi-crew subagent using the conflict-safe tool name." };
 	const crewAgentSteerTool: ToolDefinition = { ...steerSubagentTool, name: "crew_agent_steer", label: "Steer Crew Agent", description: "Send a steering note to a pi-crew subagent using the conflict-safe tool name." };
-	const toolConfig = loadConfig(options.cwd ?? process.cwd()).config.tools;
+	const toolConfig = loadConfig(process.cwd()).config.tools;
 	const enableSteer = toolConfig?.enableSteer !== false;
 	const enableClaudeStyleAliases = toolConfig?.enableClaudeStyleAliases !== false;
 
