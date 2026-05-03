@@ -201,14 +201,15 @@ export function registerTeamCommands(pi: ExtensionAPI, deps: RegisterTeamCommand
 		await notifyCommandResult(ctx, commandText(result));
 	} });
 
-	pi.registerCommand("team-cleanup", { description: "Clean up pi-crew worktrees for a run", handler: async (args: string, ctx: ExtensionCommandContext) => {
-		const tokens = args.trim().split(/\s+/).filter(Boolean);
-		const runId = tokens.find((token) => !token.startsWith("--"));
-		const result = await handleTeamTool({ action: "cleanup", runId, force: tokens.includes("--force") }, ctx);
-		await notifyCommandResult(ctx, commandText(result));
-	} });
+	pi.registerCommand("team-settings", {
+		description: "View or update pi-crew settings: [list|get <key>|set <key> <value>|unset <key>|path|scope]",
+		handler: async (args: string, ctx: ExtensionCommandContext) => {
+			const result = await handleTeamTool({ action: "settings", config: { args: args.trim() } }, ctx);
+			await notifyCommandResult(ctx, commandText(result));
+		},
+	});
 
-	pi.registerCommand("team-manager", { description: "Open a simple pi-crew interactive manager", handler: handleTeamManagerCommand });
+	pi.registerCommand("team-cleanup", { description: "Open a simple pi-crew interactive manager", handler: handleTeamManagerCommand });
 
 	pi.registerCommand("team-result", { description: "Open a pi-crew agent result viewer: <runId> [taskId]", handler: async (args: string, ctx: ExtensionCommandContext) => {
 		const [runId, rawTaskId] = args.trim().split(/\s+/).filter(Boolean);

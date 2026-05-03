@@ -45,6 +45,7 @@ export const TeamToolParams = Type.Object({
 		Type.Literal("recommend"),
 		Type.Literal("autonomy"),
 		Type.Literal("api"),
+		Type.Literal("settings"),
 	], { description: "Team action. Defaults to 'list' when omitted." })),
 	resource: Type.Optional(Type.Union([
 		Type.Literal("agent"),
@@ -84,7 +85,7 @@ export const TeamToolParams = Type.Object({
 });
 
 export interface TeamToolParamsValue {
-	action?: "run" | "plan" | "status" | "list" | "get" | "cancel" | "resume" | "create" | "update" | "delete" | "doctor" | "cleanup" | "events" | "artifacts" | "worktrees" | "forget" | "summary" | "prune" | "export" | "import" | "imports" | "help" | "validate" | "config" | "init" | "recommend" | "autonomy" | "api";
+	action?: "run" | "plan" | "status" | "list" | "get" | "cancel" | "resume" | "create" | "update" | "delete" | "doctor" | "cleanup" | "events" | "artifacts" | "worktrees" | "forget" | "summary" | "prune" | "export" | "import" | "imports" | "help" | "validate" | "config" | "init" | "recommend" | "autonomy" | "api" | "settings";
 	resource?: "agent" | "team" | "workflow";
 	team?: string;
 	workflow?: string;

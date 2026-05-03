@@ -19,6 +19,7 @@ import { pruneFinishedRuns } from "./run-maintenance.ts";
 import { exportRunBundle } from "./run-export.ts";
 import { importRunBundle } from "./run-import.ts";
 import { listImportedRuns } from "./import-index.ts";
+import { handleSettings } from "./team-tool/handle-settings.ts";
 import { listRuns } from "./run-index.ts";
 import { validateWorkflowForTeam } from "../workflows/validate-workflow.ts";
 import { formatValidationReport, validateResources } from "./validate-resources.ts";
@@ -271,7 +272,8 @@ export async function handleTeamTool(params: TeamToolParamsValue, ctx: TeamConte
 		case "export": return handleExport(params, ctx);
 		case "import": return handleImport(params, ctx);
 		case "imports": return handleImports(params, ctx);
-		case "prune": return handlePrune(params, ctx);
+		case "settings": return handleSettings(params, ctx);
+	case "prune": return handlePrune(params, ctx);
 		case "forget": return handleForget(params, ctx);
 		case "run": return handleRun(params, ctx);
 		case "status": return handleStatus(params, ctx);
