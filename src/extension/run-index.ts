@@ -40,7 +40,10 @@ function mergeRuns(runSets: TeamRunManifest[][], max?: number): TeamRunManifest[
 }
 
 function scopedRunRoots(cwd: string): string[] {
-	return [findRepoRoot(cwd) ? projectCrewRoot(cwd) : userCrewRoot()];
+	const roots: string[] = [userCrewRoot()];
+	const projectRoot = findRepoRoot(cwd);
+	if (projectRoot) roots.unshift(projectCrewRoot(cwd));
+	return roots;
 }
 
 export function listRuns(cwd: string): TeamRunManifest[] {

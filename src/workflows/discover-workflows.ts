@@ -62,7 +62,10 @@ const parseOptionalInteger = (value: string | undefined): number | undefined => 
 
 function hasSectionBoundary(body: string, match: RegExpMatchArray): boolean {
 	const index = match.index ?? 0;
-	return index === 0 || body.slice(0, index).trim() === "" || body.slice(Math.max(0, index - 2), index) === "\n\n";
+	if (index === 0 || body.slice(0, index).trim() === "") return true;
+	const prev = body.slice(Math.max(0, index - 2), index);
+	// Accept blank line or single newline before heading.
+	return prev === "\n\n" || prev.endsWith("\n");
 }
 
 function isStepHeading(body: string, match: RegExpMatchArray): boolean {

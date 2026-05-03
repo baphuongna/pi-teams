@@ -97,7 +97,8 @@ export function updatePiCrewPowerbar(events: EventBus, cwd: string, config?: Cre
 	const total = Math.max(1, active.reduce((sum, item) => sum + (item.snapshot?.progress.total ?? item.tasks.length), 0) || agents.length);
 	const usage = aggregateUsage(tasks);
 	const snapshotTokens = active.reduce((sum, item) => sum + (item.snapshot ? item.snapshot.usage.tokensIn + item.snapshot.usage.tokensOut : 0), 0);
-	const tokenTotal = usage ? (usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0) : snapshotTokens;
+	const hasUsage = usage && ((usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0)) > 0;
+	const tokenTotal = hasUsage ? (usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0) : snapshotTokens;
 	const model = config?.showModel === false ? undefined : agents.find((agent) => agent.model)?.model?.split("/").at(-1);
 	const tokenText = config?.showTokens === false || !tokenTotal ? undefined : compactTokens(tokenTotal);
 	const activeText = `crew ${running}a/${waiting}w${notificationBadge(notificationCount)}`;

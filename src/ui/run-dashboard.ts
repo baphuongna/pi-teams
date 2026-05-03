@@ -194,7 +194,7 @@ function runLabel(run: TeamRunManifest, selected: boolean, snapshotCache?: RunSn
 	const stale = isLikelyOrphanedActiveRun(run, agents);
 	const running = agents.find((agent) => agent.status === "running");
 	const queued = agents.find((agent) => agent.status === "queued");
-	const step = stale ? "orphaned queued run" : running ? `step ${running.taskId}` : queued ? `queued ${queued.taskId}` : `agents ${agents.length}`;
+	const step = stale ? "orphaned queued run" : running ? `step ${running.taskId.replace(/[\x00-\x1f\x7f-\x9f]/g, "")}` : queued ? `queued ${queued.taskId.replace(/[\x00-\x1f\x7f-\x9f]/g, "")}` : `agents ${agents.length}`;
 	const status: RunStatus = stale ? "stale" : (run.status as RunStatus);
 	const marker = selected ? "›" : " ";
 	return `${marker} ${iconForStatus(status, { runningGlyph: spinnerFrame(run.runId) })} ${run.runId.slice(-8)} ${status} | ${run.team}/${run.workflow ?? "none"} | ${step} | ${run.goal}`;
