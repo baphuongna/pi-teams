@@ -421,7 +421,7 @@ function parseStringList(value: unknown): string[] | undefined {
 
 function parseStringArrayOrFalse(value: unknown): string[] | false | undefined {
 	if (value === false) return false;
-	if (typeof value === "string") return parseStringList(value.split(","));
+	if (typeof value === "string") return value.trim() === "" ? [] : parseStringList(value.split(","));
 	return parseStringList(value);
 }
 

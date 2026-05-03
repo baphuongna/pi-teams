@@ -147,6 +147,8 @@ export function resolveModelCandidate(
 		const preferredMatch = matches.find((entry) => entry.provider === preferredProvider);
 		if (preferredMatch) return `${preferredMatch.fullId}${thinkingSuffix}`;
 	}
+	// When multiple providers share the same model id, return the raw model string.
+	// Callers should use the preferredProvider hint via resolveModelCandidate.
 	if (matches.length !== 1) return model;
 	return `${matches[0]!.fullId}${thinkingSuffix}`;
 }

@@ -135,6 +135,8 @@ function findResource(ctx: ManagementContext, resource: "agent" | "team" | "work
 	return allWorkflows(discoverWorkflows(ctx.cwd)).filter(sourceMatches);
 }
 
+// Note: only checks agent→team references and defaultWorkflow. Does not detect
+// workflow-step→agent/team references or team name in workflow metadata.
 function findReferences(ctx: ManagementContext, resource: "agent" | "team" | "workflow", name: string): string[] {
 	const refs: string[] = [];
 	if (resource === "agent") {

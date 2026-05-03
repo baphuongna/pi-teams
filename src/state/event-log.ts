@@ -67,9 +67,7 @@ export function scanSequence(eventsPath: string): number {
 		try {
 			const event = JSON.parse(line) as TeamEvent;
 			max = Math.max(max, event.metadata?.seq ?? 0);
-		} catch {
-			max += 1;
-		}
+		} catch { /* skip corrupt lines without incrementing sequence */ }
 	}
 	return max;
 }
