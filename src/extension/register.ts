@@ -449,6 +449,11 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	});
 	pi.on("session_before_switch", () => {
 		sessionGeneration++;
+		// Phase 11b: Capture state before session switch
+		const pendingCount = deliveryCoordinator?.getPendingCount() ?? 0;
+		if (pendingCount > 0) {
+			logInternalError("register.session-before-switch", `Switching session with ${pendingCount} pending deliveries`);
+		}
 		deliveryCoordinator?.deactivate();
 		stopAsyncRunNotifier(notifierState);
 		stopSessionBoundSubagents();
