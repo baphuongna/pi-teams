@@ -32,8 +32,14 @@ export class OverflowRecoveryTracker {
 		const existing = this.states.get(taskId);
 		const now = Date.now();
 
-		if (existing && existing.phase === "recovered") return "recovered";
-		if (existing && existing.phase === "failed") return "failed";
+		if (existing && existing.phase === "recovered") {
+			existing.lastEventAt = now;
+			return "recovered";
+		}
+		if (existing && existing.phase === "failed") {
+			existing.lastEventAt = now;
+			return "failed";
+		}
 
 		let phase: OverflowPhase = existing?.phase ?? "none";
 		let compactionCount = existing?.compactionCount ?? 0;

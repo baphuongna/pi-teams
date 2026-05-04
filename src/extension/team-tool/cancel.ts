@@ -60,7 +60,7 @@ export function handleCancel(params: TeamToolParamsValue, ctx: TeamContext): PiT
 	const loaded = loadRunManifestById(ctx.cwd, params.runId);
 	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "cancel", status: "error" }, true);
 	return withRunLockSync(loaded.manifest, () => {
-		if (loaded.manifest.status === "completed" && !params.force) return result(`Run ${loaded.manifest.runId} is already completed; nothing to cancel. Use force: true to mark it cancelled anyway.`, { action: "cancel", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+		if ((loaded.manifest.status === "completed" || loaded.manifest.status === "cancelled") && !params.force) return result(`Run ${loaded.manifest.runId} is already ${loaded.manifest.status}; nothing to cancel. Use force: true to mark it cancelled anyway.`, { action: "cancel", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
 
 		// Classify tasks for foreign-aware cancellation
 		const abortResult = abortOwned(loaded.manifest.runId, undefined, ctx);
