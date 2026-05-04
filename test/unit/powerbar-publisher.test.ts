@@ -35,6 +35,9 @@ function payloadRecord(value: unknown): Record<string, unknown> {
 }
 
 test("powerbar progress uses task totals and respects model/token visibility", () => {
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-powerbar-tasks-home-"));
+	const previousHome = process.env.PI_TEAMS_HOME;
+	process.env.PI_TEAMS_HOME = home;
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-powerbar-tasks-"));
 	try {
 		fs.mkdirSync(path.join(cwd, ".crew"), { recursive: true });
@@ -67,6 +70,9 @@ test("powerbar progress uses task totals and respects model/token visibility", (
 		assert.equal(payloadRecord(visibleProgress?.data).suffix, "1/3 · 2k");
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
+		fs.rmSync(home, { recursive: true, force: true });
+		if (previousHome === undefined) delete process.env.PI_TEAMS_HOME;
+		else process.env.PI_TEAMS_HOME = previousHome;
 	}
 });
 

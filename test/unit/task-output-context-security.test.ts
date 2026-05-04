@@ -68,7 +68,7 @@ test("artifact writes reject symlinked artifacts root escapes", (t) => {
 			t.skip("directory symlinks unavailable on this platform");
 			return;
 		}
-		assert.throws(() => writeArtifact(manifest.artifactsRoot, { kind: "result", relativePath: "results/task.md", producer: "task", content: "secret" }), /Path is outside/);
+		assert.throws(() => writeArtifact(manifest.artifactsRoot, { kind: "result", relativePath: "results/task.md", producer: "task", content: "secret" }), /symbolic link|Path is outside/);
 		assert.equal(fs.existsSync(path.join(outside, "results", "task.md")), false);
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });

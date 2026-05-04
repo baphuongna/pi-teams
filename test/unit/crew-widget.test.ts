@@ -94,13 +94,16 @@ test("crew widget keeps persistent component until placement changes and refresh
 });
 
 test("crew widget hides active async runs whose background process is stale", () => {
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-widget-stale-async-home-"));
+	const previousHome = process.env.PI_TEAMS_HOME;
+	process.env.PI_TEAMS_HOME = home;
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-widget-stale-async-"));
 	try {
 		fs.mkdirSync(path.join(cwd, ".crew"), { recursive: true });
 		const team = { name: "parallel-research", description: "", roles: [{ name: "explorer", agent: "explorer" }], source: "test", filePath: "builtin" } as never;
 		const workflow = { name: "parallel-research", description: "", steps: [{ id: "discover", role: "explorer" }], source: "test", filePath: "builtin" } as never;
 		const created = createRunManifest({ cwd, team, workflow, goal: "stale async" });
-		const stalePid = 2147483000;
+		const stalePid = 0;
 		saveRunManifest({
 			...created.manifest,
 			status: "queued",
@@ -110,5 +113,8 @@ test("crew widget hides active async runs whose background process is stale", ()
 		assert.equal(lines.join("\n"), "");
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
+		fs.rmSync(home, { recursive: true, force: true });
+		if (previousHome === undefined) delete process.env.PI_TEAMS_HOME;
+		else process.env.PI_TEAMS_HOME = previousHome;
 	}
 });

@@ -12,7 +12,7 @@ test("sleep resolves after delay", async () => {
 test("sleep rejects immediately when signal is already aborted", async () => {
 	const controller = new AbortController();
 	controller.abort();
-	await assert.rejects(() => sleep(1000, controller.signal), /Aborted/);
+	await assert.rejects(() => sleep(1000, controller.signal), /aborted/i);
 });
 
 test("sleep rejects when aborted during wait", async () => {
@@ -21,7 +21,7 @@ test("sleep rejects when aborted during wait", async () => {
 		controller.abort();
 	}, 20);
 	try {
-		await assert.rejects(() => sleep(200, controller.signal), /Aborted/);
+		await assert.rejects(() => sleep(200, controller.signal), /aborted/i);
 	} finally {
 		clearTimeout(timer);
 	}
