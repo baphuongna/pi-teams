@@ -1,6 +1,7 @@
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import type { MetricRegistry } from "../observability/metric-registry.ts";
 import { appendEvent, scanSequence } from "../state/event-log.ts";
+import { withRunLockSync } from "../state/locks.ts";
 import { loadRunManifestById, saveRunTasks, updateRunStatus } from "../state/state-store.ts";
 import type { TeamTaskState } from "../state/types.ts";
 import { isWorkerHeartbeatStale } from "./worker-heartbeat.ts";
@@ -67,14 +68,20 @@ export function reconcileAllStaleRuns(cwd: string, manifestCache: ManifestCache,
 		if (manifest.status !== "running") continue;
 		const loaded = loadRunManifestById(cwd, manifest.runId);
 		if (!loaded) continue;
-		const result = reconcileStaleRun(loaded.manifest, loaded.tasks, now);
-		if (result.repaired) {
-			updateRunStatus(loaded.manifest, "failed", `Stale run reconciled: ${result.detail}`);
-			appendEvent(loaded.manifest.eventsPath, { type: "crew.run.reconciled_stale", runId: manifest.runId, message: result.detail, data: { verdict: result.verdict } });
-		}
-		if (result.verdict !== "healthy") {
-			results.push(result);
-		}
+		// Use lock to prevent race with cancel/status handlers modifying the same run
+		withRunLockSync(loaded.manifest, () => {
+			// Re-read inside lock to get freshest data
+			const fresh = loadRunManifestById(cwd, manifest.runId);
+			if (!fresh || fresh.manifest.status !== "running") return;
+			const result = reconcileStaleRun(fresh.manifest, fresh.tasks, now);
+			if (result.repaired) {
+				updateRunStatus(fresh.manifest, "failed", `Stale run reconciled: ${result.detail}`);
+				appendEvent(fresh.manifest.eventsPath, { type: "crew.run.reconciled_stale", runId: manifest.runId, message: result.detail, data: { verdict: result.verdict } });
+			}
+			if (result.verdict !== "healthy") {
+				results.push(result);
+			}
+		});
 	}
 	return results;
 }

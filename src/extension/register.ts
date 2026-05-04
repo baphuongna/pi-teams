@@ -464,7 +464,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	try {
 		pi.on("resources_discover", () => {
 			const skillDir = path.resolve(process.cwd(), "skills");
-			const extSkillDir = path.resolve(__dirname, "..", "skills");
+			const extSkillDir = path.resolve(__dirname, "..", "..", "skills");
 			const paths: string[] = [];
 			if (fs.existsSync(extSkillDir)) paths.push(extSkillDir);
 			if (skillDir !== extSkillDir && fs.existsSync(skillDir)) paths.push(skillDir);
