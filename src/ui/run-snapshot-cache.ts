@@ -8,7 +8,12 @@ import type { TeamEvent } from "../state/event-log.ts";
 import type { MailboxMessageStatus } from "../state/mailbox.ts";
 import { loadRunManifestById } from "../state/state-store.ts";
 import type { TeamRunManifest, TeamTaskState } from "../state/types.ts";
-import type { RunSnapshotCache, RunUiGroupJoin, RunUiMailbox, RunUiProgress, RunUiSnapshot, RunUiUsage } from "./snapshot-types.ts";
+import type { RunSnapshotCache as RunSnapshotCacheBase, RunUiGroupJoin, RunUiMailbox, RunUiProgress, RunUiSnapshot, RunUiUsage } from "./snapshot-types.ts";
+
+export interface RunSnapshotCache extends RunSnapshotCacheBase {
+	preloadStale(runId: string): Promise<RunUiSnapshot | undefined>;
+	preloadAllStale(runIds: string[]): Promise<void>;
+}
 
 const DEFAULT_TTL_MS = 500;
 const DEFAULT_MAX_ENTRIES = 24;
@@ -60,6 +65,16 @@ function stampFile(filePath: string | undefined): FileStamp {
 	}
 }
 
+async function stampFileAsync(filePath: string | undefined): Promise<FileStamp> {
+	if (!filePath) return zeroStamp();
+	try {
+		const stat = await fs.promises.stat(filePath);
+		return { mtimeMs: stat.mtimeMs, size: stat.size };
+	} catch {
+		return zeroStamp();
+	}
+}
+
 function combineStamps(stamps: FileStamp[]): FileStamp {
 	return stamps.reduce((acc, stamp) => ({ mtimeMs: Math.max(acc.mtimeMs, stamp.mtimeMs), size: acc.size + stamp.size }), zeroStamp());
 }
@@ -84,6 +99,26 @@ function mailboxStamp(manifest: TeamRunManifest): FileStamp {
 	return combineStamps(stamps);
 }
 
+async function mailboxStampAsync(manifest: TeamRunManifest): Promise<FileStamp> {
+	const root = path.join(manifest.stateRoot, "mailbox");
+	const stamps: FileStamp[] = [
+		await stampFileAsync(path.join(root, "inbox.jsonl")),
+		await stampFileAsync(path.join(root, "outbox.jsonl")),
+		await stampFileAsync(path.join(root, "delivery.json")),
+	];
+	const tasksRoot = path.join(root, "tasks");
+	try {
+		for (const entry of await fs.promises.readdir(tasksRoot, { withFileTypes: true })) {
+			if (!entry.isDirectory()) continue;
+			stamps.push(await stampFileAsync(path.join(tasksRoot, entry.name, "inbox.jsonl")));
+			stamps.push(await stampFileAsync(path.join(tasksRoot, entry.name, "outbox.jsonl")));
+		}
+	} catch {
+		// No task mailbox yet.
+	}
+	return combineStamps(stamps);
+}
+
 function safeAgentOutputPath(manifest: TeamRunManifest, agent: CrewAgentRecord): string | undefined {
 	try {
 		return agentOutputPath(manifest, agent.taskId);
@@ -94,6 +129,10 @@ function safeAgentOutputPath(manifest: TeamRunManifest, agent: CrewAgentRecord):
 
 function outputStamp(manifest: TeamRunManifest, agents: CrewAgentRecord[]): FileStamp {
 	return combineStamps(agents.map((agent) => stampFile(safeAgentOutputPath(manifest, agent))));
+}
+
+async function outputStampAsync(manifest: TeamRunManifest, agents: CrewAgentRecord[]): Promise<FileStamp> {
+	return combineStamps(await Promise.all(agents.map((agent) => stampFileAsync(safeAgentOutputPath(manifest, agent)))));
 }
 
 function sameStamp(a: FileStamp, b: FileStamp): boolean {
@@ -112,6 +151,16 @@ function sameStamps(a: SnapshotStamps, b: SnapshotStamps): boolean {
 function readTasks(tasksPath: string): TeamTaskState[] {
 	try {
 		const parsed = JSON.parse(fs.readFileSync(tasksPath, "utf-8")) as unknown;
+		return Array.isArray(parsed) ? (parsed as TeamTaskState[]) : [];
+	} catch {
+		throw new Error(`Failed to parse tasks at ${tasksPath}`);
+	}
+}
+
+async function readTasksAsync(tasksPath: string): Promise<TeamTaskState[]> {
+	try {
+		const content = await fs.promises.readFile(tasksPath, "utf-8");
+		const parsed = JSON.parse(content) as unknown;
 		return Array.isArray(parsed) ? (parsed as TeamTaskState[]) : [];
 	} catch {
 		throw new Error(`Failed to parse tasks at ${tasksPath}`);
@@ -141,8 +190,42 @@ function tailJsonlLines<T>(filePath: string, limit: number, parse: (line: string
 	}
 }
 
+/** Async tail-read JSONL lines from a file, returning parsed objects (limited). */
+async function tailJsonlLinesAsync<T>(filePath: string, limit: number, parse: (line: string) => T | undefined): Promise<T[]> {
+	if (limit <= 0) return [];
+	try {
+		const stat = await fs.promises.stat(filePath);
+		const bytesToRead = Math.min(stat.size, MAX_TAIL_BYTES);
+		const handle = await fs.promises.open(filePath, "r");
+		try {
+			const buffer = Buffer.alloc(bytesToRead);
+			await handle.read(buffer, 0, bytesToRead, stat.size - bytesToRead);
+			const lines = buffer.toString("utf-8").split(/\r?\n/).filter(Boolean);
+			return lines.flatMap((line) => {
+				const item = parse(line);
+				return item ? [item] : [];
+			}).slice(-limit);
+		} finally {
+			await handle.close();
+		}
+	} catch {
+		return [];
+	}
+}
+
 function safeRecentEvents(eventsPath: string, limit: number): TeamEvent[] {
 	return tailJsonlLines(eventsPath, limit, (line) => {
+		try {
+			const parsed = JSON.parse(line) as unknown;
+			return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as TeamEvent) : undefined;
+		} catch {
+			return undefined;
+		}
+	});
+}
+
+async function safeRecentEventsAsync(eventsPath: string, limit: number): Promise<TeamEvent[]> {
+	return tailJsonlLinesAsync(eventsPath, limit, (line) => {
 		try {
 			const parsed = JSON.parse(line) as unknown;
 			return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as TeamEvent) : undefined;
@@ -170,12 +253,40 @@ function tailLines(filePath: string, limit: number): string[] {
 	}
 }
 
+async function tailLinesAsync(filePath: string, limit: number): Promise<string[]> {
+	if (limit <= 0) return [];
+	try {
+		const stat = await fs.promises.stat(filePath);
+		const bytesToRead = Math.min(stat.size, MAX_TAIL_BYTES);
+		const handle = await fs.promises.open(filePath, "r");
+		try {
+			const buffer = Buffer.alloc(bytesToRead);
+			await handle.read(buffer, 0, bytesToRead, stat.size - bytesToRead);
+			return buffer.toString("utf-8").split(/\r?\n/).filter(Boolean).slice(-limit);
+		} finally {
+			await handle.close();
+		}
+	} catch {
+		return [];
+	}
+}
+
 function recentOutputLines(manifest: TeamRunManifest, agents: CrewAgentRecord[], limit: number): string[] {
 	const fromProgress = agents.flatMap((agent) => agent.progress?.recentOutput ?? []);
 	const fromFiles = agents.flatMap((agent) => {
 		const outputPath = safeAgentOutputPath(manifest, agent);
 		return outputPath ? tailLines(outputPath, limit) : [];
 	});
+	return [...fromProgress, ...fromFiles].map((line) => line.replace(/\s+/g, " ").trim()).filter(Boolean).slice(-limit);
+}
+
+async function recentOutputLinesAsync(manifest: TeamRunManifest, agents: CrewAgentRecord[], limit: number): Promise<string[]> {
+	const fromProgress = agents.flatMap((agent) => agent.progress?.recentOutput ?? []);
+	const fromFilesArrays = await Promise.all(agents.map((agent) => {
+		const outputPath = safeAgentOutputPath(manifest, agent);
+		return outputPath ? tailLinesAsync(outputPath, limit) : Promise.resolve([]);
+	}));
+	const fromFiles = fromFilesArrays.flat();
 	return [...fromProgress, ...fromFiles].map((line) => line.replace(/\s+/g, " ").trim()).filter(Boolean).slice(-limit);
 }
 
@@ -223,8 +334,38 @@ function readDeliveryMessages(filePath: string): Record<string, MailboxMessageSt
 	}
 }
 
+async function readDeliveryMessagesAsync(filePath: string): Promise<Record<string, MailboxMessageStatus>> {
+	try {
+		const content = await fs.promises.readFile(filePath, "utf-8");
+		const parsed = JSON.parse(content) as unknown;
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+		const messages = (parsed as { messages?: unknown }).messages;
+		if (!messages || typeof messages !== "object" || Array.isArray(messages)) return {};
+		const output: Record<string, MailboxMessageStatus> = {};
+		for (const [id, status] of Object.entries(messages)) if (isMailboxStatus(status)) output[id] = status;
+		return output;
+	} catch {
+		return {};
+	}
+}
+
 function readGroupJoinMailbox(filePath: string, delivery: Record<string, MailboxMessageStatus>): RunUiGroupJoin[] {
 	return tailJsonlLines(filePath, MAX_TAIL_LINES, (line) => {
+		try {
+			const parsed = JSON.parse(line) as unknown;
+			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+			const message = parsed as { id?: unknown; data?: unknown };
+			const data = message.data && typeof message.data === "object" && !Array.isArray(message.data) ? message.data as Record<string, unknown> : undefined;
+			if (typeof message.id !== "string" || data?.kind !== "group_join" || typeof data.requestId !== "string") return undefined;
+			return { requestId: data.requestId, messageId: message.id, partial: data.partial === true, ack: delivery[message.id] === "acknowledged" ? "acknowledged" as const : "pending" as const };
+		} catch {
+			return undefined;
+		}
+	});
+}
+
+async function readGroupJoinMailboxAsync(filePath: string, delivery: Record<string, MailboxMessageStatus>): Promise<RunUiGroupJoin[]> {
+	return tailJsonlLinesAsync(filePath, MAX_TAIL_LINES, (line) => {
 		try {
 			const parsed = JSON.parse(line) as unknown;
 			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
@@ -253,10 +394,31 @@ function readMailboxCounts(filePath: string, delivery: Record<string, MailboxMes
 	return items.reduce((sum, val) => sum + val, 0);
 }
 
+async function readMailboxCountsAsync(filePath: string, delivery: Record<string, MailboxMessageStatus>): Promise<number> {
+	const items = await tailJsonlLinesAsync(filePath, MAX_TAIL_LINES, (line) => {
+		try {
+			const parsed = JSON.parse(line) as unknown;
+			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return 0;
+			const message = parsed as { id?: unknown; status?: unknown };
+			if (typeof message.id !== "string" || !isMailboxStatus(message.status)) return 0;
+			return message.status !== "acknowledged" && delivery[message.id] !== "acknowledged" ? 1 : 0;
+		} catch {
+			return 0;
+		}
+	}) as number[];
+	return items.reduce((sum, val) => sum + val, 0);
+}
+
 function groupJoinsFrom(manifest: TeamRunManifest): RunUiGroupJoin[] {
 	const root = path.join(manifest.stateRoot, "mailbox");
 	const delivery = readDeliveryMessages(path.join(root, "delivery.json"));
 	return readGroupJoinMailbox(path.join(root, "outbox.jsonl"), delivery).slice(-5);
+}
+
+async function groupJoinsFromAsync(manifest: TeamRunManifest): Promise<RunUiGroupJoin[]> {
+	const root = path.join(manifest.stateRoot, "mailbox");
+	const delivery = await readDeliveryMessagesAsync(path.join(root, "delivery.json"));
+	return (await readGroupJoinMailboxAsync(path.join(root, "outbox.jsonl"), delivery)).slice(-5);
 }
 
 function mailboxFrom(manifest: TeamRunManifest, agents: CrewAgentRecord[]): RunUiMailbox {
@@ -270,6 +432,25 @@ function mailboxFrom(manifest: TeamRunManifest, agents: CrewAgentRecord[]): RunU
 			if (!entry.isDirectory()) continue;
 			inboxUnread += readMailboxCounts(path.join(tasksRoot, entry.name, "inbox.jsonl"), delivery);
 			outboxPending += readMailboxCounts(path.join(tasksRoot, entry.name, "outbox.jsonl"), delivery);
+		}
+	} catch {
+		// No task mailboxes yet.
+	}
+	const attentionAgents = agents.filter((agent) => agent.progress?.activityState === "needs_attention").length;
+	return { inboxUnread, outboxPending, needsAttention: inboxUnread + attentionAgents };
+}
+
+async function mailboxFromAsync(manifest: TeamRunManifest, agents: CrewAgentRecord[]): Promise<RunUiMailbox> {
+	const root = path.join(manifest.stateRoot, "mailbox");
+	const delivery = await readDeliveryMessagesAsync(path.join(root, "delivery.json"));
+	let inboxUnread = await readMailboxCountsAsync(path.join(root, "inbox.jsonl"), delivery);
+	let outboxPending = await readMailboxCountsAsync(path.join(root, "outbox.jsonl"), delivery);
+	const tasksRoot = path.join(root, "tasks");
+	try {
+		for (const entry of await fs.promises.readdir(tasksRoot, { withFileTypes: true })) {
+			if (!entry.isDirectory()) continue;
+			inboxUnread += await readMailboxCountsAsync(path.join(tasksRoot, entry.name, "inbox.jsonl"), delivery);
+			outboxPending += await readMailboxCountsAsync(path.join(tasksRoot, entry.name, "outbox.jsonl"), delivery);
 		}
 	} catch {
 		// No task mailboxes yet.
@@ -309,6 +490,18 @@ function stampsFor(manifest: TeamRunManifest, agents: CrewAgentRecord[]): Snapsh
 		mailbox: mailboxStamp(manifest),
 		output: outputStamp(manifest, agents),
 	};
+}
+
+async function stampsForAsync(manifest: TeamRunManifest, agents: CrewAgentRecord[]): Promise<SnapshotStamps> {
+	const [manifestStamp, tasksStamp, agentsStamp, eventsStamp, mailbox, output] = await Promise.all([
+		stampFileAsync(path.join(manifest.stateRoot, "manifest.json")),
+		stampFileAsync(manifest.tasksPath),
+		stampFileAsync(agentsPath(manifest)),
+		stampFileAsync(manifest.eventsPath),
+		mailboxStampAsync(manifest),
+		outputStampAsync(manifest, agents),
+	]);
+	return { manifest: manifestStamp, tasks: tasksStamp, agents: agentsStamp, events: eventsStamp, mailbox, output };
 }
 
 export function createRunSnapshotCache(cwd: string, options: RunSnapshotCacheOptions = {}): RunSnapshotCache {
@@ -377,6 +570,51 @@ export function createRunSnapshotCache(cwd: string, options: RunSnapshotCacheOpt
 		return { snapshot, stamps, loadedAtMs: snapshot.fetchedAt, lastAccessMs: snapshot.fetchedAt };
 	}
 
+	async function buildAsync(runId: string, previous?: CacheEntry): Promise<CacheEntry> {
+		let loaded: ReturnType<typeof loadRunManifestById>;
+		try {
+			loaded = loadRunManifestById(cwd, runId);
+		} catch {
+			if (previous) return previous;
+			throw new Error(`Run '${runId}' could not be parsed.`);
+		}
+		if (!loaded) {
+			if (previous) return previous;
+			throw new Error(`Run '${runId}' not found.`);
+		}
+		let tasks: TeamTaskState[];
+		let agents: CrewAgentRecord[];
+		try {
+			tasks = await readTasksAsync(loaded.manifest.tasksPath);
+			agents = readCrewAgents(loaded.manifest);
+		} catch {
+			if (previous) return previous;
+			throw new Error(`Run '${runId}' could not be parsed.`);
+		}
+		const [mailbox, groupJoins, recentEvents, recentOutput] = await Promise.all([
+			mailboxFromAsync(loaded.manifest, agents),
+			groupJoinsFromAsync(loaded.manifest),
+			safeRecentEventsAsync(loaded.manifest.eventsPath, recentEventsLimit),
+			recentOutputLinesAsync(loaded.manifest, agents, recentOutputLimit),
+		]);
+		const base = {
+			runId: loaded.manifest.runId,
+			cwd: loaded.manifest.cwd,
+			manifest: loaded.manifest,
+			tasks,
+			agents,
+			progress: progressFromTasks(tasks),
+			usage: usageFrom(tasks, agents),
+			mailbox,
+			groupJoins,
+			recentEvents,
+			recentOutputLines: recentOutput,
+		};
+		const stamps = await stampsForAsync(loaded.manifest, agents);
+		const snapshot: RunUiSnapshot = { ...base, fetchedAt: Date.now(), signature: signatureFor(base, stamps) };
+		return { snapshot, stamps, loadedAtMs: snapshot.fetchedAt, lastAccessMs: snapshot.fetchedAt };
+	}
+
 	function currentStamps(previous: CacheEntry): SnapshotStamps {
 		const manifest = previous.snapshot.manifest;
 		return {
@@ -387,6 +625,40 @@ export function createRunSnapshotCache(cwd: string, options: RunSnapshotCacheOpt
 			mailbox: mailboxStamp(manifest),
 			output: outputStamp(previous.snapshot.manifest, previous.snapshot.agents),
 		};
+	}
+
+	async function currentStampsAsync(previous: CacheEntry): Promise<SnapshotStamps> {
+		return stampsForAsync(previous.snapshot.manifest, previous.snapshot.agents);
+	}
+
+	async function preloadStale(runId: string): Promise<RunUiSnapshot | undefined> {
+		const previous = entries.get(runId);
+		const now = Date.now();
+		// Fresh enough? Return immediately
+		if (previous && now - previous.loadedAtMs < ttlMs) {
+			return touch(runId, previous);
+		}
+		// Check stamps async
+		if (previous) {
+			const stamps = await currentStampsAsync(previous);
+			if (sameStamps(stamps, previous.stamps)) {
+				previous.loadedAtMs = now;
+				return touch(runId, previous);
+			}
+		}
+		// Full async build
+		const entry = await buildAsync(runId, previous);
+		entries.set(runId, entry);
+		evictIfNeeded();
+		return entry.snapshot;
+	}
+
+	async function preloadAllStale(runIds: string[]): Promise<void> {
+		const batchSize = 4;
+		for (let i = 0; i < runIds.length; i += batchSize) {
+			const batch = runIds.slice(i, i + batchSize);
+			await Promise.all(batch.map((id) => preloadStale(id)));
+		}
 	}
 
 	return {
@@ -410,6 +682,8 @@ export function createRunSnapshotCache(cwd: string, options: RunSnapshotCacheOpt
 			if (sameStamps(stamps, previous.stamps)) return touch(runId, previous);
 			return this.refresh(runId);
 		},
+		preloadStale,
+		preloadAllStale,
 		invalidate(runId?: string): void {
 			if (runId) entries.delete(runId);
 			else entries.clear();

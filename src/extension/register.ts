@@ -236,6 +236,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	const foregroundControllers = new Set<AbortController>();
 	let liveSidebarRunId: string | undefined;
 	let renderScheduler: RenderScheduler | undefined;
+	let preloadTimer: ReturnType<typeof setTimeout> | undefined;
 	const stopSessionBoundSubagents = (): void => {
 		for (const controller of foregroundControllers) controller.abort();
 		foregroundControllers.clear();
@@ -343,6 +344,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	const cleanupRuntime = (): void => {
 		if (cleanedUp) return;
 		cleanedUp = true;
+		if (preloadTimer) { clearTimeout(preloadTimer); preloadTimer = undefined; }
 		stopSessionBoundSubagents();
 		stopAsyncRunNotifier(notifierState);
 		stopCrewWidget(currentCtx, widgetState, currentCtx ? loadConfig(currentCtx.cwd).config.ui : undefined);
@@ -403,10 +405,44 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		updateCrewWidget(ctx, widgetState, loadedConfig.config.ui, cache, getRunSnapshotCache(ctx.cwd));
 		updatePiCrewPowerbar(pi.events, ctx.cwd, loadedConfig.config.ui, cache, getRunSnapshotCache(ctx.cwd), ctx, widgetState.notificationCount ?? 0);
 		renderScheduler?.dispose();
+		// Phase 12: Async preloading — renderTick reads only in-memory cache,
+		// background preload loop does async I/O to refresh cache entries.
+		let preloading = false;
+
+		const backgroundPreload = (): void => {
+			if (!currentCtx || preloading) return;
+			preloading = true;
+			const cache = getRunSnapshotCache(currentCtx.cwd);
+			const activeCache = getManifestCache(currentCtx.cwd);
+			const runIds = activeCache.list(20).map((r) => r.runId);
+			cache.preloadAllStale(runIds)
+				.then(() => {
+					preloading = false;
+					// After preload completes, trigger a render to show updated data
+					renderScheduler?.schedule();
+				})
+				.catch((error: unknown) => {
+					preloading = false;
+					logInternalError("register.backgroundPreload", error);
+				});
+		};
+
+		const startPreloadLoop = (intervalMs: number): void => {
+			if (preloadTimer) clearTimeout(preloadTimer);
+			const tick = (): void => {
+				backgroundPreload();
+				preloadTimer = setTimeout(tick, intervalMs);
+				preloadTimer.unref();
+			};
+			preloadTimer = setTimeout(tick, intervalMs);
+			preloadTimer.unref();
+		};
+
 		const renderTick = (): void => {
 			if (!currentCtx) return;
 			const config = loadConfig(currentCtx.cwd).config.ui;
 			const activeCache = getManifestCache(currentCtx.cwd);
+			const snapshotCache = getRunSnapshotCache(currentCtx.cwd);
 			if (liveSidebarRunId) {
 				const placement = config?.widgetPlacement ?? "aboveEditor";
 				if (widgetState.lastVisibility !== "hidden" || widgetState.lastPlacement !== placement) {
@@ -419,13 +455,16 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 				}
 				requestRender(currentCtx);
 			} else {
-				updateCrewWidget(currentCtx, widgetState, config, activeCache, getRunSnapshotCache(currentCtx.cwd));
+				updateCrewWidget(currentCtx, widgetState, config, activeCache, snapshotCache);
 			}
-			updatePiCrewPowerbar(pi.events, currentCtx.cwd, config, activeCache, getRunSnapshotCache(currentCtx.cwd), currentCtx, widgetState.notificationCount ?? 0);
+			updatePiCrewPowerbar(pi.events, currentCtx.cwd, config, activeCache, snapshotCache, currentCtx, widgetState.notificationCount ?? 0);
+			// Health notifications: read from in-memory cache only (no I/O)
 			const now = Date.now();
 			for (const run of activeCache.list(20)) {
 				try {
-					const snapshot = getRunSnapshotCache(currentCtx.cwd).refreshIfStale(run.runId);
+					// Use cached snapshot — preload loop refreshes it async
+					const snapshot = snapshotCache.get(run.runId);
+					if (!snapshot) continue;
 					const summary = summarizeHeartbeats(snapshot, { now });
 					const maybeNotifyHealth = (kind: string, count: number, title: string, body: string): void => {
 						if (count <= 0) return;
@@ -442,10 +481,14 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 				}
 			}
 		};
+
+		const fallbackMs = loadedConfig.config.ui?.dashboardLiveRefreshMs ?? 250;
 		renderScheduler = new RenderScheduler(pi.events, renderTick, {
-			fallbackMs: loadedConfig.config.ui?.dashboardLiveRefreshMs ?? 250,
+			fallbackMs,
 			onInvalidate: () => getRunSnapshotCache(ctx.cwd).invalidate(),
 		});
+		// Start async preload loop — refreshes snapshot cache in background
+		startPreloadLoop(fallbackMs);
 	});
 	pi.on("session_before_switch", () => {
 		sessionGeneration++;
