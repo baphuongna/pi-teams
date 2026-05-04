@@ -24,6 +24,9 @@ export function wireEventToMetrics(events: ExtensionAPI["events"] | undefined, r
 	const mailboxCount = registry.counter("crew.mailbox.count", "Total mailbox messages by direction");
 	const retryAttemptCount = registry.counter("crew.task.retry_attempt_total", "Retry attempts by run and task");
 	const deadletterCount = registry.counter("crew.task.deadletter_total", "Deadletter triggers by reason");
+	const overflowCount = registry.counter("crew.task.overflow_phase_total", "Overflow recovery phase transitions");
+	const waitingCount = registry.counter("crew.task.waiting_total", "Tasks entering waiting state");
+	const supervisorContactCount = registry.counter("crew.task.supervisor_contact_total", "Supervisor contact requests by reason");
 	registry.gauge("crew.heartbeat.staleness_ms", "Heartbeat elapsed since last seen, milliseconds");
 	const runDuration = registry.histogram("crew.run.duration_ms", "Run end-to-end duration, milliseconds");
 	const taskDuration = registry.histogram("crew.task.duration_ms", "Task duration, milliseconds");
@@ -38,6 +41,9 @@ export function wireEventToMetrics(events: ExtensionAPI["events"] | undefined, r
 		["crew.task.failed", () => taskCount.inc({ status: "failed" })],
 		["crew.task.retry_attempt", (data) => { const item = recordValue(data); taskCount.inc({ status: "retry" }); retryAttemptCount.inc({ runId: stringValue(item.runId, "unknown"), taskId: stringValue(item.taskId, "unknown") }); }],
 		["crew.task.deadletter", (data) => { const item = recordValue(data); deadletterCount.inc({ reason: stringValue(item.reason, "unknown") }); }],
+		["crew.task.overflow", (data) => { const item = recordValue(data); overflowCount.inc({ phase: stringValue(item.phase, "unknown"), previous_phase: stringValue(item.previousPhase, "none") }); }],
+		["task.waiting", (data) => { const item = recordValue(data); waitingCount.inc({ taskId: stringValue(item.taskId, "unknown"), runId: stringValue(item.runId, "unknown") }); }],
+		["supervisor.contact", (data) => { const item = recordValue(data); supervisorContactCount.inc({ reason: stringValue(item.reason, "unknown"), taskId: stringValue(item.taskId, "unknown") }); }],
 		["crew.subagent.completed", (data) => { const item = recordValue(data); subagentCount.inc({ status: stringValue(item.status, "completed") }); }],
 		["crew.subagent.failed", () => subagentCount.inc({ status: "failed" })],
 		["crew.mailbox.message", (data) => { const item = recordValue(data); mailboxCount.inc({ direction: stringValue(item.direction, "unknown") }); }],

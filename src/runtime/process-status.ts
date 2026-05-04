@@ -27,7 +27,7 @@ export function checkProcessLiveness(pid: number | undefined): ProcessLiveness {
 }
 
 export function isActiveRunStatus(status: string): boolean {
-	return status === "queued" || status === "planning" || status === "running";
+	return status === "queued" || status === "planning" || status === "running" || status === "waiting";
 }
 
 export function isLikelyOrphanedActiveRun(run: TeamRunManifest, agents: CrewAgentRecord[] = [], now = Date.now(), staleMs = ORPHANED_ACTIVE_RUN_MS): boolean {

@@ -52,7 +52,7 @@ export function handleStatus(params: TeamToolParamsValue, ctx: TeamContext): PiT
 	const totalUsage = aggregateUsage(tasks);
 	const activeAgents = crewAgents.filter((agent) => agent.status === "running");
 	const completedAgents = crewAgents.filter((agent) => agent.status !== "running");
-	const waitingTasks = tasks.filter((task) => task.status === "queued");
+	const waitingTasks = tasks.filter((task) => task.status === "queued" || task.status === "waiting");
 	const agentLine = (agent: typeof crewAgents[number]): string => `- ${agent.id} [${agent.status}] ${agent.role} -> ${agent.agent} runtime=${agent.runtime}${agent.model ? ` model=${agent.model}` : ""}${agent.usage ? ` usage=${formatUsage(agent.usage)}` : ""}${agent.progress?.activityState ? ` activityState=${agent.progress.activityState}` : ""}${formatActivityAge(agent) ? ` activity=${formatActivityAge(agent)}` : ""}${agent.progress?.currentTool ? ` tool=${agent.progress.currentTool}` : ""}${agent.toolUses ? ` tools=${agent.toolUses}` : ""}${!agent.usage && agent.progress?.tokens ? ` tokens=${agent.progress.tokens}` : ""}${agent.progress?.turns ? ` turns=${agent.progress.turns}` : ""}${agent.jsonEvents !== undefined ? ` jsonEvents=${agent.jsonEvents}` : ""}${agent.outputPath ? ` output=${agent.outputPath}` : ""}${agent.transcriptPath ? ` transcript=${agent.transcriptPath}` : ""}${agent.statusPath ? ` status=${agent.statusPath}` : ""}${agent.error ? ` error=${agent.error}` : ""}`;
 	const lines = [
 		`Run: ${manifest.runId}`,

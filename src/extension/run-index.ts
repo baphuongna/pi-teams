@@ -55,3 +55,22 @@ export function listRecentRuns(cwd: string, max = 20): TeamRunManifest[] {
 	const roots = scopedRunRoots(cwd);
 	return mergeRuns(roots.map((root) => collectRuns(root, max)), max);
 }
+
+/**
+ * List runs filtered to a specific scope.
+ * - "project": only runs in the project crew root
+ * - "user": only runs in the user crew root
+ * - "all" (default): merge both scopes (current behavior)
+ */
+export function listRunsByScope(cwd: string, scope: "project" | "user" | "all" = "all", max?: number): TeamRunManifest[] {
+	const projectRoot = findRepoRoot(cwd);
+	switch (scope) {
+		case "project":
+			return projectRoot ? collectRuns(projectCrewRoot(cwd), max) : [];
+		case "user":
+			return collectRuns(userCrewRoot(), max);
+		case "all":
+		default:
+			return max !== undefined ? listRecentRuns(cwd, max) : listRuns(cwd);
+	}
+}

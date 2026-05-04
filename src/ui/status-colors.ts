@@ -6,6 +6,8 @@ export function colorForStatus(status: RunStatus): CrewThemeColor {
 	switch (status) {
 		case "running":
 			return "accent";
+		case "waiting":
+			return "muted";
 		case "completed":
 			return "success";
 		case "failed":
@@ -34,6 +36,8 @@ export function iconForStatus(status: RunStatus, options?: { runningGlyph?: stri
 			return "■";
 		case "running":
 			return glyph;
+		case "waiting":
+			return "⏳";
 		case "queued":
 			return "◦";
 		case "blocked":
