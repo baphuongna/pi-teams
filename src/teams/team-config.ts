@@ -5,6 +5,7 @@ export interface TeamRole {
 	agent: string;
 	description?: string;
 	model?: string;
+	/** Additional skills for this role; false disables role-default injected skills for tasks using this role. */
 	skills?: string[] | false;
 	maxConcurrency?: number;
 }

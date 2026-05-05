@@ -11,6 +11,7 @@ import { executeTeamRun } from "../../runtime/team-runner.ts";
 import { spawnBackgroundTeamRun } from "../../subagents/async-entry.ts";
 import { appendEvent, readEvents } from "../../state/event-log.ts";
 import { resolveCrewRuntime } from "../../runtime/runtime-resolver.ts";
+import { normalizeSkillOverride } from "../../runtime/skill-instructions.ts";
 import { expandParallelResearchWorkflow } from "../../runtime/parallel-research.ts";
 import { checkProcessLiveness, isActiveRunStatus } from "../../runtime/process-status.ts";
 import { hasAsyncStartMarker } from "../../runtime/async-marker.ts";
@@ -91,6 +92,7 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 		return result([`Workflow '${workflow.name}' is not valid for team '${team.name}':`, ...validationErrors.map((error) => `- ${error}`)].join("\n"), { action: "run", status: "error" }, true);
 	}
 
+	const skillOverride = normalizeSkillOverride(params.skill);
 	const { manifest, tasks, paths } = createRunManifest({
 		cwd: ctx.cwd,
 		team,
@@ -105,7 +107,7 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 		content: `${goal}\n`,
 		producer: "team-tool",
 	});
-	const updatedManifest = { ...manifest, artifacts: [goalArtifact], summary: "Run manifest created; worker execution is not implemented yet." };
+	const updatedManifest = { ...manifest, ...(skillOverride !== undefined ? { skillOverride } : {}), artifacts: [goalArtifact], summary: "Run manifest created; worker execution is not implemented yet." };
 	atomicWriteJson(paths.manifestPath, updatedManifest);
 
 	const loadedConfig = loadConfig(ctx.cwd);
@@ -137,7 +139,7 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 	if (executeWorkers && ctx.startForegroundRun) {
 		ctx.onRunStarted?.(updatedManifest.runId);
 		ctx.startForegroundRun(async (signal) => {
-			await executeTeamRun({ manifest: updatedManifest, tasks, team, workflow, agents, executeWorkers, limits: executedConfig.limits, runtime, runtimeConfig: executedConfig.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, signal, reliability: executedConfig.reliability, metricRegistry: ctx.metricRegistry, onJsonEvent: ctx.onJsonEvent });
+			await executeTeamRun({ manifest: updatedManifest, tasks, team, workflow, agents, executeWorkers, limits: executedConfig.limits, runtime, runtimeConfig: executedConfig.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, skillOverride, signal, reliability: executedConfig.reliability, metricRegistry: ctx.metricRegistry, onJsonEvent: ctx.onJsonEvent });
 		}, updatedManifest.runId);
 		const text = [
 			`Started foreground pi-crew run ${updatedManifest.runId}.`,
@@ -153,7 +155,7 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 		].join("\n");
 		return result(text, { action: "run", status: "ok", runId: updatedManifest.runId, artifactsRoot: updatedManifest.artifactsRoot });
 	}
-	const executed = await executeTeamRun({ manifest: updatedManifest, tasks, team, workflow, agents, executeWorkers, limits: executedConfig.limits, runtime, runtimeConfig: executedConfig.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, signal: ctx.signal, reliability: executedConfig.reliability, metricRegistry: ctx.metricRegistry, onJsonEvent: ctx.onJsonEvent });
+	const executed = await executeTeamRun({ manifest: updatedManifest, tasks, team, workflow, agents, executeWorkers, limits: executedConfig.limits, runtime, runtimeConfig: executedConfig.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, skillOverride, signal: ctx.signal, reliability: executedConfig.reliability, metricRegistry: ctx.metricRegistry, onJsonEvent: ctx.onJsonEvent });
 	const text = [
 		`Created pi-crew run ${executed.manifest.runId}.`,
 		`Team: ${team.name}`,

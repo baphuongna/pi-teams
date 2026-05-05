@@ -1,7 +1,7 @@
 ---
 name: critic
 description: Challenge plans and designs before execution
-model: claude-sonnet-4-5
+model: false
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false

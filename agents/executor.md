@@ -1,7 +1,7 @@
 ---
 name: executor
 description: Implement planned code changes
-model: claude-sonnet-4-5
+model: false
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false

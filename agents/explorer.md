@@ -1,7 +1,7 @@
 ---
 name: explorer
 description: Fast codebase discovery and file/symbol mapping
-model: claude-haiku-4-5
+model: false
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false

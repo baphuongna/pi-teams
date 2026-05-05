@@ -25,6 +25,7 @@ export class DeliveryCoordinator {
 	private active = false;
 	private generation = 0;
 	private pending: PendingDelivery[] = [];
+	private flushing = false;
 	private readonly deps: DeliveryCoordinatorDeps;
 	private ttlTimer: ReturnType<typeof setInterval> | undefined;
 
@@ -63,7 +64,7 @@ export class DeliveryCoordinator {
 				logInternalError("delivery-coordinator.deliverResult", error, `runId=${runId}`);
 			}
 		}
-		this.enqueue({ runId, payload: result, timestamp: Date.now(), type: "result" });
+		if (!this.flushing) this.enqueue({ runId, payload: result, timestamp: Date.now(), type: "result" });
 	}
 
 	deliverNotification(notification: NotificationDescriptor): void {
@@ -84,7 +85,7 @@ export class DeliveryCoordinator {
 			}
 			return;
 		}
-		this.enqueue({ runId: notification.runId ?? "", payload: notification, timestamp: Date.now(), type: "notification" });
+		if (!this.flushing) this.enqueue({ runId: notification.runId ?? "", payload: notification, timestamp: Date.now(), type: "notification" });
 	}
 
 	deliverSteer(runId: string, message: string): void {
@@ -96,12 +97,14 @@ export class DeliveryCoordinator {
 				logInternalError("delivery-coordinator.deliverSteer", error, `runId=${runId}`);
 			}
 		}
-		this.enqueue({ runId, payload: message, timestamp: Date.now(), type: "steer" });
+		if (!this.flushing) this.enqueue({ runId, payload: message, timestamp: Date.now(), type: "steer" });
 	}
 
 	flushQueuedResults(): void {
 		if (!this.active || this.pending.length === 0) return;
 		const batch = this.pending.splice(0);
+		this.flushing = true;
+		try {
 		for (const delivery of batch) {
 			if (delivery.generation !== undefined && delivery.generation !== this.generation) {
 				logInternalError("delivery-coordinator.flush.stale", undefined, `runId=${delivery.runId} type=${delivery.type}`);
@@ -126,6 +129,9 @@ export class DeliveryCoordinator {
 			} catch (error) {
 				logInternalError("delivery-coordinator.flush", error, `runId=${delivery.runId} type=${delivery.type}`);
 			}
+		}
+		} finally {
+			this.flushing = false;
 		}
 	}
 

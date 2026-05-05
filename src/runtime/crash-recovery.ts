@@ -75,6 +75,7 @@ export function reconcileAllStaleRuns(cwd: string, manifestCache: ManifestCache,
 			if (!fresh || fresh.manifest.status !== "running") return;
 			const result = reconcileStaleRun(fresh.manifest, fresh.tasks, now);
 			if (result.repaired) {
+				if (result.repairedTasks) saveRunTasks(fresh.manifest, result.repairedTasks);
 				updateRunStatus(fresh.manifest, "failed", `Stale run reconciled: ${result.detail}`);
 				appendEvent(fresh.manifest.eventsPath, { type: "crew.run.reconciled_stale", runId: manifest.runId, message: result.detail, data: { verdict: result.verdict } });
 			}

@@ -100,9 +100,9 @@ test("configuredModelInfosFromPiConfig reads provider and model from Pi settings
 		fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
 		fs.writeFileSync(path.join(cwd, ".pi", "settings.json"), JSON.stringify({ defaultProvider: "project-provider", defaultModel: "project-model" }));
 		assert.deepEqual(configuredModelInfosFromPiConfig(cwd), [
+			{ provider: "project-provider", id: "project-model", fullId: "project-provider/project-model" },
 			{ provider: "custom", id: "custom-model", fullId: "custom/custom-model" },
 			{ provider: "custom", id: "overridden-model", fullId: "custom/overridden-model" },
-			{ provider: "project-provider", id: "project-model", fullId: "project-provider/project-model" },
 		]);
 	} finally {
 		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;

@@ -65,7 +65,7 @@ export function handleCancel(params: TeamToolParamsValue, ctx: TeamContext): PiT
 		// Classify tasks for foreign-aware cancellation
 		const abortResult = abortOwned(loaded.manifest.runId, undefined, ctx);
 		if (abortResult.abortedIds.length === 0 && abortResult.foreignIds.length > 0) {
-			return result(`Run ${loaded.manifest.runId} belongs to another session; not cancelled.`, { action: "cancel", status: "error", runId: loaded.manifest.runId, foreignIds: abortResult.foreignIds } as never, true);
+			return result(`Run ${loaded.manifest.runId} belongs to another session; not cancelled.`, { action: "cancel", status: "error", runId: loaded.manifest.runId, foreignIds: abortResult.foreignIds }, true);
 		}
 		const cancellableIds = new Set(abortResult.abortedIds);
 

@@ -11,6 +11,7 @@ import { eventToSidechainType, sidechainOutputPath, writeSidechainEntry } from "
 import type { WorkflowStep } from "../workflows/workflow-config.ts";
 import { isLiveSessionRuntimeAvailable } from "./runtime-resolver.ts";
 import { redactSecrets } from "../utils/redaction.ts";
+import { buildConfiguredModelRouting } from "./model-fallback.ts";
 
 export interface LiveSessionSpawnInput {
 	manifest: TeamRunManifest;
@@ -26,6 +27,8 @@ export interface LiveSessionSpawnInput {
 	parentContext?: string;
 	parentModel?: unknown;
 	modelRegistry?: unknown;
+	modelOverride?: string;
+	teamRoleModel?: string;
 	isCurrent?: () => boolean;
 }
 
@@ -217,7 +220,8 @@ export async function runLiveSessionTask(input: LiveSessionSpawnInput): Promise<
 			});
 			await (resourceLoader as { reload?: () => Promise<void> }).reload?.();
 		}
-		const resolvedModel = modelFromRegistry(input.modelRegistry, input.agent.model) ?? input.parentModel;
+		const modelRouting = buildConfiguredModelRouting({ overrideModel: input.modelOverride, stepModel: input.step.model, teamRoleModel: input.teamRoleModel, agentModel: input.agent.model, fallbackModels: input.agent.fallbackModels, parentModel: input.parentModel, modelRegistry: input.modelRegistry, cwd: input.manifest.cwd });
+		const resolvedModel = modelFromRegistry(input.modelRegistry, modelRouting.candidates[0] ?? modelRouting.requested) ?? input.parentModel;
 		const created = await mod.createAgentSession({
 			cwd: input.task.cwd,
 			...(agentDir ? { agentDir } : {}),

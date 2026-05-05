@@ -15,6 +15,11 @@ export type TeamContext = Pick<ExtensionContext, "cwd"> & Partial<Pick<Extension
 	onJsonEvent?: (taskId: string, runId: string, event: unknown) => void;
 };
 
+export function withSessionId<T extends Pick<ExtensionContext, "sessionManager">>(ctx: T): T & { sessionId?: string } {
+	const sessionId = ctx.sessionManager.getSessionId();
+	return sessionId ? { ...ctx, sessionId } : { ...ctx };
+}
+
 export function result(text: string, details: TeamToolDetails, isError = false): PiTeamsToolResult {
 	return toolResult(text, details, isError);
 }

@@ -1,5 +1,4 @@
 import * as fs from "node:fs";
-import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { loadConfig } from "../../config/config.ts";
 import { TeamToolParams, type TeamToolParamsValue } from "../../schema/team-tool-schema.ts";
@@ -9,7 +8,9 @@ import { updatePiCrewPowerbar } from "../../ui/powerbar-publisher.ts";
 import type { createManifestCache } from "../../runtime/manifest-cache.ts";
 import type { createRunSnapshotCache } from "../../ui/run-snapshot-cache.ts";
 import type { MetricRegistry } from "../../observability/metric-registry.ts";
+import { resolveRealContainedPath } from "../../utils/safe-paths.ts";
 import { handleTeamTool } from "../team-tool.ts";
+import { withSessionId } from "../team-tool/context.ts";
 import { toolResult } from "../tool-result.ts";
 
 export interface RegisterTeamToolDeps {
@@ -23,15 +24,16 @@ export interface RegisterTeamToolDeps {
 	onJsonEvent?: (taskId: string, runId: string, event: unknown) => void;
 }
 
-function resolveCwdOverride(baseCwd: string, override: string | undefined): { ok: true; cwd: string } | { ok: false; error: string } {
+export function resolveCwdOverride(baseCwd: string, override: string | undefined): { ok: true; cwd: string } | { ok: false; error: string } {
 	if (!override) return { ok: true, cwd: baseCwd };
-	const resolved = path.resolve(baseCwd, override);
 	try {
+		const resolved = resolveRealContainedPath(baseCwd, override);
 		const stat = fs.statSync(resolved);
 		if (!stat.isDirectory()) return { ok: false, error: `cwd override is not a directory: ${resolved}` };
 		return { ok: true, cwd: resolved };
-	} catch {
-		return { ok: false, error: `cwd override does not exist: ${resolved}` };
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return { ok: false, error: `Invalid cwd override: ${message}` };
 	}
 }
 
@@ -51,7 +53,7 @@ export function registerTeamTool(pi: ExtensionAPI, deps: RegisterTeamToolDeps): 
 				const resolved = params as TeamToolParamsValue;
 				const cwdOverride = resolveCwdOverride(ctx.cwd, resolved.cwd);
 				if (!cwdOverride.ok) return toolResult(cwdOverride.error, { action: resolved.action ?? "list", status: "error" }, true);
-				const toolCtx = { ...ctx, cwd: cwdOverride.cwd };
+				const toolCtx = withSessionId({ ...ctx, cwd: cwdOverride.cwd });
 				// Phase 1.5: Auto-set session name from team run context
 				if (resolved.action === "run" && resolved.goal && !pi.getSessionName()) {
 					const runLabel = resolved.team ?? resolved.agent ?? "direct";

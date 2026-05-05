@@ -25,6 +25,7 @@ import { childCorrelation, withCorrelation } from "../observability/correlation.
 import { resolveBatchConcurrency } from "./concurrency.ts";
 import { mapConcurrent } from "./parallel-utils.ts";
 import { permissionForRole } from "./role-permission.ts";
+import { renderSkillInstructions } from "./skill-instructions.ts";
 
 export interface ExecuteTeamRunInput {
 	manifest: TeamRunManifest;
@@ -43,6 +44,8 @@ export interface ExecuteTeamRunInput {
 	signal?: AbortSignal;
 	reliability?: CrewReliabilityConfig;
 	metricRegistry?: MetricRegistry;
+	/** Skill override from the team tool. false disables skill injection for this run. */
+	skillOverride?: string[] | false;
 	/** Optional callback for JSON events from child Pi. Used for overflow recovery tracking. */
 	onJsonEvent?: (taskId: string, runId: string, event: unknown) => void;
 }
@@ -581,7 +584,9 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 			async (task) => {
 				const step = findStep(workflow, task);
 				const agent = findAgent(input.agents, task);
-				const baseInput = { manifest, tasks, task, step, agent, signal: input.signal, executeWorkers: input.executeWorkers, runtimeKind: input.runtime?.kind, runtimeConfig: input.runtimeConfig, parentContext: input.parentContext, parentModel: input.parentModel, modelRegistry: input.modelRegistry, modelOverride: input.modelOverride, limits: input.limits, onJsonEvent: input.onJsonEvent };
+				const teamRole = input.team.roles.find((role) => role.name === task.role);
+				const skills = renderSkillInstructions({ cwd: manifest.cwd, role: task.role, agent, teamRole, step, override: input.skillOverride });
+				const baseInput = { manifest, tasks, task, step, agent, signal: input.signal, executeWorkers: input.executeWorkers, runtimeKind: input.runtime?.kind, runtimeConfig: input.runtimeConfig, parentContext: input.parentContext, parentModel: input.parentModel, modelRegistry: input.modelRegistry, modelOverride: input.modelOverride, teamRoleModel: teamRole?.model, limits: input.limits, skillBlock: skills.block, skillNames: skills.names, onJsonEvent: input.onJsonEvent };
 				if (input.reliability?.autoRetry !== true) return withCorrelation(childCorrelation(manifest.runId, task.id), () => runTeamTask(baseInput));
 				let lastFailed: { manifest: TeamRunManifest; tasks: TeamTaskState[] } | undefined;
 				const attemptsSoFar: TaskAttemptState[] = [...(task.attempts ?? [])];
@@ -595,6 +600,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 						const freshManifest = fresh?.manifest ?? manifest;
 						const freshTasks = fresh?.tasks ?? tasks;
 						const freshTask = freshTasks.find((item) => item.id === task.id) ?? task;
+						if (freshTask.status !== "queued" && freshTask.status !== "running") return { manifest: freshManifest, tasks: freshTasks };
 						const taskWithAttempt: TeamTaskState = { ...freshTask, attempts: inFlightAttempts };
 						const result = await withCorrelation(childCorrelation(freshManifest.runId, task.id), () => runTeamTask({ ...baseInput, manifest: freshManifest, tasks: freshTasks, task: taskWithAttempt }));
 						const failed = failedTaskFrom(result, task.id);
@@ -627,6 +633,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 					const freshManifest = fresh?.manifest ?? manifest;
 					const freshTasks = fresh?.tasks ?? tasks;
 					const freshTask = freshTasks.find((item) => item.id === task.id) ?? task;
+					if (freshTask.status !== "queued" && freshTask.status !== "running") return { manifest: freshManifest, tasks: freshTasks };
 					return withCorrelation(childCorrelation(freshManifest.runId, task.id), () => runTeamTask({ ...baseInput, manifest: freshManifest, tasks: freshTasks, task: freshTask }));
 				}
 			},

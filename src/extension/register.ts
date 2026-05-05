@@ -398,7 +398,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		configureNotifications(ctx);
 		configureObservability(ctx);
 		configureDeliveryCoordinator();
-		const sessionId = (ctx as unknown as Record<string, unknown>).sessionId;
+		const sessionId = ctx.sessionManager?.getSessionId?.() ?? (ctx as unknown as Record<string, unknown>).sessionId;
 		if (typeof sessionId === "string" && sessionId) deliveryCoordinator?.activate(sessionId);
 		tryRegisterSessionCleanup(pi, () => { terminateActiveChildPiProcesses(); cleanupRuntime(); });
 		registerPiCrewPowerbarSegments(pi.events, loadedConfig.config.ui);

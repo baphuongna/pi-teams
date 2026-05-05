@@ -38,7 +38,7 @@ async function main(): Promise<void> {
 		const loadedConfig = loadConfig(cwd);
 		const runtime = await resolveCrewRuntime(loadedConfig.config);
 		const executeWorkers = runtime.kind !== "scaffold";
-		const result = await executeTeamRun({ manifest, tasks, team, workflow, agents, executeWorkers, limits: loadedConfig.config.limits, runtime, runtimeConfig: loadedConfig.config.runtime });
+		const result = await executeTeamRun({ manifest, tasks, team, workflow, agents, executeWorkers, limits: loadedConfig.config.limits, runtime, runtimeConfig: loadedConfig.config.runtime, skillOverride: manifest.skillOverride });
 		manifest = result.manifest;
 		tasks = result.tasks;
 		appendEvent(manifest.eventsPath, { type: "async.completed", runId: manifest.runId, data: { status: manifest.status, tasks: tasks.length } });

@@ -7,4 +7,5 @@ export interface TeamToolDetails {
 	missingIds?: string[];
 	foreignIds?: string[];
 	resumedIds?: string[];
+	mailboxIds?: string[];
 }

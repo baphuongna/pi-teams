@@ -48,12 +48,14 @@ export function projectPiRoot(cwd: string): string {
 
 export function projectCrewRoot(cwd: string): string {
 	const repoRoot = findRepoRoot(cwd) ?? cwd;
+	const crewDir = path.join(repoRoot, ".crew");
+	// Keep an existing .crew/ stable even when .pi/ exists for project config.
+	if (fs.existsSync(crewDir)) return crewDir;
 	// Legacy reuse: if .pi/ already exists for the project, namespace under .pi/teams/
 	// to avoid creating a parallel .crew/ alongside an existing pi project layout.
 	const piDir = path.join(repoRoot, ".pi");
 	if (fs.existsSync(piDir)) return path.join(piDir, "teams");
-	// Otherwise default to .crew/ (also kept stable if it already exists).
-	return path.join(repoRoot, ".crew");
+	return crewDir;
 }
 
 export function userCrewRoot(): string {

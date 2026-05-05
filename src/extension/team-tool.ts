@@ -47,6 +47,7 @@ import { handleCancel } from "./team-tool/cancel.ts";
 import { handleRespond } from "./team-tool/respond.ts";
 import { handlePlan } from "./team-tool/plan.ts";
 import { logInternalError } from "../utils/internal-error.ts";
+import { normalizeSkillOverride } from "../runtime/skill-instructions.ts";
 
 export type { TeamToolDetails } from "./team-tool-types.ts";
 export type { TeamContext } from "./team-tool/context.ts";
@@ -187,7 +188,8 @@ export async function handleResume(params: TeamToolParamsValue, ctx: TeamContext
 		const loadedConfig = loadConfig(ctx.cwd);
 		const runtime = await resolveCrewRuntime(loadedConfig.config);
 		const executeWorkers = runtime.kind !== "scaffold";
-		const executed = await executeTeamRun({ manifest: resumeManifest, tasks: resetTasks, team, workflow, agents, executeWorkers, limits: loadedConfig.config.limits, runtime, runtimeConfig: loadedConfig.config.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, signal: ctx.signal, reliability: loadedConfig.config.reliability, metricRegistry: ctx.metricRegistry });
+		const resumeSkillOverride = normalizeSkillOverride(params.skill) ?? resumeManifest.skillOverride;
+		const executed = await executeTeamRun({ manifest: resumeManifest, tasks: resetTasks, team, workflow, agents, executeWorkers, limits: loadedConfig.config.limits, runtime, runtimeConfig: loadedConfig.config.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, skillOverride: resumeSkillOverride, signal: ctx.signal, reliability: loadedConfig.config.reliability, metricRegistry: ctx.metricRegistry });
 		return result([`Resumed run ${executed.manifest.runId}.`, `Status: ${executed.manifest.status}`, `Tasks: ${executed.tasks.length}`, `Artifacts: ${executed.manifest.artifactsRoot}`].join("\n"), { action: "resume", status: executed.manifest.status === "failed" ? "error" : "ok", runId: executed.manifest.runId, artifactsRoot: executed.manifest.artifactsRoot }, executed.manifest.status === "failed");
 	});
 }
@@ -199,7 +201,7 @@ export async function handleTeamTool(params: TeamToolParamsValue, ctx: TeamConte
 		case "get": return handleGet(params, ctx);
 		case "init": {
 			const cfg = configRecord(params.config);
-			const initialized = initializeProject(ctx.cwd, { copyBuiltins: cfg.copyBuiltins === true, overwrite: cfg.overwrite === true });
+			const initialized = initializeProject(ctx.cwd, { copyBuiltins: cfg.copyBuiltins === true, overwrite: cfg.overwrite === true, configScope: cfg.configScope === "project" || cfg.scope === "project" ? "project" : cfg.configScope === "none" || cfg.scope === "none" ? "none" : "global" });
 			return result([
 				"Initialized pi-crew project layout.",
 				"Directories:",
@@ -207,6 +209,7 @@ export async function handleTeamTool(params: TeamToolParamsValue, ctx: TeamConte
 				"Copied builtin files:",
 				...(initialized.copiedFiles.length ? initialized.copiedFiles.map((file) => `- ${file}`) : ["- (none)"]),
 				...(initialized.skippedFiles.length ? ["Skipped existing files:", ...initialized.skippedFiles.map((file) => `- ${file}`)] : []),
+				`Config: ${initialized.configPath || "(none)"} (${initialized.configScope}${initialized.configCreated ? "; created" : initialized.configSkipped ? "; already existed" : "; unchanged"})`,
 				`Gitignore: ${initialized.gitignorePath} (${initialized.gitignoreUpdated ? "updated" : "already configured"})`,
 			].join("\n"), { action: "init", status: "ok" });
 		}

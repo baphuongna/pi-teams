@@ -1,7 +1,7 @@
 ---
 name: security-reviewer
 description: Review changes for security vulnerabilities and trust-boundary issues
-model: claude-sonnet-4-5
+model: false
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false

@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Review code changes for correctness, maintainability, and regressions
-model: claude-sonnet-4-5
+model: false
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false

@@ -24,6 +24,8 @@ export interface RunLiveTaskInput {
 	parentContext?: string;
 	parentModel?: unknown;
 	modelRegistry?: unknown;
+	modelOverride?: string;
+	teamRoleModel?: string;
 	isCurrent?: () => boolean;
 }
 
@@ -79,6 +81,8 @@ export async function runLiveTask(input: RunLiveTaskInput): Promise<RunLiveTaskO
 		parentContext: input.parentContext,
 		parentModel: input.parentModel,
 		modelRegistry: input.modelRegistry,
+		modelOverride: input.modelOverride,
+		teamRoleModel: input.teamRoleModel,
 		isCurrent,
 		onOutput: (text) => appendCrewAgentOutput(manifest, task.id, text),
 		onEvent: (event) => {

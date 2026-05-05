@@ -125,6 +125,8 @@ export interface TeamRunManifest {
 	planApproval?: PlanApprovalState;
 	/** Pi session that created the run, when available. Used to prevent cross-session destructive actions. */
 	ownerSessionId?: string;
+	/** pi-crew skill override selected when the run was created. false disables injected skill instructions. */
+	skillOverride?: string[] | false;
 	summary?: string;
 	policyDecisions?: PolicyDecision[];
 }

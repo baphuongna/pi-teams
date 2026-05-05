@@ -61,6 +61,23 @@ export function agentOutputPath(manifest: TeamRunManifest, taskId: string): stri
 }
 
 const AGENT_READER_TTL_MS = 200;
+const ASYNC_AGENT_READER_CACHE_MAX_ENTRIES = 128;
+
+const asyncAgentReaderCache = new Map<string, { expiresAt: number; records: CrewAgentRecord[]; inFlight?: Promise<CrewAgentRecord[]> }>();
+
+function setAsyncAgentReaderCache(filePath: string, entry: { expiresAt: number; records: CrewAgentRecord[]; inFlight?: Promise<CrewAgentRecord[]> }): void {
+	const now = Date.now();
+	for (const [key, cached] of asyncAgentReaderCache) {
+		if (cached.expiresAt <= now && !cached.inFlight) asyncAgentReaderCache.delete(key);
+	}
+	if (asyncAgentReaderCache.has(filePath)) asyncAgentReaderCache.delete(filePath);
+	asyncAgentReaderCache.set(filePath, entry);
+	while (asyncAgentReaderCache.size > ASYNC_AGENT_READER_CACHE_MAX_ENTRIES) {
+		const oldest = asyncAgentReaderCache.keys().next().value;
+		if (!oldest) break;
+		asyncAgentReaderCache.delete(oldest);
+	}
+}
 
 export function readCrewAgents(manifest: TeamRunManifest): CrewAgentRecord[] {
 	try {
@@ -71,16 +88,31 @@ export function readCrewAgents(manifest: TeamRunManifest): CrewAgentRecord[] {
 }
 
 export async function readCrewAgentsAsync(manifest: TeamRunManifest): Promise<CrewAgentRecord[]> {
-	try {
-		return JSON.parse(await fs.promises.readFile(agentsPath(manifest), "utf-8")) as CrewAgentRecord[];
-	} catch {
-		return [];
-	}
+	const filePath = agentsPath(manifest);
+	const now = Date.now();
+	const cached = asyncAgentReaderCache.get(filePath);
+	if (cached && cached.expiresAt > now) return cached.records;
+	if (cached?.inFlight) return cached.inFlight;
+	const inFlight = (async (): Promise<CrewAgentRecord[]> => {
+		try {
+			const parsed = JSON.parse(await fs.promises.readFile(filePath, "utf-8")) as unknown;
+			const records = Array.isArray(parsed) ? redactSecrets(parsed) as CrewAgentRecord[] : [];
+			setAsyncAgentReaderCache(filePath, { expiresAt: Date.now() + AGENT_READER_TTL_MS, records });
+			return records;
+		} catch {
+			setAsyncAgentReaderCache(filePath, { expiresAt: Date.now() + AGENT_READER_TTL_MS, records: [] });
+			return [];
+		}
+	})();
+	setAsyncAgentReaderCache(filePath, { expiresAt: now + AGENT_READER_TTL_MS, records: cached?.records ?? [], inFlight });
+	return inFlight;
 }
 
 export function saveCrewAgents(manifest: TeamRunManifest, records: CrewAgentRecord[]): void {
 	fs.mkdirSync(manifest.stateRoot, { recursive: true });
-	atomicWriteJson(agentsPath(manifest), redactSecrets(records));
+	const filePath = agentsPath(manifest);
+	atomicWriteJson(filePath, redactSecrets(records));
+	asyncAgentReaderCache.delete(filePath);
 	for (const record of records) writeCrewAgentStatus(manifest, record);
 }
 

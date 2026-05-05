@@ -22,6 +22,33 @@ describe("model inheritance precedence", () => {
 		assert.equal(routing.requested, "claude-haiku-4-5");
 	});
 
+	it("teamRoleModel takes precedence over agentModel", () => {
+		const routing = buildConfiguredModelRouting({
+			teamRoleModel: "openai/gpt-5-role",
+			agentModel: "claude-sonnet-4-5",
+			parentModel: { provider: "anthropic", id: "claude-opus-4" },
+		});
+		assert.equal(routing.requested, "openai/gpt-5-role");
+	});
+
+	it("stepModel takes precedence over teamRoleModel", () => {
+		const routing = buildConfiguredModelRouting({
+			stepModel: "claude-haiku-4-5",
+			teamRoleModel: "openai/gpt-5-role",
+			agentModel: "claude-sonnet-4-5",
+		});
+		assert.equal(routing.requested, "claude-haiku-4-5");
+	});
+
+	it("overrideModel takes precedence over teamRoleModel", () => {
+		const routing = buildConfiguredModelRouting({
+			overrideModel: "gpt-5",
+			teamRoleModel: "openai/gpt-5-role",
+			agentModel: "claude-sonnet-4-5",
+		});
+		assert.equal(routing.requested, "gpt-5");
+	});
+
 	it("agentModel takes precedence over parentModel", () => {
 		const routing = buildConfiguredModelRouting({
 			agentModel: "claude-sonnet-4-5",

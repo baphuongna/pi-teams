@@ -49,8 +49,21 @@ describe("AgentOverrideConfig skills field", () => {
 	});
 });
 
+function withIsolatedGlobalConfig<T>(fn: () => T): T {
+	const previous = process.env.PI_TEAMS_HOME;
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-home-"));
+	process.env.PI_TEAMS_HOME = home;
+	try {
+		return fn();
+	} finally {
+		if (previous === undefined) delete process.env.PI_TEAMS_HOME;
+		else process.env.PI_TEAMS_HOME = previous;
+		fs.rmSync(home, { recursive: true, force: true });
+	}
+}
+
 describe("projectPiCrewJsonPath", () => {
-	it("loadConfig reads from .pi/pi-crew.json for safe config", () => {
+	it("loadConfig reads from .pi/pi-crew.json for safe config", () => withIsolatedGlobalConfig(() => {
 		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-test-"));
 		try {
 			const piDir = path.join(tmpDir, ".pi");
@@ -66,33 +79,45 @@ describe("projectPiCrewJsonPath", () => {
 		} finally {
 			fs.rmSync(tmpDir, { recursive: true, force: true });
 		}
-	});
+	}));
 
-	it("loadConfig sanitizes sensitive fields from .pi/pi-crew.json", () => {
+	it("loadConfig allows .pi/pi-crew.json to override agent model profiles", () => withIsolatedGlobalConfig(() => {
 		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-test-"));
 		try {
 			const piDir = path.join(tmpDir, ".pi");
 			fs.mkdirSync(piDir, { recursive: true });
 			fs.writeFileSync(path.join(piDir, "pi-crew.json"), JSON.stringify({
 				agents: {
-					overrides: { explorer: { model: "test-model" } },
+					overrides: { explorer: { model: "test-model", thinking: "low" } },
 				},
 				ui: { powerbar: true },
 			}));
 
 			const loaded = loadConfig(tmpDir);
-			// agents.overrides is stripped from project config (security)
-			assert.equal(loaded.config.agents?.overrides, undefined);
-			// ui.powerbar survives
+			assert.equal(loaded.config.agents?.overrides?.explorer?.model, "test-model");
+			assert.equal(loaded.config.agents?.overrides?.explorer?.thinking, "low");
 			assert.equal(loaded.config.ui?.powerbar, true);
-			// Warning should mention agents.overrides
-			assert.ok(loaded.warnings?.some((w) => w.includes("agents.overrides")));
+			assert.equal(loaded.warnings?.some((w) => w.includes("agents.overrides")), undefined);
 		} finally {
 			fs.rmSync(tmpDir, { recursive: true, force: true });
 		}
-	});
+	}));
 
-	it("loadConfig ignores missing .pi/pi-crew.json gracefully", () => {
+	it("loadConfig ignores invalid .pi/pi-crew.json and keeps defaults", () => withIsolatedGlobalConfig(() => {
+		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-test-"));
+		try {
+			const piDir = path.join(tmpDir, ".pi");
+			fs.mkdirSync(piDir, { recursive: true });
+			fs.writeFileSync(path.join(piDir, "pi-crew.json"), "{ invalid json");
+			const loaded = loadConfig(tmpDir);
+			assert.equal(loaded.config.agents?.overrides, undefined);
+			assert.ok(loaded.warnings?.some((w) => w.includes("invalid config ignored")));
+		} finally {
+			fs.rmSync(tmpDir, { recursive: true, force: true });
+		}
+	}));
+
+	it("loadConfig ignores missing .pi/pi-crew.json gracefully", () => withIsolatedGlobalConfig(() => {
 		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-test-"));
 		try {
 			const loaded = loadConfig(tmpDir);
@@ -101,5 +126,5 @@ describe("projectPiCrewJsonPath", () => {
 		} finally {
 			fs.rmSync(tmpDir, { recursive: true, force: true });
 		}
-	});
+	}));
 });

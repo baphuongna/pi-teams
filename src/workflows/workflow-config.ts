@@ -9,6 +9,7 @@ export interface WorkflowStep {
 	output?: string | false;
 	reads?: string[] | false;
 	model?: string;
+	/** Additional skills for this step; false disables role-default injected skills for this step. */
 	skills?: string[] | false;
 	progress?: boolean;
 	worktree?: boolean;

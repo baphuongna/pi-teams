@@ -1,7 +1,7 @@
 ---
 name: verifier
 description: Verify that implementation satisfies the requested goal
-model: claude-sonnet-4-5
+model: false
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false

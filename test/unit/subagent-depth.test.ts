@@ -32,6 +32,28 @@ test("worker args increment crew depth and preserve max depth for recursive suba
 	assert.equal(result.env.PI_CREW_ROLE, "executor");
 });
 
+test("worker args pass safe thinking separately when inheriting parent model", () => {
+	const result = buildPiWorkerArgs({ task: "think", agent: { ...agent, thinking: "medium" } });
+	assert.equal(result.args.includes("--model"), false);
+	const index = result.args.indexOf("--thinking");
+	assert.ok(index >= 0);
+	assert.equal(result.args[index + 1], "medium");
+});
+
+test("worker args pass any valid thinking level when inheriting parent model", () => {
+	const result = buildPiWorkerArgs({ task: "think", agent: { ...agent, thinking: "high" } });
+	assert.equal(result.args.includes("--model"), false);
+	const index = result.args.indexOf("--thinking");
+	assert.ok(index >= 0);
+	assert.equal(result.args[index + 1], "high");
+});
+
+test("worker args ignore invalid thinking levels when inheriting parent model", () => {
+	const result = buildPiWorkerArgs({ task: "think", agent: { ...agent, thinking: "wrong" } });
+	assert.equal(result.args.includes("--model"), false);
+	assert.equal(result.args.includes("--thinking"), false);
+});
+
 test("recursive child worker at max depth is blocked before provider execution", async () => {
 	const previousDepth = process.env.PI_CREW_DEPTH;
 	const previousMax = process.env.PI_CREW_MAX_DEPTH;

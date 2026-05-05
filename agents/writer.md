@@ -1,7 +1,7 @@
 ---
 name: writer
 description: Write concise documentation, migration notes, and summaries
-model: claude-haiku-4-5
+model: false
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false

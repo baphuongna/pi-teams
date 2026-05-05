@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { loadConfig } from "../../config/config.ts";
 import { handleTeamTool } from "../team-tool.ts";
+import { withSessionId } from "../team-tool/context.ts";
 import { piTeamsHelp } from "../help.ts";
 import { handleTeamManagerCommand } from "../team-manager-command.ts";
 import { loadRunManifestById } from "../../state/state-store.ts";
@@ -78,6 +79,10 @@ function depsNotify(ctx: ExtensionCommandContext, message: string, level: "info"
 	ctx.ui.notify(message, level);
 }
 
+function teamCommandContext(ctx: ExtensionCommandContext): ExtensionCommandContext & { sessionId?: string } {
+	return withSessionId(ctx);
+}
+
 async function handleHealthDashboardAction(ctx: ExtensionCommandContext, selection: RunDashboardSelection): Promise<void> {
 	const loaded = loadRunManifestById(ctx.cwd, selection.runId);
 	if (!loaded) {
@@ -121,7 +126,7 @@ export function registerTeamCommands(pi: ExtensionAPI, deps: RegisterTeamCommand
 	pi.registerCommand("teams", {
 		description: "List pi-crew teams, workflows, and agents",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
-			const result = await handleTeamTool({ action: "list" }, ctx);
+			const result = await handleTeamTool({ action: "list" }, teamCommandContext(ctx));
 			await notifyCommandResult(ctx, commandText(result));
 		},
 	});
@@ -129,7 +134,7 @@ export function registerTeamCommands(pi: ExtensionAPI, deps: RegisterTeamCommand
 	pi.registerCommand("team-run", {
 		description: "Manually start a pi-crew run (agent may also use the team tool autonomously)",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
-			const result = await handleTeamTool(parseRunArgs(args), { ...ctx, metricRegistry: deps.getMetricRegistry?.(), startForegroundRun: (runner, runId) => deps.startForegroundRun(ctx as ExtensionContext, runner, runId), onRunStarted: (runId) => deps.openLiveSidebar(ctx as ExtensionContext, runId) });
+			const result = await handleTeamTool(parseRunArgs(args), { ...teamCommandContext(ctx), metricRegistry: deps.getMetricRegistry?.(), startForegroundRun: (runner, runId) => deps.startForegroundRun(ctx as ExtensionContext, runner, runId), onRunStarted: (runId) => deps.openLiveSidebar(ctx as ExtensionContext, runId) });
 			await notifyCommandResult(ctx, commandText(result));
 		},
 	});
@@ -146,7 +151,7 @@ export function registerTeamCommands(pi: ExtensionAPI, deps: RegisterTeamCommand
 	] as const) {
 		pi.registerCommand(name, { description, handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const runId = args.trim() || undefined;
-			const result = await handleTeamTool({ action, runId }, ctx);
+			const result = await handleTeamTool({ action, runId }, teamCommandContext(ctx));
 			await notifyCommandResult(ctx, commandText(result));
 		} });
 	}
@@ -159,7 +164,7 @@ export function registerTeamCommands(pi: ExtensionAPI, deps: RegisterTeamCommand
 			const taskToken = tokens[0] === "--all" ? tokens.shift() : tokens.shift();
 			const taskId = taskToken === "--all" ? undefined : taskToken;
 			const message = tokens.join(" ") || undefined;
-			const result = await handleTeamTool({ action: "respond", runId, taskId, message }, ctx);
+			const result = await handleTeamTool({ action: "respond", runId, taskId, message }, teamCommandContext(ctx));
 			await notifyCommandResult(ctx, commandText(result));
 		},
 	});
@@ -178,19 +183,19 @@ export function registerTeamCommands(pi: ExtensionAPI, deps: RegisterTeamCommand
 				const [key, ...rest] = token.split("=");
 				if (key) config[key] = parseScalar(rest.join("="));
 			}
-			const result = await handleTeamTool({ action: "api", runId, config }, ctx);
+			const result = await handleTeamTool({ action: "api", runId, config }, teamCommandContext(ctx));
 			await notifyCommandResult(ctx, commandText(result));
 		},
 	});
 
 	pi.registerCommand("team-metrics", { description: "Show pi-crew metrics snapshot: [filter]", handler: async (args: string, ctx: ExtensionCommandContext) => {
 		const filter = args.trim() || undefined;
-		const result = await handleTeamTool({ action: "api", config: { operation: "metrics-snapshot", filter } }, { ...ctx, metricRegistry: deps.getMetricRegistry?.() });
+		const result = await handleTeamTool({ action: "api", config: { operation: "metrics-snapshot", filter } }, { ...teamCommandContext(ctx), metricRegistry: deps.getMetricRegistry?.() });
 		await notifyCommandResult(ctx, commandText(result));
 	} });
 
 	pi.registerCommand("team-imports", { description: "List imported pi-crew run bundles", handler: async (_args: string, ctx: ExtensionCommandContext) => {
-		const result = await handleTeamTool({ action: "imports" }, ctx);
+		const result = await handleTeamTool({ action: "imports" }, teamCommandContext(ctx));
 		await notifyCommandResult(ctx, commandText(result));
 	} });
 
@@ -198,7 +203,7 @@ export function registerTeamCommands(pi: ExtensionAPI, deps: RegisterTeamCommand
 		const tokens = args.trim().split(/\s+/).filter(Boolean);
 		const pathArg = tokens.find((token) => !token.startsWith("--"));
 		const scope = tokens.includes("--user") ? "user" : "project";
-		const result = await handleTeamTool({ action: "import", config: { path: pathArg, scope } }, ctx);
+		const result = await handleTeamTool({ action: "import", config: { path: pathArg, scope } }, teamCommandContext(ctx));
 		await notifyCommandResult(ctx, commandText(result));
 	} });
 
@@ -206,21 +211,21 @@ export function registerTeamCommands(pi: ExtensionAPI, deps: RegisterTeamCommand
 		const tokens = args.trim().split(/\s+/).filter(Boolean);
 		const keepToken = tokens.find((token) => token.startsWith("--keep="));
 		const keep = keepToken ? Number.parseInt(keepToken.slice("--keep=".length), 10) : undefined;
-		const result = await handleTeamTool({ action: "prune", keep, confirm: tokens.includes("--confirm") }, ctx);
+		const result = await handleTeamTool({ action: "prune", keep, confirm: tokens.includes("--confirm") }, teamCommandContext(ctx));
 		await notifyCommandResult(ctx, commandText(result));
 	} });
 
 	pi.registerCommand("team-forget", { description: "Forget a pi-crew run by deleting its state and artifacts", handler: async (args: string, ctx: ExtensionCommandContext) => {
 		const tokens = args.trim().split(/\s+/).filter(Boolean);
 		const runId = tokens.find((token) => !token.startsWith("--"));
-		const result = await handleTeamTool({ action: "forget", runId, force: tokens.includes("--force"), confirm: tokens.includes("--confirm") }, ctx);
+		const result = await handleTeamTool({ action: "forget", runId, force: tokens.includes("--force"), confirm: tokens.includes("--confirm") }, teamCommandContext(ctx));
 		await notifyCommandResult(ctx, commandText(result));
 	} });
 
 	pi.registerCommand("team-settings", {
 		description: "View or update pi-crew settings: [list|get <key>|set <key> <value>|unset <key>|path|scope]",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
-			const result = await handleTeamTool({ action: "settings", config: { args: args.trim() } }, ctx);
+			const result = await handleTeamTool({ action: "settings", config: { args: args.trim() } }, teamCommandContext(ctx));
 			await notifyCommandResult(ctx, commandText(result));
 		},
 	});
@@ -233,18 +238,18 @@ export function registerTeamCommands(pi: ExtensionAPI, deps: RegisterTeamCommand
 		const loaded = selected ? loadRunManifestById(ctx.cwd, selected.runId) : undefined;
 		if (ctx.hasUI && loaded) {
 			const agent = readCrewAgents(loaded.manifest).find((item) => item.taskId === selected?.taskId || item.id === selected?.taskId) ?? readCrewAgents(loaded.manifest)[0];
-			const resultText = agent?.resultArtifactPath ? commandText(await handleTeamTool({ action: "api", runId: selected?.runId ?? "", config: { operation: "read-agent-output", agentId: agent.taskId, maxBytes: 64_000 } }, ctx)) : "(no result)";
+			const resultText = agent?.resultArtifactPath ? commandText(await handleTeamTool({ action: "api", runId: selected?.runId ?? "", config: { operation: "read-agent-output", agentId: agent.taskId, maxBytes: 64_000 } }, teamCommandContext(ctx))) : "(no result)";
 			await ctx.ui.custom<undefined>((_tui, theme, _keybindings, done) => new DurableTextViewer("pi-crew result", `${selected?.runId ?? ""}:${agent?.taskId ?? "unknown"}`, resultText.split(/\r?\n/), theme, done), { overlay: true, overlayOptions: { width: "90%", maxHeight: "85%", anchor: "center" } });
 			return;
 		}
-		const result = await handleTeamTool({ action: "api", runId, config: { operation: "read-agent-output", agentId: rawTaskId, maxBytes: 64_000 } }, ctx);
+		const result = await handleTeamTool({ action: "api", runId, config: { operation: "read-agent-output", agentId: rawTaskId, maxBytes: 64_000 } }, teamCommandContext(ctx));
 		await notifyCommandResult(ctx, commandText(result));
 	} });
 
 	pi.registerCommand("team-transcript", { description: "Open a pi-crew transcript viewer: <runId> [taskId]", handler: async (args: string, ctx: ExtensionCommandContext) => {
 		const [runId, taskId] = args.trim().split(/\s+/).filter(Boolean);
 		if (await openTranscriptViewer(ctx, runId, taskId)) return;
-		const result = await handleTeamTool({ action: "api", runId, config: { operation: "read-agent-transcript", agentId: taskId } }, ctx);
+		const result = await handleTeamTool({ action: "api", runId, config: { operation: "read-agent-transcript", agentId: taskId } }, teamCommandContext(ctx));
 		await notifyCommandResult(ctx, commandText(result));
 	} });
 
@@ -273,7 +278,7 @@ export function registerTeamCommands(pi: ExtensionAPI, deps: RegisterTeamCommand
 				continue;
 			}
 			if (selection.action === "agent-transcript" && await openTranscriptViewer(ctx, selection.runId)) continue;
-			const result = selection.action === "api" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "read-manifest" } }, ctx) : selection.action === "agents" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "agent-dashboard" } }, ctx) : selection.action === "mailbox" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "read-mailbox" } }, ctx) : selection.action === "agent-events" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "read-agent-events", limit: 50 } }, ctx) : selection.action === "agent-output" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "read-agent-output", maxBytes: 32_000 } }, ctx) : selection.action === "agent-transcript" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "read-agent-transcript" } }, ctx) : await handleTeamTool({ action: selection.action, runId: selection.runId }, ctx);
+			const result = selection.action === "api" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "read-manifest" } }, teamCommandContext(ctx)) : selection.action === "agents" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "agent-dashboard" } }, teamCommandContext(ctx)) : selection.action === "mailbox" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "read-mailbox" } }, teamCommandContext(ctx)) : selection.action === "agent-events" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "read-agent-events", limit: 50 } }, teamCommandContext(ctx)) : selection.action === "agent-output" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "read-agent-output", maxBytes: 32_000 } }, teamCommandContext(ctx)) : selection.action === "agent-transcript" ? await handleTeamTool({ action: "api", runId: selection.runId, config: { operation: "read-agent-transcript" } }, teamCommandContext(ctx)) : await handleTeamTool({ action: selection.action, runId: selection.runId }, teamCommandContext(ctx));
 			await notifyCommandResult(ctx, commandText(result));
 			return;
 		}
@@ -290,9 +295,10 @@ export function registerTeamCommands(pi: ExtensionAPI, deps: RegisterTeamCommand
 		await ctx.ui.custom<undefined>((tui, theme, _keybindings, done) => new AnimatedMascot(theme, () => done(undefined), { frameIntervalMs: style === "armin" ? 33 : 180, autoCloseMs: 7000, requestRender: () => requestRenderTarget(tui), style, effect }), { overlay: true, overlayOptions: { width: style === "armin" ? 48 : 62, maxHeight: "85%", anchor: "center" } });
 	} });
 
-	pi.registerCommand("team-init", { description: "Initialize project-local pi-crew directories and gitignore entries", handler: async (args: string, ctx: ExtensionCommandContext) => {
+	pi.registerCommand("team-init", { description: "Initialize pi-crew layout and global config. Use --project-config to write .pi/pi-crew.json.", handler: async (args: string, ctx: ExtensionCommandContext) => {
 		const tokens = args.trim().split(/\s+/).filter(Boolean);
-		const result = await handleTeamTool({ action: "init", config: { copyBuiltins: tokens.includes("--copy-builtins"), overwrite: tokens.includes("--overwrite") } }, ctx);
+		const configScope = tokens.includes("--project-config") || tokens.includes("--project") ? "project" : tokens.includes("--no-config") ? "none" : "global";
+		const result = await handleTeamTool({ action: "init", config: { copyBuiltins: tokens.includes("--copy-builtins"), overwrite: tokens.includes("--overwrite"), configScope } }, teamCommandContext(ctx));
 		await notifyCommandResult(ctx, commandText(result));
 	} });
 
@@ -300,14 +306,14 @@ export function registerTeamCommands(pi: ExtensionAPI, deps: RegisterTeamCommand
 		const tokens = args.trim().split(/\s+/).filter(Boolean);
 		const mode = tokens[0]?.toLowerCase();
 		const config = mode === "on" ? { profile: "suggested", enabled: true, injectPolicy: true } : mode === "off" ? { profile: "manual", enabled: false } : mode === "manual" || mode === "suggested" || mode === "assisted" || mode === "aggressive" ? { profile: mode, enabled: mode !== "manual", injectPolicy: mode !== "manual" } : { preferAsyncForLongTasks: tokens.includes("--prefer-async") ? true : undefined, allowWorktreeSuggestion: tokens.includes("--no-worktree-suggest") ? false : undefined };
-		const result = await handleTeamTool({ action: "autonomy", config }, ctx);
+		const result = await handleTeamTool({ action: "autonomy", config }, teamCommandContext(ctx));
 		await notifyCommandResult(ctx, commandText(result));
 	} });
 
 	pi.registerCommand("team-config", { description: "Show or update pi-crew config. Use key=value [--project] to update.", handler: async (args: string, ctx: ExtensionCommandContext) => {
 		const tokens = args.trim().split(/\s+/).filter(Boolean);
 		if (tokens.length === 0) {
-			const result = await handleTeamTool({ action: "config" }, ctx);
+			const result = await handleTeamTool({ action: "config" }, teamCommandContext(ctx));
 			await notifyCommandResult(ctx, commandText(result));
 			return;
 		}
@@ -324,7 +330,7 @@ export function registerTeamCommands(pi: ExtensionAPI, deps: RegisterTeamCommand
 			if (raw === "unset" || raw === "null") pushUnset(config, key);
 			else setNestedConfig(config, key, parseScalar(raw));
 		}
-		const result = await handleTeamTool({ action: "config", config }, ctx);
+		const result = await handleTeamTool({ action: "config", config }, teamCommandContext(ctx));
 		await notifyCommandResult(ctx, commandText(result));
 	} });
 
@@ -332,7 +338,7 @@ export function registerTeamCommands(pi: ExtensionAPI, deps: RegisterTeamCommand
 		["team-validate", "validate", "Validate pi-crew agents, teams, and workflows"],
 		["team-doctor", "doctor", "Check pi-crew installation and discovery readiness"],
 	] as const) pi.registerCommand(name, { description, handler: async (_args: string, ctx: ExtensionCommandContext) => {
-		const result = await handleTeamTool({ action }, ctx);
+		const result = await handleTeamTool({ action }, teamCommandContext(ctx));
 		await notifyCommandResult(ctx, commandText(result));
 	} });
 

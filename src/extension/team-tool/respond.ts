@@ -20,22 +20,27 @@ export function handleRespond(params: TeamToolParamsValue, ctx: TeamContext): Pi
 	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "respond", status: "error" }, true);
 
 	return withRunLockSync(loaded.manifest, () => {
+		const fresh = loadRunManifestById(ctx.cwd, params.runId!);
+		if (!fresh) return result(`Run '${params.runId}' not found.`, { action: "respond", status: "error" }, true);
+		const foreignRun = typeof fresh.manifest.ownerSessionId === "string" && fresh.manifest.ownerSessionId !== ctx.sessionId;
+		if (foreignRun) return result(`Run ${fresh.manifest.runId} belongs to another session; not responding.`, { action: "respond", status: "error", runId: fresh.manifest.runId }, true);
+
 		const taskId = params.taskId;
 		const message = params.message ?? "";
 
 		const targetTasks = taskId
-			? loaded.tasks.filter((t) => t.id === taskId && t.status === "waiting")
-			: loaded.tasks.filter((t) => t.status === "waiting");
+			? fresh.tasks.filter((t) => t.id === taskId && t.status === "waiting")
+			: fresh.tasks.filter((t) => t.status === "waiting");
 
 		if (targetTasks.length === 0) {
-			const existing = taskId ? loaded.tasks.find((t) => t.id === taskId) : undefined;
+			const existing = taskId ? fresh.tasks.find((t) => t.id === taskId) : undefined;
 			return result(
 				taskId
 					? existing
 						? `Task '${taskId}' is ${existing.status}, not waiting.`
 						: `Task '${taskId}' not found.`
-					: `No waiting tasks in run ${loaded.manifest.runId}.`,
-				{ action: "respond", status: "error", runId: loaded.manifest.runId },
+					: `No waiting tasks in run ${fresh.manifest.runId}.`,
+				{ action: "respond", status: "error", runId: fresh.manifest.runId },
 				true,
 			);
 		}
@@ -43,7 +48,7 @@ export function handleRespond(params: TeamToolParamsValue, ctx: TeamContext): Pi
 		const resumed = new Set(targetTasks.map((t) => t.id));
 		const mailboxIds: string[] = [];
 		for (const task of targetTasks) {
-			const mailbox = appendMailboxMessage(loaded.manifest, {
+			const mailbox = appendMailboxMessage(fresh.manifest, {
 				direction: "inbox",
 				from: "leader",
 				to: task.id,
@@ -55,7 +60,7 @@ export function handleRespond(params: TeamToolParamsValue, ctx: TeamContext): Pi
 		}
 
 		// Transition waiting tasks back to running
-		const updatedTasks = loaded.tasks.map((task) => {
+		const updatedTasks = fresh.tasks.map((task) => {
 			if (!resumed.has(task.id)) return task;
 			return {
 				...task,
@@ -68,17 +73,17 @@ export function handleRespond(params: TeamToolParamsValue, ctx: TeamContext): Pi
 			};
 		});
 
-		saveRunTasks(loaded.manifest, updatedTasks);
+		saveRunTasks(fresh.manifest, updatedTasks);
 		try {
-			saveCrewAgents(loaded.manifest, updatedTasks.map((task) => recordFromTask(loaded.manifest, task, "child-process")));
+			saveCrewAgents(fresh.manifest, updatedTasks.map((task) => recordFromTask(fresh.manifest, task, "child-process")));
 		} catch (error) {
-			logInternalError("team-tool.handleRespond.crewAgents", error, `runId=${loaded.manifest.runId}`);
+			logInternalError("team-tool.handleRespond.crewAgents", error, `runId=${fresh.manifest.runId}`);
 		}
 
 		const resumedIds = targetTasks.map((t) => t.id);
 		return result(
 			`Resumed ${resumedIds.length} waiting task(s): ${resumedIds.join(", ")}. Message: ${message || "(no message)"}`,
-			{ action: "respond", status: "ok", runId: loaded.manifest.runId, resumedIds, mailboxIds } as never,
+			{ action: "respond", status: "ok", runId: fresh.manifest.runId, resumedIds, mailboxIds },
 		);
 	});
 }

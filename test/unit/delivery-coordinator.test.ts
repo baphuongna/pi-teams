@@ -102,11 +102,20 @@ describe("DeliveryCoordinator", () => {
 		dc.dispose();
 	});
 
-	it("requeues result when active emit throws", () => {
+	it("requeues result when active emit throws outside flush", () => {
 		const dc = new DeliveryCoordinator({ emit: () => { throw new Error("transient"); } });
 		dc.activate("session-1");
 		dc.deliverResult("run1", { status: "completed" });
 		assert.equal(dc.getPendingCount(), 1);
+		dc.dispose();
+	});
+
+	it("does not recursively requeue failing deliveries during flush", () => {
+		const dc = new DeliveryCoordinator({ emit: () => { throw new Error("persistent"); } });
+		dc.deliverResult("run1", { status: "completed" });
+		assert.equal(dc.getPendingCount(), 1);
+		dc.activate("session-1");
+		assert.equal(dc.getPendingCount(), 0);
 		dc.dispose();
 	});
 

@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { PiTeamsAutonomyProfileSchema, PiTeamsConfigSchema } from "../schema/config-schema.ts";
-import { projectCrewRoot } from "../utils/paths.ts";
+import { projectCrewRoot, projectPiRoot } from "../utils/paths.ts";
 
 export type PiTeamsAutonomyProfile = "manual" | "suggested" | "assisted" | "aggressive";
 
@@ -183,6 +183,11 @@ export interface UpdateConfigOptions {
 
 export function configPath(): string {
 	const home = process.env.PI_TEAMS_HOME?.trim() || os.homedir();
+	return path.join(home, ".pi", "agent", "pi-crew.json");
+}
+
+export function legacyConfigPath(): string {
+	const home = process.env.PI_TEAMS_HOME?.trim() || os.homedir();
 	return path.join(home, ".pi", "agent", "extensions", "pi-crew", "config.json");
 }
 
@@ -195,7 +200,7 @@ export function projectConfigPath(cwd: string): string {
  * This is a convenience path alongside the standard `config.json` in crewRoot.
  */
 export function projectPiCrewJsonPath(cwd: string): string {
-	return path.join(cwd, ".pi", "pi-crew.json");
+	return path.join(projectPiRoot(cwd), "pi-crew.json");
 }
 
 function withoutUndefined<T extends Record<string, unknown>>(value: T): Partial<T> {
@@ -727,35 +732,51 @@ function readConfigRecord(filePath: string): Record<string, unknown> {
 	return raw as Record<string, unknown>;
 }
 
-export function loadConfig(cwd?: string): LoadedPiTeamsConfig {
-	const filePath = configPath();
-	const paths = cwd ? [filePath, projectConfigPath(cwd)] : [filePath];
+function readOptionalConfig(filePath: string): { exists: boolean; config: PiTeamsConfig; warnings: string[] } {
+	if (!fs.existsSync(filePath)) return { exists: false, config: {}, warnings: [] };
 	try {
-		const userRaw = readConfigRecord(filePath);
-		const userConfig = parseConfigWithWarnings(userRaw);
-		let config = userConfig.config;
-		const warnings: string[] = userConfig.warnings.map((warning) => `${filePath}: ${warning}`);
-		if (cwd) {
-			const projectPath = projectConfigPath(cwd);
-			const projectConfig = parseConfigWithWarnings(readConfigRecord(projectPath));
-			const projectSafeConfig = sanitizeProjectConfig(projectPath, config, projectConfig.config);
-			warnings.push(...projectConfig.warnings.map((warning) => `${projectPath}: ${warning}`), ...projectSafeConfig.warnings);
-			config = mergeConfig(config, projectSafeConfig.config);
-			// Also load .pi/pi-crew.json from project root if it exists
-			const piCrewJsonPath = projectPiCrewJsonPath(cwd);
-			if (fs.existsSync(piCrewJsonPath)) {
-				const piCrewJsonConfig = parseConfigWithWarnings(readConfigRecord(piCrewJsonPath));
-				const piCrewJsonSafeConfig = sanitizeProjectConfig(piCrewJsonPath, config, piCrewJsonConfig.config);
-				warnings.push(...piCrewJsonConfig.warnings.map((warning) => `${piCrewJsonPath}: ${warning}`), ...piCrewJsonSafeConfig.warnings);
-				config = mergeConfig(config, piCrewJsonSafeConfig.config);
-				paths.push(piCrewJsonPath);
-			}
-		}
-		return { path: filePath, paths, config, warnings: warnings.length > 0 ? warnings : undefined };
+		const raw = readConfigRecord(filePath);
+		const parsed = parseConfigWithWarnings(raw);
+		return { exists: true, config: parsed.config, warnings: parsed.warnings.map((warning) => `${filePath}: ${warning}`) };
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		return { path: filePath, paths, config: {}, error: message };
+		return { exists: true, config: {}, warnings: [`${filePath}: invalid config ignored: ${message}`] };
 	}
+}
+
+export function loadConfig(cwd?: string): LoadedPiTeamsConfig {
+	const filePath = configPath();
+	const legacyPath = legacyConfigPath();
+	const paths = cwd ? [filePath, projectConfigPath(cwd)] : [filePath];
+	const warnings: string[] = [];
+	const legacyConfig = readOptionalConfig(legacyPath);
+	if (legacyConfig.exists && legacyPath !== filePath) {
+		warnings.push(...legacyConfig.warnings);
+		paths.unshift(legacyPath);
+	}
+	const userConfig = readOptionalConfig(filePath);
+	warnings.push(...userConfig.warnings);
+	let config = mergeConfig(legacyConfig.exists && legacyPath !== filePath ? legacyConfig.config : {}, userConfig.config);
+	if (cwd) {
+		const projectPath = projectConfigPath(cwd);
+		const projectConfig = readOptionalConfig(projectPath);
+		if (projectConfig.exists) {
+			const projectSafeConfig = sanitizeProjectConfig(projectPath, config, projectConfig.config);
+			warnings.push(...projectConfig.warnings, ...projectSafeConfig.warnings);
+			config = mergeConfig(config, projectSafeConfig.config);
+		}
+		// `.pi/pi-crew.json` is the project-owned override file. If present and valid,
+		// it may override all pi-crew config fields, including agents.overrides.
+		// If missing or invalid, it is ignored and defaults/user config remain effective.
+		const piCrewJsonPath = projectPiCrewJsonPath(cwd);
+		const piCrewJsonConfig = readOptionalConfig(piCrewJsonPath);
+		if (piCrewJsonConfig.exists) {
+			warnings.push(...piCrewJsonConfig.warnings);
+			config = mergeConfig(config, piCrewJsonConfig.config);
+			paths.push(piCrewJsonPath);
+		}
+	}
+	return { path: filePath, paths, config, warnings: warnings.length > 0 ? warnings : undefined };
 }
 
 export function updateConfig(patch: PiTeamsConfig, options: UpdateConfigOptions = {}): SavedPiTeamsConfig {

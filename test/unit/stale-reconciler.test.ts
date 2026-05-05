@@ -72,6 +72,7 @@ describe("reconcileStaleRun", () => {
 		const result = reconcileStaleRun(manifest, [runningTask], Date.now());
 		assert.equal(result.verdict, "no_status");
 		assert.equal(result.repaired, true);
+		assert.equal(result.repairedTasks?.[0]?.status, "cancelled");
 	});
 
 	it("returns healthy for alive PID with recent update", () => {

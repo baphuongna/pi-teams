@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 
 const SkillOverride = Type.Unsafe({
-	description: "Skill name(s) to inject, array of skill names, or false to disable role defaults.",
+	description: "Skill name(s) to add to role/default skills, an array of skill names, or false to disable all injected skills for this run.",
 	anyOf: [
 		{ type: "string" },
 		{ type: "array", items: { type: "string" } },

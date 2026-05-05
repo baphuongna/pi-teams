@@ -7,12 +7,12 @@ import { handleRespond } from "../../src/extension/team-tool/respond.ts";
 import { readMailbox } from "../../src/state/mailbox.ts";
 import { createRunManifest, loadRunManifestById, saveRunTasks } from "../../src/state/state-store.ts";
 
-function createRun(): { cwd: string; runId: string; manifest: ReturnType<typeof createRunManifest>["manifest"] } {
+function createRun(ownerSessionId?: string): { cwd: string; runId: string; manifest: ReturnType<typeof createRunManifest>["manifest"] } {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-respond-"));
 	fs.mkdirSync(path.join(cwd, ".crew"), { recursive: true });
 	const team = { name: "respond", description: "", roles: [{ name: "worker", agent: "worker" }], source: "test", filePath: "builtin" } as never;
 	const workflow = { name: "wf", description: "", steps: [{ id: "one", role: "worker" }], source: "test", filePath: "builtin" } as never;
-	const created = createRunManifest({ cwd, team, workflow, goal: "respond" });
+	const created = createRunManifest({ cwd, team, workflow, goal: "respond", ownerSessionId });
 	return { cwd, runId: created.manifest.runId, manifest: created.manifest };
 }
 
@@ -32,6 +32,37 @@ test("handleRespond writes task mailbox and resumes only waiting task", () => {
 		assert.equal(mailbox.length, 1);
 		assert.equal(mailbox[0]?.body, "continue");
 		assert.equal(mailbox[0]?.taskId, "wait");
+	} finally {
+		fs.rmSync(run.cwd, { recursive: true, force: true });
+	}
+});
+
+test("handleRespond rejects foreign owned run", () => {
+	const run = createRun("owner-session");
+	try {
+		saveRunTasks(run.manifest, [
+			{ id: "wait", runId: run.runId, role: "worker", agent: "worker", title: "wait", status: "waiting", dependsOn: [], cwd: run.cwd },
+		]);
+		const out = handleRespond({ action: "respond", runId: run.runId, taskId: "wait", message: "continue" }, { cwd: run.cwd, sessionId: "other-session" });
+		assert.equal(out.isError, true);
+		const loaded = loadRunManifestById(run.cwd, run.runId);
+		assert.equal(loaded?.tasks.find((task) => task.id === "wait")?.status, "waiting");
+		assert.equal(readMailbox(run.manifest, "inbox", "wait").length, 0);
+	} finally {
+		fs.rmSync(run.cwd, { recursive: true, force: true });
+	}
+});
+
+test("handleRespond allows owning session", () => {
+	const run = createRun("owner-session");
+	try {
+		saveRunTasks(run.manifest, [
+			{ id: "wait", runId: run.runId, role: "worker", agent: "worker", title: "wait", status: "waiting", dependsOn: [], cwd: run.cwd },
+		]);
+		const out = handleRespond({ action: "respond", runId: run.runId, taskId: "wait", message: "continue" }, { cwd: run.cwd, sessionId: "owner-session" });
+		assert.equal(out.isError, false);
+		const loaded = loadRunManifestById(run.cwd, run.runId);
+		assert.equal(loaded?.tasks.find((task) => task.id === "wait")?.status, "running");
 	} finally {
 		fs.rmSync(run.cwd, { recursive: true, force: true });
 	}

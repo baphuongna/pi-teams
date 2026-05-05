@@ -1,9 +1,5 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
 import type { TeamRunManifest, TeamTaskState } from "../state/types.ts";
 import { checkProcessLiveness } from "./process-status.ts";
-import { logInternalError } from "../utils/internal-error.ts";
-import { writeAtomicJson } from "../utils/atomic-write.ts";
 
 /**
  * Result of reconciling a single stale run.
@@ -16,6 +12,8 @@ export interface ReconcileResult {
 	repaired: boolean;
 	/** Human-readable detail */
 	detail: string;
+	/** Repaired task state, returned to a locked caller for persistence. */
+	repairedTasks?: TeamTaskState[];
 }
 
 const STALE_ALIVE_PID_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -106,16 +104,6 @@ function repairStaleRun(
 		return task;
 	});
 
-	// Write repaired tasks atomically
-	const tasksPath = manifest.tasksPath;
-	if (tasksPath) {
-		try {
-			writeAtomicJson(tasksPath, repairedTasks);
-		} catch (error) {
-			logInternalError("stale-reconciler.repair-tasks", error, `runId=${manifest.runId}`);
-		}
-	}
-
 	return repairedTasks;
 }
 
@@ -167,6 +155,7 @@ export function reconcileStaleRun(
 				verdict: "no_status",
 				repaired: true,
 				detail: `No PID; stale ${Math.round((now - updatedAt) / 3600_000)}h; repaired ${repaired.filter((t) => t.status === "cancelled").length} tasks`,
+				repairedTasks: repaired,
 			};
 		}
 		return {
@@ -195,5 +184,6 @@ export function reconcileStaleRun(
 		verdict: pidStatus.alive ? "pid_alive_stale" : "pid_dead",
 		repaired: true,
 		detail: `PID ${pid}: ${pidStatus.detail}; ${staleness.reason}; repaired ${repaired.filter((t) => t.status === "cancelled").length} tasks`,
+		repairedTasks: repaired,
 	};
 }

@@ -1,7 +1,7 @@
 ---
 name: test-engineer
 description: Design and implement test strategy for a change
-model: claude-sonnet-4-5
+model: false
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false

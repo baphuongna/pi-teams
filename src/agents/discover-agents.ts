@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentConfig, ResourceSource } from "./agent-config.ts";
-import { loadConfig } from "../config/config.ts";
+import { loadConfig, type LoadedPiTeamsConfig } from "../config/config.ts";
 import { parseCsv, parseFrontmatter } from "../utils/frontmatter.ts";
 import { packageRoot, projectCrewRoot, userPiRoot } from "../utils/paths.ts";
 
@@ -36,9 +36,9 @@ function parseAgentFile(filePath: string, source: ResourceSource): AgentConfig |
 			source,
 			filePath,
 			systemPrompt: body.trim(),
-			model: frontmatter.model || undefined,
+			model: frontmatter.model === "false" ? undefined : frontmatter.model || undefined,
 			fallbackModels: parseCsv(frontmatter.fallbackModels),
-			thinking: frontmatter.thinking || undefined,
+			thinking: frontmatter.thinking === "false" ? undefined : frontmatter.thinking || undefined,
 			tools: parseCsv(frontmatter.tools),
 			extensions: frontmatter.extensions === "" ? [] : parseCsv(frontmatter.extensions),
 			skills: parseCsv(frontmatter.skills ?? frontmatter.skill),
@@ -63,12 +63,12 @@ function readAgentDir(dir: string, source: ResourceSource): AgentConfig[] {
 		.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function applyAgentOverrides(agents: AgentConfig[], cwd: string): AgentConfig[] {
-	const loaded = loadConfig(cwd);
-	const config = loaded.config.agents;
-	const overrides = config?.overrides ?? {};
+function applyAgentOverrides(agents: AgentConfig[], cwd: string, loadedConfig?: LoadedPiTeamsConfig): AgentConfig[] {
+	const loaded = loadedConfig ?? loadConfig(cwd);
+	const agentsConfig = loaded.config.agents;
+	const overrides = agentsConfig?.overrides ?? {};
 	return agents
-		.filter((agent) => !(config?.disableBuiltins && agent.source === "builtin"))
+		.filter((agent) => !(agentsConfig?.disableBuiltins && agent.source === "builtin"))
 		.map((agent) => {
 			const overrideEntry = Object.entries(overrides).find(([name]) => name.toLowerCase() === agent.name.toLowerCase());
 			if (!overrideEntry) return agent;
@@ -87,10 +87,11 @@ function applyAgentOverrides(agents: AgentConfig[], cwd: string): AgentConfig[] 
 }
 
 export function discoverAgents(cwd: string): AgentDiscoveryResult {
+	const loaded = loadConfig(cwd);
 	return {
-		builtin: applyAgentOverrides(readAgentDir(path.join(packageRoot(), "agents"), "builtin"), cwd),
-		user: applyAgentOverrides(readAgentDir(path.join(userPiRoot(), "agents"), "user"), cwd),
-		project: applyAgentOverrides(readAgentDir(path.join(projectCrewRoot(cwd), "agents"), "project"), cwd),
+		builtin: applyAgentOverrides(readAgentDir(path.join(packageRoot(), "agents"), "builtin"), cwd, loaded),
+		user: applyAgentOverrides(readAgentDir(path.join(userPiRoot(), "agents"), "user"), cwd, loaded),
+		project: applyAgentOverrides(readAgentDir(path.join(projectCrewRoot(cwd), "agents"), "project"), cwd, loaded),
 	};
 }
 

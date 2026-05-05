@@ -36,7 +36,7 @@ function inputDependencyContext(task: TeamTaskState): string {
 	return (task as TeamTaskState & { dependencyContextText?: string }).dependencyContextText ?? "";
 }
 
-export function renderTaskPrompt(manifest: TeamRunManifest, step: WorkflowStep, task: TeamTaskState, agent?: AgentConfig): string {
+export function renderTaskPrompt(manifest: TeamRunManifest, step: WorkflowStep, task: TeamTaskState, agent?: AgentConfig, skillBlock = ""): string {
 	const memoryBlock = agent?.memory ? buildMemoryBlock(agent.name, agent.memory, task.cwd, Boolean(agent.tools?.some((tool) => tool === "write" || tool === "edit"))) : "";
 	return [
 		"# pi-crew Worker Runtime Context",
@@ -64,6 +64,8 @@ export function renderTaskPrompt(manifest: TeamRunManifest, step: WorkflowStep, 
 		readOnlyRoleInstructions(task.role),
 		"",
 		coordinationBridgeInstructions(task),
+		"",
+		skillBlock,
 		"",
 		task.taskPacket ? renderTaskPacket(task.taskPacket) : "",
 		"",

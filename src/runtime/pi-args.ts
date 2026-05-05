@@ -24,10 +24,16 @@ export interface BuildPiWorkerArgsResult {
 	tempDir?: string;
 }
 
+function isValidThinkingLevel(value: string | undefined): value is string {
+	return value !== undefined && THINKING_LEVELS.includes(value);
+}
+
 export function applyThinkingSuffix(model: string | undefined, thinking: string | undefined): string | undefined {
 	if (!model || !thinking || thinking === "off") return model;
 	const colonIdx = model.lastIndexOf(":");
-	if (colonIdx !== -1 && THINKING_LEVELS.includes(model.substring(colonIdx + 1))) return model;
+	if (colonIdx !== -1 && isValidThinkingLevel(model.substring(colonIdx + 1))) return model;
+	// Invalid config values fall back to Pi's default thinking behavior.
+	if (!isValidThinkingLevel(thinking)) return model;
 	return `${model}:${thinking}`;
 }
 
@@ -54,8 +60,15 @@ export function buildPiWorkerArgs(input: BuildPiWorkerArgsInput): BuildPiWorkerA
 	const args = ["--mode", "json", "-p"];
 	if (input.sessionEnabled === false) args.push("--no-session");
 
-	const model = applyThinkingSuffix(input.model ?? input.agent.model, input.agent.thinking);
-	if (model) args.push("--model", model);
+	const resolvedModel = input.model ?? input.agent.model;
+	if (resolvedModel) {
+		const modelWithThinking = applyThinkingSuffix(resolvedModel, input.agent.thinking);
+		if (modelWithThinking) args.push("--model", modelWithThinking);
+	}
+	// When no model resolved, pass thinking separately so Pi can apply it to the inherited parent model.
+	if (!resolvedModel && input.agent.thinking && input.agent.thinking !== "off" && isValidThinkingLevel(input.agent.thinking)) {
+		args.push("--thinking", input.agent.thinking);
+	}
 
 	if (input.agent.tools?.length) args.push("--tools", input.agent.tools.join(","));
 	if (input.agent.extensions !== undefined) {

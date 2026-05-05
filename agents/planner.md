@@ -1,7 +1,7 @@
 ---
 name: planner
 description: Create an execution plan with clear sequencing and risk notes
-model: claude-sonnet-4-5
+model: false
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false

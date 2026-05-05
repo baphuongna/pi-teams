@@ -1,10 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { packageRoot, projectCrewRoot } from "../utils/paths.ts";
+import { configPath as globalConfigPath } from "../config/config.ts";
+import { packageRoot, projectCrewRoot, projectPiRoot } from "../utils/paths.ts";
 
 export interface ProjectInitOptions {
 	copyBuiltins?: boolean;
 	overwrite?: boolean;
+	configScope?: "global" | "project" | "none";
 }
 
 export interface ProjectInitResult {
@@ -13,6 +15,10 @@ export interface ProjectInitResult {
 	skippedFiles: string[];
 	gitignorePath: string;
 	gitignoreUpdated: boolean;
+	configPath: string;
+	configScope: "global" | "project" | "none";
+	configCreated: boolean;
+	configSkipped: boolean;
 }
 
 function ensureDir(dir: string, createdDirs: string[]): void {
@@ -23,6 +29,34 @@ function ensureDir(dir: string, createdDirs: string[]): void {
 		fs.mkdirSync(dir, { recursive: true });
 	}
 }
+
+const DEFAULT_PI_CREW_CONFIG = {
+	// Keep generated config non-invasive: do not set runtime/limits defaults here.
+	// Those are provided by pi-crew internals and should not make a normal workflow block.
+	autonomous: {
+		enabled: true,
+		injectPolicy: true,
+		preferAsyncForLongTasks: false,
+		allowWorktreeSuggestion: true,
+	},
+	agents: {
+		overrides: {
+			explorer: { model: false, thinking: "off" },
+			writer: { model: false, thinking: "off" },
+			planner: { model: false, thinking: "medium" },
+			analyst: { model: false, thinking: "off" },
+			critic: { model: false, thinking: "low" },
+			executor: { model: false, thinking: "medium" },
+			reviewer: { model: false, thinking: "off" },
+			"security-reviewer": { model: false, thinking: "medium" },
+			"test-engineer": { model: false, thinking: "low" },
+			verifier: { model: false, thinking: "off" },
+		},
+	},
+	ui: {
+		showModel: true,
+	},
+};
 
 function copyBuiltinDir(kind: "agents" | "teams" | "workflows", targetDir: string, overwrite: boolean, copiedFiles: string[], skippedFiles: string[]): void {
 	const sourceDir = path.join(packageRoot(), kind);
@@ -50,10 +84,25 @@ export function initializeProject(cwd: string, options: ProjectInitOptions = {})
 	const agentsDir = path.join(crewRoot, "agents");
 	const teamsDir = path.join(crewRoot, "teams");
 	const workflowsDir = path.join(crewRoot, "workflows");
+	const configScope = options.configScope ?? "global";
+	const configPath = configScope === "project" ? path.join(projectPiRoot(cwd), "pi-crew.json") : configScope === "global" ? globalConfigPath() : "";
 	ensureDir(agentsDir, createdDirs);
 	ensureDir(teamsDir, createdDirs);
 	ensureDir(workflowsDir, createdDirs);
 	ensureDir(path.join(crewRoot, "imports"), createdDirs);
+
+	let configCreated = false;
+	let configSkipped = false;
+	if (configPath) {
+		if (configScope === "project") ensureDir(path.dirname(configPath), createdDirs);
+		else fs.mkdirSync(path.dirname(configPath), { recursive: true });
+		if (!fs.existsSync(configPath) || options.overwrite === true) {
+			fs.writeFileSync(configPath, `${JSON.stringify(DEFAULT_PI_CREW_CONFIG, null, 2)}\n`, "utf-8");
+			configCreated = true;
+		} else {
+			configSkipped = true;
+		}
+	}
 
 	if (options.copyBuiltins) {
 		copyBuiltinDir("agents", agentsDir, options.overwrite === true, copiedFiles, skippedFiles);
@@ -72,5 +121,5 @@ export function initializeProject(cwd: string, options: ProjectInitOptions = {})
 		gitignoreUpdated = true;
 	}
 
-	return { createdDirs, copiedFiles, skippedFiles, gitignorePath, gitignoreUpdated };
+	return { createdDirs, copiedFiles, skippedFiles, gitignorePath, gitignoreUpdated, configPath, configScope, configCreated, configSkipped };
 }

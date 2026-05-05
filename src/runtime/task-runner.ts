@@ -43,8 +43,11 @@ export interface TaskRunnerInput {
 	parentModel?: unknown;
 	modelRegistry?: unknown;
 	modelOverride?: string;
+	teamRoleModel?: string;
 	limits?: CrewLimitsConfig;
 	dependencyContextText?: string;
+	skillBlock?: string;
+	skillNames?: string[];
 	/** Optional callback for JSON events from child Pi. Used for overflow recovery tracking. */
 	onJsonEvent?: (taskId: string, runId: string, event: unknown) => void;
 }
@@ -76,7 +79,7 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 	appendEvent(manifest.eventsPath, { type: "task.started", runId: manifest.runId, taskId: task.id, data: { role: task.role, agent: task.agent, runtime: runtimeKind, cwd: task.cwd, worktreePath: workspace.worktreePath, worktreeBranch: workspace.branch, worktreeReused: workspace.reused } });
 	const permissionMode = permissionForRole(task.role);
 
-	const prompt = renderTaskPrompt(manifest, input.step, task, input.agent);
+	const prompt = renderTaskPrompt(manifest, input.step, task, input.agent, input.skillBlock);
 	const promptArtifact = writeArtifact(manifest.artifactsRoot, {
 		kind: "prompt",
 		relativePath: `prompts/${task.id}.md`,
@@ -96,6 +99,12 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 
 	let startupEvidence = createStartupEvidence({ command: runtimeKind === "child-process" ? "pi" : runtimeKind === "live-session" ? "live-session" : "safe-scaffold", startedAt: new Date(task.startedAt ?? new Date().toISOString()), finishedAt: new Date(), promptSentAt: new Date(task.startedAt ?? new Date().toISOString()), promptAccepted: true, exitCode: 0 });
 	const inputsArtifact = writeTaskInputsArtifact(manifest, task, dependencyContext);
+	const skillArtifact = input.skillBlock ? writeArtifact(manifest.artifactsRoot, {
+		kind: "metadata",
+		relativePath: `metadata/${task.id}.skills.md`,
+		content: [`Selected skills: ${input.skillNames?.join(", ") ?? "(none)"}`, "", input.skillBlock, ""].join("\n"),
+		producer: task.id,
+	}) : undefined;
 	const coordinationArtifact = writeArtifact(manifest.artifactsRoot, {
 		kind: "metadata",
 		relativePath: `metadata/${task.id}.coordination-bridge.md`,
@@ -103,7 +112,7 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 		producer: task.id,
 	});
 	if (runtimeKind === "child-process") {
-		const modelRoutingPlan = buildConfiguredModelRouting({ overrideModel: input.modelOverride, stepModel: input.step.model, agentModel: input.agent.model, fallbackModels: input.agent.fallbackModels, parentModel: input.parentModel, modelRegistry: input.modelRegistry, cwd: manifest.cwd });
+		const modelRoutingPlan = buildConfiguredModelRouting({ overrideModel: input.modelOverride, stepModel: input.step.model, teamRoleModel: input.teamRoleModel, agentModel: input.agent.model, fallbackModels: input.agent.fallbackModels, parentModel: input.parentModel, modelRegistry: input.modelRegistry, cwd: manifest.cwd });
 		const candidates = modelRoutingPlan.candidates;
 		const attemptModels = candidates.length > 0 ? candidates : [undefined];
 		const logs: string[] = [];
@@ -238,7 +247,7 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 		({ task, tasks } = checkpointTask(manifest, tasks, task, "artifact-written"));
 	} else if (runtimeKind === "live-session") {
 		const { runLiveTask } = await import("./task-runner/live-executor.ts");
-		const live = await runLiveTask({ manifest, tasks, task, step: input.step, agent: input.agent, prompt, signal: input.signal, runtimeConfig: input.runtimeConfig, parentContext: input.parentContext, parentModel: input.parentModel, modelRegistry: input.modelRegistry });
+		const live = await runLiveTask({ manifest, tasks, task, step: input.step, agent: input.agent, prompt, signal: input.signal, runtimeConfig: input.runtimeConfig, parentContext: input.parentContext, parentModel: input.parentModel, modelRegistry: input.modelRegistry, modelOverride: input.modelOverride, teamRoleModel: input.teamRoleModel });
 		task = live.task;
 		tasks = live.tasks;
 		startupEvidence = live.startupEvidence;
@@ -339,7 +348,7 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 		content: `${JSON.stringify({ role: task.role, permissionMode }, null, 2)}\n`,
 		producer: task.id,
 	});
-	manifest = { ...manifest, updatedAt: new Date().toISOString(), artifacts: [...manifest.artifacts, promptArtifact, resultArtifact, inputsArtifact, coordinationArtifact, packetArtifact, verificationArtifact, startupArtifact, permissionArtifact, ...(sharedOutputArtifact ? [sharedOutputArtifact] : []), ...(logArtifact ? [logArtifact] : []), ...(transcriptArtifact ? [transcriptArtifact] : []), ...(diffArtifact ? [diffArtifact] : []), ...(diffStatArtifact ? [diffStatArtifact] : [])] };
+	manifest = { ...manifest, updatedAt: new Date().toISOString(), artifacts: [...manifest.artifacts, promptArtifact, resultArtifact, inputsArtifact, coordinationArtifact, ...(skillArtifact ? [skillArtifact] : []), packetArtifact, verificationArtifact, startupArtifact, permissionArtifact, ...(sharedOutputArtifact ? [sharedOutputArtifact] : []), ...(logArtifact ? [logArtifact] : []), ...(transcriptArtifact ? [transcriptArtifact] : []), ...(diffArtifact ? [diffArtifact] : []), ...(diffStatArtifact ? [diffStatArtifact] : [])] };
 	saveRunManifest(manifest);
 	tasks = persistSingleTaskUpdate(manifest, tasks, task);
 	upsertCrewAgent(manifest, recordFromTask(manifest, task, runtimeKind));
