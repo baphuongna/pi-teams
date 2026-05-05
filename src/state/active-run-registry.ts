@@ -18,6 +18,78 @@ function registryPath(): string {
 	return path.join(userCrewRoot(), DEFAULT_PATHS.state.runsSubdir, "active-run-index.json");
 }
 
+function registryLockPath(): string {
+	return `${registryPath()}.lock`;
+}
+
+function sleepSync(ms: number): void {
+	try {
+		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+	} catch {
+		const deadline = Date.now() + ms;
+		while (Date.now() < deadline) {
+			// Best-effort fallback for rare runtimes without Atomics.wait.
+		}
+	}
+}
+
+function lockCreatedAt(raw: string): number | undefined {
+	try {
+		const parsed = JSON.parse(raw) as { createdAt?: unknown };
+		if (typeof parsed.createdAt !== "string") return undefined;
+		const time = Date.parse(parsed.createdAt);
+		return Number.isNaN(time) ? undefined : time;
+	} catch {
+		return undefined;
+	}
+}
+
+function removeStaleRegistryLock(lockPath: string, staleMs: number): boolean {
+	try {
+		const stat = fs.statSync(lockPath);
+		const createdAt = lockCreatedAt(fs.readFileSync(lockPath, "utf-8")) ?? stat.mtimeMs;
+		if (Date.now() - createdAt <= staleMs) return false;
+		fs.rmSync(lockPath, { force: true });
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function withRegistryLock<T>(fn: () => T): T {
+	const filePath = registryLockPath();
+	const staleMs = 30_000;
+	fs.mkdirSync(path.dirname(filePath), { recursive: true });
+	let attempt = 0;
+	const deadline = Date.now() + staleMs * 2;
+	while (true) {
+		try {
+			const fd = fs.openSync(filePath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o644);
+			try {
+				fs.writeSync(fd, JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }));
+			} finally {
+				fs.closeSync(fd);
+			}
+			break;
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (code !== "EEXIST") throw error;
+			if (!removeStaleRegistryLock(filePath, staleMs) && Date.now() > deadline) throw new Error("Active-run registry is locked by another operation.");
+			sleepSync(Math.min(250, 25 * 2 ** attempt));
+			attempt += 1;
+		}
+	}
+	try {
+		return fn();
+	} finally {
+		try {
+			fs.rmSync(filePath, { force: true });
+		} catch {
+			// Best-effort cleanup.
+		}
+	}
+}
+
 function normalizeEntry(value: unknown): ActiveRunRegistryEntry | undefined {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
 	const record = value as Record<string, unknown>;
@@ -60,12 +132,16 @@ export function registerActiveRun(manifest: TeamRunManifest): void {
 		manifestPath: path.join(manifest.stateRoot, DEFAULT_PATHS.state.manifestFile),
 		updatedAt: manifest.updatedAt,
 	};
-	writeEntries([entry, ...readActiveRunRegistry().filter((item) => item.runId !== manifest.runId)]);
+	withRegistryLock(() => {
+		writeEntries([entry, ...readActiveRunRegistry().filter((item) => item.runId !== manifest.runId)]);
+	});
 }
 
 export function unregisterActiveRun(runId: string): void {
 	if (!isSafePathId(runId)) return;
-	writeEntries(readActiveRunRegistry().filter((entry) => entry.runId !== runId));
+	withRegistryLock(() => {
+		writeEntries(readActiveRunRegistry().filter((entry) => entry.runId !== runId));
+	});
 }
 
 export function activeRunEntries(): ActiveRunRegistryEntry[] {

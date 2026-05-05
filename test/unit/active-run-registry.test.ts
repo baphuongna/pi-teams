@@ -101,6 +101,25 @@ test("activeRunRoots skips entries with missing stateRoot", () => {
 	});
 });
 
+test("register recovers stale active-run registry lock", () => {
+	withIsolatedHome(() => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-active-stale-lock-"));
+		fs.mkdirSync(path.join(cwd, ".crew"), { recursive: true });
+		try {
+			const registryFile = path.join(process.env.PI_TEAMS_HOME!, ".pi", "agent", "extensions", "pi-crew", "state", "runs", "active-run-index.json");
+			const lockFile = `${registryFile}.lock`;
+			fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+			fs.writeFileSync(lockFile, JSON.stringify({ pid: 0, createdAt: "2000-01-01T00:00:00.000Z" }));
+			const created = createRunManifest({ cwd, team, workflow, goal: "stale lock" });
+			registerActiveRun(created.manifest);
+			assert.equal(readActiveRunRegistry().length, 1);
+			assert.equal(fs.existsSync(lockFile), false);
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+});
+
 test("unregister with invalid runId is a no-op", () => {
 	withIsolatedHome(() => {
 		unregisterActiveRun("../escape");
