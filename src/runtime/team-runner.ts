@@ -383,7 +383,24 @@ function formatTaskProgress(task: TeamTaskState): string {
 	return `- ${task.id}: ${task.status} (${task.role} -> ${task.agent})${task.taskPacket ? ` scope=${task.taskPacket.scope}` : ""}${task.verification ? ` green=${task.verification.observedGreenLevel}/${task.verification.requiredGreenLevel}` : ""}${task.error ? ` - ${task.error}` : ""}`;
 }
 
-function writeProgress(manifest: TeamRunManifest, tasks: TeamTaskState[], producer: string): TeamRunManifest {
+function taskObservedWork(task: TeamTaskState): boolean {
+	return Boolean((task.agentProgress?.toolCount ?? 0) > 0 || task.usage || task.transcriptArtifact || task.modelAttempts?.length || task.jsonEvents);
+}
+
+function runEffectivenessLines(tasks: TeamTaskState[], executeWorkers: boolean): string[] {
+	const completed = tasks.filter((task) => task.status === "completed");
+	const noObservedWork = completed.filter((task) => !taskObservedWork(task));
+	const needsAttention = tasks.filter((task) => task.agentProgress?.activityState === "needs_attention");
+	const score = completed.length ? Math.max(0, completed.length - noObservedWork.length - needsAttention.length) : 0;
+	return [
+		`Score: ${score}/${Math.max(1, completed.length)} completed task(s) with observable worker activity`,
+		`Worker execution: ${executeWorkers ? "enabled" : "disabled/scaffold"}`,
+		...(noObservedWork.length ? [`No observable worker activity: ${noObservedWork.map((task) => task.id).join(", ")}`] : ["No observable worker activity: none"]),
+		...(needsAttention.length ? [`Needs attention: ${needsAttention.map((task) => task.id).join(", ")}`] : ["Needs attention: none"]),
+	];
+}
+
+function writeProgress(manifest: TeamRunManifest, tasks: TeamTaskState[], producer: string, executeWorkers = true): TeamRunManifest {
 	const counts = new Map<string, number>();
 	for (const task of tasks) counts.set(task.status, (counts.get(task.status) ?? 0) + 1);
 	const queue = taskGraphSnapshot(tasks);
@@ -403,6 +420,9 @@ function writeProgress(manifest: TeamRunManifest, tasks: TeamTaskState[], produc
 			"",
 			"## Tasks",
 			...tasks.map(formatTaskProgress),
+			"",
+			"## Effectiveness",
+			...runEffectivenessLines(tasks, executeWorkers),
 			"",
 		].join("\n"),
 	});
@@ -531,7 +551,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 		manifest = updateRunStatus(manifest, "cancelled", "Plan approval was cancelled.");
 		return { manifest, tasks };
 	}
-	manifest = writeProgress(manifest, tasks, "team-runner");
+	manifest = writeProgress(manifest, tasks, "team-runner", input.executeWorkers);
 	await saveRunManifestAsync(manifest);
 	const runtimeKind = input.runtime?.kind ?? (input.executeWorkers ? "child-process" : "scaffold");
 	saveCrewAgents(manifest, recordsForMaterializedTasks(manifest, tasks, runtimeKind));
@@ -681,7 +701,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 		});
 		const groupDelivery = deliverGroupJoin({ manifest, mode: resolveGroupJoinMode(input.runtimeConfig), batch: readyBatch, allTasks: tasks });
 		manifest = { ...manifest, artifacts: mergeArtifacts([...manifest.artifacts, batchArtifact, ...(groupDelivery?.artifact ? [groupDelivery.artifact] : [])]) };
-		manifest = writeProgress(manifest, tasks, "team-runner");
+		manifest = writeProgress(manifest, tasks, "team-runner", input.executeWorkers);
 		await saveRunManifestAsync(manifest);
 	}
 
@@ -701,7 +721,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 	} else {
 		manifest = updateRunStatus(manifest, "completed", input.executeWorkers ? "Team workflow completed." : "Team workflow scaffold completed without launching child workers.");
 	}
-	manifest = writeProgress(manifest, tasks, "team-runner");
+	manifest = writeProgress(manifest, tasks, "team-runner", input.executeWorkers);
 	await saveRunManifestAsync(manifest);
 	const usage = aggregateUsage(tasks);
 	const summaryArtifact = writeArtifact(manifest.artifactsRoot, {
@@ -719,6 +739,9 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 			"",
 			"## Tasks",
 			...tasks.map(formatTaskProgress),
+			"",
+			"## Effectiveness",
+			...runEffectivenessLines(tasks, input.executeWorkers),
 			"",
 			"## Policy decisions",
 			...(manifest.policyDecisions?.length ? summarizePolicyDecisions(manifest.policyDecisions) : ["- (none)"]),

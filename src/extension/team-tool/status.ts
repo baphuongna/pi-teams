@@ -51,6 +51,9 @@ export function handleStatus(params: TeamToolParamsValue, ctx: TeamContext): PiT
 		groupJoinLines.push(`- ${String(message.data?.partial) === "true" ? "partial" : "completed"} request=${requestId} message=${message.id} ack=${timedOut ? "timeout" : ack}`);
 	}
 	const totalUsage = aggregateUsage(tasks);
+	const completedTasks = tasks.filter((task) => task.status === "completed");
+	const noObservedWorkTasks = completedTasks.filter((task) => !((task.agentProgress?.toolCount ?? 0) > 0 || task.usage || task.transcriptArtifact || task.modelAttempts?.length || task.jsonEvents));
+	const attentionTasks = tasks.filter((task) => task.agentProgress?.activityState === "needs_attention");
 	const activeAgents = crewAgents.filter((agent) => agent.status === "running");
 	const completedAgents = crewAgents.filter((agent) => agent.status !== "running");
 	const waitingTasks = tasks.filter((task) => task.status === "queued" || task.status === "waiting");
@@ -72,7 +75,11 @@ export function handleStatus(params: TeamToolParamsValue, ctx: TeamContext): PiT
 		"Tasks:",
 		...(tasks.length ? tasks.map((task) => `- ${task.id} [${task.status}] ${task.role} -> ${task.agent}${task.taskPacket ? ` scope=${task.taskPacket.scope}` : ""}${task.verification ? ` green=${task.verification.observedGreenLevel}/${task.verification.requiredGreenLevel}` : ""}${task.modelAttempts?.length ? ` attempts=${task.modelAttempts.length}` : ""}${task.modelRouting ? ` modelRouting=${task.modelRouting.requested ? `${task.modelRouting.requested}->` : ""}${task.modelRouting.resolved}${task.modelRouting.usedAttempt ? ` attempt=${task.modelRouting.usedAttempt + 1}` : ""}` : ""}${task.agentProgress?.activityState ? ` activityState=${task.agentProgress.activityState}` : ""}${attentionByTask.get(task.id)?.data?.reason ? ` attention=${String(attentionByTask.get(task.id)?.data?.reason)}` : ""}${task.jsonEvents !== undefined ? ` jsonEvents=${task.jsonEvents}` : ""}${task.usage ? ` usage=${JSON.stringify(task.usage)}` : ""}${task.resultArtifact ? ` result=${task.resultArtifact.path}` : ""}${task.transcriptArtifact ? ` transcript=${task.transcriptArtifact.path}` : ""}${task.worktree ? ` worktree=${task.worktree.path}` : ""}${task.error ? ` error=${task.error}` : ""}`) : ["- (none)"]),
 		`Task counts: ${[...counts.entries()].map(([status, count]) => `${status}=${count}`).join(", ") || "none"}`,
-		"Completion verification:",
+		"Effectiveness:",
+		`- observable=${Math.max(0, completedTasks.length - noObservedWorkTasks.length - attentionTasks.length)}/${Math.max(1, completedTasks.length)} completed tasks`,
+		`- noObservedWork=${noObservedWorkTasks.length ? noObservedWorkTasks.map((task) => task.id).join(",") : "none"}`,
+		`- needsAttention=${attentionTasks.length ? attentionTasks.map((task) => task.id).join(",") : "none"}`,
+		"Completion verification",
 		...(tasks.filter((t) => t.status === "completed").length ? tasks.filter((t) => t.status === "completed").map((t) => {
 			const guard = verifyTaskCompletion(t, manifest);
 			return `- ${t.id} green=${guard.greenLevel}/3${guard.warnings.length ? ` warnings=[${guard.warnings.join(", ")}]` : ""}`;

@@ -16,7 +16,13 @@ test("summary action and summary artifact are created for runs", async () => {
 		assert.ok(runId);
 		const summaryPath = path.join(cwd, ".crew", "artifacts", runId!, "summary.md");
 		assert.ok(fs.existsSync(summaryPath));
-		assert.match(fs.readFileSync(summaryPath, "utf-8"), /# pi-crew run/);
+		const summaryText = fs.readFileSync(summaryPath, "utf-8");
+		assert.match(summaryText, /# pi-crew run/);
+		assert.match(summaryText, /## Effectiveness/);
+		assert.match(summaryText, /Worker execution: disabled\/scaffold/);
+		const status = await handleTeamTool({ action: "status", runId }, { cwd });
+		assert.equal(status.isError, false);
+		assert.match(firstText(status), /Effectiveness:/);
 		const summary = await handleTeamTool({ action: "summary", runId }, { cwd });
 		assert.equal(summary.isError, false);
 		assert.match(firstText(summary), /Summary for/);
