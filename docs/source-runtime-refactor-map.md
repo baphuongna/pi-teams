@@ -71,6 +71,7 @@ pi-crew alignment:
 Primary source for broader agent runtime, UI, extension, hook, skill, native process, and release patterns.
 
 Detailed distillation: `docs/research-oh-my-pi-distillation.md`.
+Next implementation roadmap: `docs/next-upgrade-roadmap.md`.
 
 Key patterns to apply:
 
@@ -95,6 +96,8 @@ Key patterns to apply:
 - [x] Persist subagent records and recover terminal results after restart.
 - [x] Fail fast for unrecoverable persisted records without `runId` instead of hanging.
 - [x] Persist direct-agent model override into task state for background/resume reconstruction.
+
+For the current prioritized upgrade backlog, see `docs/next-upgrade-roadmap.md`.
 
 ## Remaining larger subsystem work
 
