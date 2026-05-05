@@ -195,11 +195,11 @@ Supported config:
     "widgetPlacement": "aboveEditor",
     "widgetMaxLines": 8,
     "powerbar": true,
-    "dashboardPlacement": "right",
-    "dashboardWidth": 56,
+    "dashboardPlacement": "center",
+    "dashboardWidth": 72,
     "dashboardLiveRefreshMs": 1000,
     "autoOpenDashboard": false,
-    "autoOpenDashboardForForegroundRuns": true,
+    "autoOpenDashboardForForegroundRuns": false,
     "showModel": true,
     "showTokens": true,
     "showTools": true
@@ -252,8 +252,8 @@ Safety notes:
 UI notes:
 
 - `widgetPlacement`/`widgetMaxLines` keep the persistent active-run widget compact.
-- `dashboardPlacement: "right"` is the default for `/team-dashboard`; automatic overlay opening is opt-in because Pi custom overlays can be modal/focus-capturing in some terminals.
-- `autoOpenDashboard`/`autoOpenDashboardForForegroundRuns` control whether the live sidebar opens automatically.
+- `dashboardPlacement: "center"` is the default for `/team-dashboard`; set it to `"right"` only when you want a right-sidebar dashboard.
+- `autoOpenDashboard`/`autoOpenDashboardForForegroundRuns` control whether the live sidebar opens automatically. Both default to false so the compact widget above the input remains the primary live UI.
 - `dashboardLiveRefreshMs` controls the live sidebar refresh cadence.
 - `showModel`, `showTokens`, and `showTools` show worker model attempts, token usage, and tool activity in dashboard agent rows.
 

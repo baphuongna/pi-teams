@@ -53,6 +53,20 @@ export const DEFAULT_UI = {
 	refreshMs: 1000,
 	notifierIntervalMs: 5000,
 	widgetDefaultFrameMs: 1000,
+	widgetPlacement: "aboveEditor" as const,
+	widgetMaxLines: 8,
+	powerbar: true,
+	dashboardPlacement: "center" as const,
+	dashboardWidth: 72,
+	dashboardLiveRefreshMs: 1000,
+	autoOpenDashboard: false,
+	autoOpenDashboardForForegroundRuns: false,
+	showModel: true,
+	showTokens: true,
+	showTools: true,
+	transcriptTailBytes: 1024 * 1024,
+	mascotStyle: "cat" as const,
+	mascotEffect: "random" as const,
 };
 
 export const DEFAULT_NOTIFICATIONS = {

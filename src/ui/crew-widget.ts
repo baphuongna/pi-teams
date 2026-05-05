@@ -13,6 +13,7 @@ import { asCrewTheme, subscribeThemeChange } from "./theme-adapter.ts";
 import { Box, Text } from "./layout-primitives.ts";
 import { requestRender, setExtensionWidget } from "./pi-ui-compat.ts";
 import type { RunSnapshotCache, RunUiSnapshot } from "./snapshot-types.ts";
+import { DEFAULT_UI } from "../config/defaults.ts";
 
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const TOOL_LABELS: Record<string, string> = {
@@ -28,7 +29,7 @@ const LEGACY_WIDGET_KEY = "pi-crew";
 const WIDGET_KEY = "pi-crew-active";
 const STATUS_KEY = "pi-crew";
 
-const MAX_LINES_DEFAULT = 10;
+const MAX_LINES_DEFAULT = DEFAULT_UI.widgetMaxLines;
 const MAX_AGENTS_DISPLAY = 3;
 
 type WidgetComponent = { render(width: number): string[]; invalidate(): void };
@@ -290,7 +291,7 @@ export function updateCrewWidget(
 	const maxLines = config?.widgetMaxLines ?? MAX_LINES_DEFAULT;
 	const runs = activeWidgetRuns(ctx.cwd, manifestCache, snapshotCache, preloadedManifests);
 	const lines = buildCrewWidgetLines(ctx.cwd, state.frame, maxLines, runs, state.notificationCount ?? 0);
-	const placement = config?.widgetPlacement ?? "aboveEditor";
+	const placement = config?.widgetPlacement ?? DEFAULT_UI.widgetPlacement;
 	ctx.ui.setStatus(STATUS_KEY, lines.length ? statusSummary(runs) : undefined);
 	const shouldClearLegacy = state.legacyCleared !== true || state.lastPlacement !== placement;
 	if (shouldClearLegacy) {
@@ -341,7 +342,7 @@ export function stopCrewWidget(ctx: Pick<ExtensionContext, "hasUI" | "ui"> | und
 	if (state.interval) clearInterval(state.interval);
 	state.interval = undefined;
 	if (ctx?.hasUI) {
-		const placement = config?.widgetPlacement ?? "aboveEditor";
+		const placement = config?.widgetPlacement ?? DEFAULT_UI.widgetPlacement;
 		ctx.ui.setStatus(STATUS_KEY, undefined);
 		setExtensionWidget(ctx, LEGACY_WIDGET_KEY, undefined, { placement });
 		setExtensionWidget(ctx, WIDGET_KEY, undefined, { placement });

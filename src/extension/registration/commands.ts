@@ -16,6 +16,7 @@ import { MailboxDetailOverlay, type MailboxAction } from "../../ui/overlays/mail
 import { MailboxComposeOverlay, type MailboxComposeResult } from "../../ui/overlays/mailbox-compose-overlay.ts";
 import { AgentPickerOverlay } from "../../ui/overlays/agent-picker-overlay.ts";
 import { dispatchDiagnosticExport, dispatchHealthRecovery, dispatchKillStaleWorkers, dispatchMailboxAck, dispatchMailboxAckAll, dispatchMailboxCompose, dispatchMailboxNudge } from "../../ui/run-action-dispatcher.ts";
+import { DEFAULT_UI } from "../../config/defaults.ts";
 import { listRecentDiagnostic } from "../../runtime/diagnostic-export.ts";
 import { commandText, notifyCommandResult, parseRunArgs, parseScalar, pushUnset, setNestedConfig } from "./command-utils.ts";
 import { openTranscriptViewer, selectAgentTask } from "./viewers.ts";
@@ -257,8 +258,8 @@ export function registerTeamCommands(pi: ExtensionAPI, deps: RegisterTeamCommand
 		for (;;) {
 			const runs = deps.getManifestCache(ctx.cwd).list(50);
 			const uiConfig = loadConfig(ctx.cwd).config.ui;
-			const rightPanel = uiConfig?.dashboardPlacement !== "center";
-			const width = rightPanel ? Math.min(90, Math.max(40, uiConfig?.dashboardWidth ?? 56)) : "90%";
+			const rightPanel = (uiConfig?.dashboardPlacement ?? DEFAULT_UI.dashboardPlacement) === "right";
+			const width = rightPanel ? Math.min(90, Math.max(40, uiConfig?.dashboardWidth ?? DEFAULT_UI.dashboardWidth)) : "90%";
 			const selection = await ctx.ui.custom<RunDashboardSelection | undefined>((_tui, theme, _keybindings, done) => new RunDashboard(runs, done, theme, { placement: rightPanel ? "right" : "center", showModel: uiConfig?.showModel, showTokens: uiConfig?.showTokens, showTools: uiConfig?.showTools, snapshotCache: deps.getRunSnapshotCache?.(ctx.cwd), runProvider: () => deps.getManifestCache(ctx.cwd).list(50), registry: deps.getMetricRegistry?.() }), { overlay: true, overlayOptions: rightPanel ? { width, minWidth: 40, maxHeight: "100%", anchor: "top-right", offsetX: 0, offsetY: 0, margin: { top: 0, right: 0, bottom: 0, left: 0 } } : { width, maxHeight: "90%", anchor: "center", margin: 2 } });
 			if (!selection) return;
 			if (selection.action === "reload") continue;
@@ -290,8 +291,8 @@ export function registerTeamCommands(pi: ExtensionAPI, deps: RegisterTeamCommand
 		const uiConfig = loadConfig(ctx.cwd).config.ui;
 		const styleArg = tokens.find((t) => t === "cat" || t === "armin");
 		const effectArg = tokens.find((t) => ["random", "none", "typewriter", "scanline", "rain", "fade", "crt", "glitch", "dissolve"].includes(t));
-		const style = (styleArg as "cat" | "armin" | undefined) ?? uiConfig?.mascotStyle ?? "cat";
-		const effect = (effectArg as "random" | "none" | "typewriter" | "scanline" | "rain" | "fade" | "crt" | "glitch" | "dissolve" | undefined) ?? uiConfig?.mascotEffect ?? "random";
+		const style = (styleArg as "cat" | "armin" | undefined) ?? uiConfig?.mascotStyle ?? DEFAULT_UI.mascotStyle;
+		const effect = (effectArg as "random" | "none" | "typewriter" | "scanline" | "rain" | "fade" | "crt" | "glitch" | "dissolve" | undefined) ?? uiConfig?.mascotEffect ?? DEFAULT_UI.mascotEffect;
 		await ctx.ui.custom<undefined>((tui, theme, _keybindings, done) => new AnimatedMascot(theme, () => done(undefined), { frameIntervalMs: style === "armin" ? 33 : 180, autoCloseMs: 7000, requestRender: () => requestRenderTarget(tui), style, effect }), { overlay: true, overlayOptions: { width: style === "armin" ? 48 : 62, maxHeight: "85%", anchor: "center" } });
 	} });
 

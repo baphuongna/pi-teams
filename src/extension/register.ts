@@ -254,18 +254,18 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	const openLiveSidebar = (ctx: ExtensionContext, runId: string): void => {
 		const uiConfig = loadConfig(ctx.cwd).config.ui;
 		const autoOpen = uiConfig?.autoOpenDashboard === true;
-		const foregroundAutoOpen = uiConfig?.autoOpenDashboardForForegroundRuns !== false;
-		if (!ctx.hasUI || !autoOpen || !foregroundAutoOpen || (uiConfig?.dashboardPlacement ?? "right") !== "right") return;
+		const foregroundAutoOpen = uiConfig?.autoOpenDashboardForForegroundRuns ?? DEFAULT_UI.autoOpenDashboardForForegroundRuns;
+		if (!ctx.hasUI || !autoOpen || !foregroundAutoOpen || (uiConfig?.dashboardPlacement ?? DEFAULT_UI.dashboardPlacement) !== "right") return;
 		if (liveSidebarRunId === runId) return;
 		liveSidebarRunId = runId;
-		const widgetPlacement = uiConfig?.widgetPlacement ?? "aboveEditor";
+		const widgetPlacement = uiConfig?.widgetPlacement ?? DEFAULT_UI.widgetPlacement;
 		setExtensionWidget(ctx, "pi-crew", undefined, { placement: widgetPlacement });
 		setExtensionWidget(ctx, "pi-crew-active", undefined, { placement: widgetPlacement });
 		widgetState.lastVisibility = "hidden";
 		widgetState.lastPlacement = widgetPlacement;
 		widgetState.lastKey = "pi-crew-active";
 		widgetState.model = undefined;
-		const width = Math.min(90, Math.max(40, uiConfig?.dashboardWidth ?? 56));
+		const width = Math.min(90, Math.max(40, uiConfig?.dashboardWidth ?? DEFAULT_UI.dashboardWidth));
 		void showCustom<undefined>(ctx, (_tui, theme, _keybindings, done) => new LiveRunSidebar({ cwd: ctx.cwd, runId, done, theme, config: uiConfig, snapshotCache: getRunSnapshotCache(ctx.cwd) }), {
 			overlay: true,
 			overlayOptions: { width, minWidth: 40, maxHeight: "100%", anchor: "top-right", offsetX: 0, offsetY: 0, margin: { top: 0, right: 0, bottom: 0, left: 0 }, visible: (termWidth: number) => termWidth >= 100 },
@@ -461,7 +461,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 			const snapshotCache = lastFrameSnapshotCache ?? getRunSnapshotCache(currentCtx.cwd);
 			const manifests = lastPreloadedManifests.length > 0 ? lastPreloadedManifests : activeCache.list(20);
 			if (liveSidebarRunId) {
-				const placement = config?.widgetPlacement ?? "aboveEditor";
+				const placement = config?.widgetPlacement ?? DEFAULT_UI.widgetPlacement;
 				if (widgetState.lastVisibility !== "hidden" || widgetState.lastPlacement !== placement) {
 					setExtensionWidget(currentCtx, "pi-crew", undefined, { placement });
 					setExtensionWidget(currentCtx, "pi-crew-active", undefined, { placement });

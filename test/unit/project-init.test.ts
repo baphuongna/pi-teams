@@ -24,7 +24,15 @@ test("project init creates directories and gitignore entries idempotently", asyn
 		const config = JSON.parse(fs.readFileSync(path.join(cwd, ".pi", "agent", "pi-crew.json"), "utf-8"));
 		assert.equal(config.agents.overrides.explorer.model, false);
 		assert.equal(config.agents.overrides.executor.thinking, "medium");
+		assert.equal(config.ui.widgetPlacement, "aboveEditor");
+		assert.equal(config.ui.widgetMaxLines, 8);
+		assert.equal(config.ui.dashboardPlacement, "center");
+		assert.equal(config.ui.dashboardWidth, 72);
+		assert.equal(config.ui.autoOpenDashboard, false);
+		assert.equal(config.ui.autoOpenDashboardForForegroundRuns, false);
 		assert.equal(config.ui.showModel, true);
+		assert.equal(config.ui.showTokens, true);
+		assert.equal(config.ui.showTools, true);
 		const gitignore = fs.readFileSync(path.join(cwd, ".gitignore"), "utf-8");
 		assert.match(gitignore, /\.crew\/state\//);
 		const second = initializeProject(cwd);

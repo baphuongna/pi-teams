@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { configPath as globalConfigPath } from "../config/config.ts";
+import { DEFAULT_UI } from "../config/defaults.ts";
 import { packageRoot, projectCrewRoot, projectPiRoot } from "../utils/paths.ts";
 
 export interface ProjectInitOptions {
@@ -54,7 +55,17 @@ const DEFAULT_PI_CREW_CONFIG = {
 		},
 	},
 	ui: {
-		showModel: true,
+		widgetPlacement: DEFAULT_UI.widgetPlacement,
+		widgetMaxLines: DEFAULT_UI.widgetMaxLines,
+		powerbar: DEFAULT_UI.powerbar,
+		dashboardPlacement: DEFAULT_UI.dashboardPlacement,
+		dashboardWidth: DEFAULT_UI.dashboardWidth,
+		dashboardLiveRefreshMs: DEFAULT_UI.dashboardLiveRefreshMs,
+		autoOpenDashboard: DEFAULT_UI.autoOpenDashboard,
+		autoOpenDashboardForForegroundRuns: DEFAULT_UI.autoOpenDashboardForForegroundRuns,
+		showModel: DEFAULT_UI.showModel,
+		showTokens: DEFAULT_UI.showTokens,
+		showTools: DEFAULT_UI.showTools,
 	},
 };
 
