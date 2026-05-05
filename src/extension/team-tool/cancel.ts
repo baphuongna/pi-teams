@@ -57,11 +57,23 @@ export function abortOwned(
 	return result;
 }
 
+function configFromParams(params: TeamToolParamsValue): Record<string, unknown> | undefined {
+	return params.config && typeof params.config === "object" && !Array.isArray(params.config) ? params.config : undefined;
+}
+
 function cancelReasonFromParams(params: TeamToolParamsValue): { code: string; message: string } {
-	const config = params.config && typeof params.config === "object" && !Array.isArray(params.config) ? params.config : undefined;
+	const config = configFromParams(params);
 	const rawReason = config?.reason ?? config?.cancelReason;
 	const reason = rawReason === undefined ? { code: "caller_cancelled" as const, message: "Run cancelled by user request." } : cancellationReasonFromUnknown(rawReason);
 	return { code: reason.code, message: reason.message };
+}
+
+function intentFromParams(params: TeamToolParamsValue): string | undefined {
+	const config = configFromParams(params);
+	const rawIntent = config?.intent ?? config?._intent;
+	if (typeof rawIntent !== "string") return undefined;
+	const intent = rawIntent.replace(/\s+/g, " ").trim();
+	return intent ? intent.slice(0, 500) : undefined;
 }
 
 export function handleCancel(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
@@ -78,6 +90,8 @@ export function handleCancel(params: TeamToolParamsValue, ctx: TeamContext): PiT
 		}
 		const cancellableIds = new Set(abortResult.abortedIds);
 		const cancelReason = cancelReasonFromParams(params);
+		const cancelIntent = intentFromParams(params);
+		const cancelData = cancelIntent ? { reason: cancelReason.code, intent: cancelIntent } : { reason: cancelReason.code };
 		const cancelMessage = `${cancelReason.message} (${cancelReason.code})`;
 
 		const tasks = loaded.tasks.map((task) => {
@@ -98,9 +112,9 @@ export function handleCancel(params: TeamToolParamsValue, ctx: TeamContext): PiT
 			logInternalError("team-tool.handleCancel.interruptRequest", error, `runId=${loaded.manifest.runId}`);
 		}
 		for (const taskId of abortResult.abortedIds) {
-			appendEvent(loaded.manifest.eventsPath, { type: "task.cancelled", runId: loaded.manifest.runId, taskId, message: cancelMessage, data: { reason: cancelReason.code } });
+			appendEvent(loaded.manifest.eventsPath, { type: "task.cancelled", runId: loaded.manifest.runId, taskId, message: cancelMessage, data: cancelData });
 		}
-		const updated = updateRunStatus(loaded.manifest, "cancelled", `${cancelMessage} Already-finished worker processes are not retroactively changed.`, { data: { reason: cancelReason.code } });
+		const updated = updateRunStatus(loaded.manifest, "cancelled", `${cancelMessage} Already-finished worker processes are not retroactively changed.`, { data: cancelData });
 
 		// Build descriptive message including foreign/missing info
 		const parts = [`Cancelled run ${updated.runId}.`];
@@ -115,6 +129,7 @@ export function handleCancel(params: TeamToolParamsValue, ctx: TeamContext): PiT
 			abortedIds: abortResult.abortedIds,
 			missingIds: abortResult.missingIds,
 			foreignIds: abortResult.foreignIds,
+			intent: cancelIntent,
 		});
 	});
 }

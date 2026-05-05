@@ -56,6 +56,21 @@ describe("abortOwned", () => {
 		}
 	});
 
+	it("handleCancel records audit intent on cancellation events", () => {
+		const run = createOwnedRun("session-a");
+		try {
+			saveRunTasks(run.manifest, [{ id: "task-1", runId: run.runId, role: "worker", agent: "worker", title: "task", status: "running", dependsOn: [], cwd: run.cwd }]);
+			const out = handleCancel({ action: "cancel", runId: run.runId, config: { reason: "shutdown", intent: "operator is ending the session for maintenance" } }, { cwd: run.cwd, sessionId: "session-a" });
+			assert.equal(out.isError, false);
+			assert.equal(out.details.intent, "operator is ending the session for maintenance");
+			const events = readEvents(run.manifest.eventsPath);
+			assert.ok(events.some((event) => event.type === "task.cancelled" && event.taskId === "task-1" && event.data?.reason === "shutdown" && event.data.intent === "operator is ending the session for maintenance"));
+			assert.ok(events.some((event) => event.type === "run.cancelled" && event.data?.reason === "shutdown" && event.data.intent === "operator is ending the session for maintenance"));
+		} finally {
+			fs.rmSync(run.cwd, { recursive: true, force: true });
+		}
+	});
+
 	it("handleCancel refuses to cancel a foreign owned run", () => {
 		const run = createOwnedRun("session-a");
 		try {

@@ -6,6 +6,7 @@ export interface TeamToolDetails {
 	abortedIds?: string[];
 	missingIds?: string[];
 	foreignIds?: string[];
+	intent?: string;
 	resumedIds?: string[];
 	mailboxIds?: string[];
 }
