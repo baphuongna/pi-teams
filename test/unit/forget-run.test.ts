@@ -22,8 +22,9 @@ test("forget deletes run state and artifacts when confirmed", async () => {
 		assert.equal(blocked.isError, true);
 		assert.ok(fs.existsSync(stateRoot));
 
-		const forgotten = await handleTeamTool({ action: "forget", runId, confirm: true }, { cwd });
+		const forgotten = await handleTeamTool({ action: "forget", runId, confirm: true, config: { intent: "remove old scaffold test run" } }, { cwd });
 		assert.equal(forgotten.isError, false);
+		assert.equal(forgotten.details.intent, "remove old scaffold test run");
 		assert.equal(fs.existsSync(stateRoot), false);
 		assert.equal(fs.existsSync(artifactsRoot), false);
 		assert.equal(loadRunManifestById(cwd, runId!), undefined);

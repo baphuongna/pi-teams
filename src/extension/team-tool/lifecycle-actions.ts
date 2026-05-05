@@ -10,6 +10,14 @@ import { pruneFinishedRuns } from "../run-maintenance.ts";
 import type { PiTeamsToolResult } from "../tool-result.ts";
 import { configRecord, result, type TeamContext } from "./context.ts";
 
+function intentFromParams(params: TeamToolParamsValue): string | undefined {
+	const cfg = configRecord(params.config);
+	const rawIntent = cfg.intent ?? cfg._intent;
+	if (typeof rawIntent !== "string") return undefined;
+	const intent = rawIntent.replace(/\s+/g, " ").trim();
+	return intent ? intent.slice(0, 500) : undefined;
+}
+
 export function handleWorktrees(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
 	if (!params.runId) return result("Worktrees requires runId.", { action: "worktrees", status: "error" }, true);
 	const loaded = loadRunManifestById(ctx.cwd, params.runId);
@@ -63,9 +71,11 @@ export function handleForget(params: TeamToolParamsValue, ctx: TeamContext): PiT
 	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "forget", status: "error" }, true);
 	const cleanup = cleanupRunWorktrees(loaded.manifest, { force: params.force });
 	if (cleanup.preserved.length > 0 && !params.force) return result([`Run '${params.runId}' has preserved worktrees. Use force: true to forget anyway.`, ...cleanup.preserved.map((item) => `- ${item.path}: ${item.reason}`)].join("\n"), { action: "forget", status: "error", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot }, true);
+	const intent = intentFromParams(params);
+	appendEvent(loaded.manifest.eventsPath, { type: "run.forget_requested", runId: loaded.manifest.runId, message: "Run state and artifacts are being forgotten.", data: { force: params.force === true, removedWorktrees: cleanup.removed, preservedWorktrees: cleanup.preserved, intent } });
 	fs.rmSync(loaded.manifest.stateRoot, { recursive: true, force: true });
 	fs.rmSync(loaded.manifest.artifactsRoot, { recursive: true, force: true });
-	return result([`Forgot run ${loaded.manifest.runId}.`, `Removed state: ${loaded.manifest.stateRoot}`, `Removed artifacts: ${loaded.manifest.artifactsRoot}`, ...(cleanup.removed.length ? ["Removed worktrees:", ...cleanup.removed.map((item) => `- ${item}`)] : [])].join("\n"), { action: "forget", status: "ok", runId: loaded.manifest.runId });
+	return result([`Forgot run ${loaded.manifest.runId}.`, `Removed state: ${loaded.manifest.stateRoot}`, `Removed artifacts: ${loaded.manifest.artifactsRoot}`, ...(cleanup.removed.length ? ["Removed worktrees:", ...cleanup.removed.map((item) => `- ${item}`)] : [])].join("\n"), { action: "forget", status: "ok", runId: loaded.manifest.runId, intent });
 }
 
 export function handleCleanup(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
@@ -73,7 +83,8 @@ export function handleCleanup(params: TeamToolParamsValue, ctx: TeamContext): Pi
 	const loaded = loadRunManifestById(ctx.cwd, params.runId);
 	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "cleanup", status: "error" }, true);
 	const cleanup = cleanupRunWorktrees(loaded.manifest, { force: params.force });
-	appendEvent(loaded.manifest.eventsPath, { type: "worktree.cleanup", runId: loaded.manifest.runId, data: { removed: cleanup.removed, preserved: cleanup.preserved, artifacts: cleanup.artifactPaths } });
+	const intent = intentFromParams(params);
+	appendEvent(loaded.manifest.eventsPath, { type: "worktree.cleanup", runId: loaded.manifest.runId, data: { removed: cleanup.removed, preserved: cleanup.preserved, artifacts: cleanup.artifactPaths, intent } });
 	const lines = [`Worktree cleanup for ${loaded.manifest.runId}:`, "Removed:", ...(cleanup.removed.length ? cleanup.removed.map((item) => `- ${item}`) : ["- (none)"]), "Preserved:", ...(cleanup.preserved.length ? cleanup.preserved.map((item) => `- ${item.path}: ${item.reason}`) : ["- (none)"]), "Artifacts:", ...(cleanup.artifactPaths.length ? cleanup.artifactPaths.map((item) => `- ${item}`) : ["- (none)"])];
-	return result(lines.join("\n"), { action: "cleanup", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+	return result(lines.join("\n"), { action: "cleanup", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot, intent });
 }
