@@ -75,13 +75,26 @@ test("buildConfiguredModelCandidates falls back to Pi default when no configured
 	);
 });
 
-test("buildConfiguredModelCandidates does not trust builtin agent models without Pi registry", () => {
+test("buildConfiguredModelCandidates preserves explicit configured models without Pi registry", () => {
 	const previous = process.env.PI_CODING_AGENT_DIR;
 	const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-models-"));
 	process.env.PI_CODING_AGENT_DIR = tempDir;
 	try {
-		assert.deepEqual(buildConfiguredModelCandidates({ agentModel: "claude-haiku-4-5", fallbackModels: ["sonnet"] }), []);
-		assert.deepEqual(buildConfiguredModelCandidates({ overrideModel: "openai-codex/gpt-5.5", agentModel: "claude-haiku-4-5" }), ["openai-codex/gpt-5.5"]);
+		assert.deepEqual(buildConfiguredModelCandidates({ stepModel: "openai-codex/gpt-5.5", teamRoleModel: "gemini/gemini-pro", agentModel: "claude-haiku-4-5", fallbackModels: ["sonnet"], parentModel: { provider: "parent", id: "model" } }), ["openai-codex/gpt-5.5", "gemini/gemini-pro", "claude-haiku-4-5", "sonnet", "parent/model"]);
+	} finally {
+		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previous;
+		fs.rmSync(tempDir, { recursive: true, force: true });
+	}
+});
+
+test("buildConfiguredModelCandidates keeps agent/fallback models without Pi registry", () => {
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-models-"));
+	process.env.PI_CODING_AGENT_DIR = tempDir;
+	try {
+		assert.deepEqual(buildConfiguredModelCandidates({ agentModel: "claude-haiku-4-5", fallbackModels: ["sonnet"] }), ["claude-haiku-4-5", "sonnet"]);
+		assert.deepEqual(buildConfiguredModelCandidates({ overrideModel: "openai-codex/gpt-5.5", agentModel: "claude-haiku-4-5" }), ["openai-codex/gpt-5.5", "claude-haiku-4-5"]);
 	} finally {
 		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previous;

@@ -678,10 +678,16 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 	}
 
 	const failed = tasks.find((task) => task.status === "failed");
+	const waiting = tasks.find((task) => task.status === "waiting");
+	const running = tasks.find((task) => task.status === "running");
 	manifest = applyPolicy(manifest, tasks, input.limits);
 	const blockingDecision = manifest.policyDecisions?.find((item) => item.action === "block" || item.action === "escalate");
 	if (failed) {
 		manifest = updateRunStatus(manifest, "failed", `Failed at task '${failed.id}'.`);
+	} else if (waiting) {
+		manifest = updateRunStatus(manifest, "blocked", `Waiting for response to task '${waiting.id}'.`);
+	} else if (running) {
+		manifest = updateRunStatus(manifest, "blocked", `Task '${running.id}' is still running.`);
 	} else if (blockingDecision) {
 		manifest = updateRunStatus(manifest, "blocked", blockingDecision.message);
 	} else {

@@ -1,6 +1,7 @@
 import type { TeamToolParamsValue } from "../../schema/team-tool-schema.ts";
 import { withRunLockSync } from "../../state/locks.ts";
-import { loadRunManifestById, saveRunTasks } from "../../state/state-store.ts";
+import { loadRunManifestById, saveRunTasks, updateRunStatus } from "../../state/state-store.ts";
+import { appendEvent } from "../../state/event-log.ts";
 import { appendMailboxMessage } from "../../state/mailbox.ts";
 import { saveCrewAgents, recordFromTask } from "../../runtime/crew-agent-records.ts";
 import { logInternalError } from "../../utils/internal-error.ts";
@@ -10,7 +11,7 @@ import { result, type TeamContext } from "./context.ts";
 /**
  * Handle `respond` action: send a message to a waiting (interactive) task.
  * The task must be in "waiting" status. The message is stored in the task's
- * mailbox and the task is transitioned back to "running".
+ * mailbox and the task is re-queued for durable scheduler resume.
  */
 export function handleRespond(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
 	if (!params.runId) return result("Respond requires runId.", { action: "respond", status: "error" }, true);
@@ -59,12 +60,15 @@ export function handleRespond(params: TeamToolParamsValue, ctx: TeamContext): Pi
 			mailboxIds.push(mailbox.id);
 		}
 
-		// Transition waiting tasks back to running
+		// Re-queue waiting tasks so durable scheduler/resume can pick them up again.
 		const updatedTasks = fresh.tasks.map((task) => {
 			if (!resumed.has(task.id)) return task;
 			return {
 				...task,
-				status: "running" as const,
+				status: "queued" as const,
+				startedAt: undefined,
+				finishedAt: undefined,
+				error: undefined,
 				adaptive: {
 					...task.adaptive,
 					phase: "resumed",
@@ -74,6 +78,13 @@ export function handleRespond(params: TeamToolParamsValue, ctx: TeamContext): Pi
 		});
 
 		saveRunTasks(fresh.manifest, updatedTasks);
+		let manifest = fresh.manifest;
+		if (manifest.status === "blocked" || manifest.status === "completed" || manifest.status === "failed" || manifest.status === "cancelled") {
+			manifest = updateRunStatus(manifest, "running", `Resumed ${resumed.size} waiting task(s).`);
+		}
+		for (const taskId of resumed) {
+			appendEvent(manifest.eventsPath, { type: "task.resumed", runId: manifest.runId, taskId, message: message || "Task re-queued after respond.", data: { mailboxIds } });
+		}
 		try {
 			saveCrewAgents(fresh.manifest, updatedTasks.map((task) => recordFromTask(fresh.manifest, task, "child-process")));
 		} catch (error) {

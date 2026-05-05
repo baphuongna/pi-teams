@@ -68,16 +68,22 @@ export function unregisterActiveRun(runId: string): void {
 	writeEntries(readActiveRunRegistry().filter((entry) => entry.runId !== runId));
 }
 
-export function activeRunRoots(): string[] {
-	const roots = new Set<string>();
+export function activeRunEntries(): ActiveRunRegistryEntry[] {
+	const entries: ActiveRunRegistryEntry[] = [];
 	for (const entry of readActiveRunRegistry()) {
 		try {
 			if (!fs.existsSync(entry.stateRoot) || !fs.existsSync(entry.manifestPath)) continue;
 			if (fs.lstatSync(entry.stateRoot).isSymbolicLink()) continue;
-			roots.add(path.dirname(entry.stateRoot));
+			const manifest = JSON.parse(fs.readFileSync(entry.manifestPath, "utf-8")) as { status?: unknown };
+			if (manifest.status !== "queued" && manifest.status !== "planning" && manifest.status !== "running" && manifest.status !== "blocked") continue;
+			entries.push(entry);
 		} catch {
 			// Ignore stale entries; callers filter active status from manifests.
 		}
 	}
-	return [...roots];
+	return entries;
+}
+
+export function activeRunRoots(): string[] {
+	return [...new Set(activeRunEntries().map((entry) => path.dirname(entry.stateRoot)))];
 }

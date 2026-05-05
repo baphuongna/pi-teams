@@ -256,7 +256,7 @@ export function buildConfiguredModelRouting(input: {
 	if (availableModels && availableModels.length === 0) return { requested, candidates: [], reason: "no configured Pi models available" };
 	const rawModels = availableModels
 		? [input.overrideModel, input.stepModel, input.teamRoleModel, effectiveAgentModel, ...(input.fallbackModels ?? []), ...availableModels.map((model) => model.fullId)]
-		: [input.overrideModel, parentModel];
+		: [input.overrideModel, input.stepModel, input.teamRoleModel, effectiveAgentModel, ...(input.fallbackModels ?? []), parentModel];
 	const configuredModels = rawModels
 		.filter((model): model is string => Boolean(model?.trim()))
 		.filter((model) => isAvailableModel(model.trim(), availableModels));

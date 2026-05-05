@@ -106,7 +106,7 @@ export class DeliveryCoordinator {
 		this.flushing = true;
 		try {
 		for (const delivery of batch) {
-			if (delivery.generation !== undefined && delivery.generation !== this.generation) {
+			if (delivery.type === "steer" && delivery.generation !== undefined && delivery.generation !== this.generation) {
 				logInternalError("delivery-coordinator.flush.stale", undefined, `runId=${delivery.runId} type=${delivery.type}`);
 				continue;
 			}

@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { closeWatcher, watchWithErrorHandler } from "../utils/fs-watch.ts";
 import { findRepoRoot, projectCrewRoot, userCrewRoot } from "../utils/paths.ts";
-import { activeRunRoots } from "../state/active-run-registry.ts";
+import { activeRunEntries } from "../state/active-run-registry.ts";
 import { isSafePathId, resolveContainedRelativePath, resolveRealContainedPath } from "../utils/safe-paths.ts";
 import type { TeamRunManifest } from "../state/types.ts";
 import { DEFAULT_CACHE, DEFAULT_PATHS } from "../config/defaults.ts";
@@ -110,7 +110,6 @@ function listRunRoots(cwd: string): string[] {
 	const roots = new Set<string>();
 	const base = findRepoRoot(cwd) ? projectCrewRoot(cwd) : userCrewRoot();
 	roots.add(path.join(base, DEFAULT_PATHS.state.runsSubdir));
-	for (const root of activeRunRoots()) roots.add(root);
 	return [...roots];
 }
 
@@ -160,6 +159,15 @@ export function createManifestCache(cwd: string, options: ManifestCacheOptions =
 	function loadManifest(runId: string, rootsToCheck: string[]): CachedManifest | undefined {
 		let cached = manifestIndex.get(runId);
 		if (!isSafePathId(runId)) return undefined;
+		const activeEntry = activeRunEntries().find((entry) => entry.runId === runId);
+		if (activeEntry) {
+			const activeRoot = path.dirname(activeEntry.stateRoot);
+			const parsed = parseManifestIfChanged(activeRoot, runId, activeEntry.manifestPath, cached);
+			if (parsed) {
+				manifestIndex.set(runId, parsed);
+				return parsed;
+			}
+		}
 		for (const root of rootsToCheck) {
 			const manifestPath = manifestPathForRun(root, runId);
 			if (!manifestPath) continue;
@@ -184,7 +192,10 @@ export function createManifestCache(cwd: string, options: ManifestCacheOptions =
 		if (cached && cached.expireAtMs > now) {
 			return cached.runs;
 		}
-		const parsedEntries = roots.flatMap((root) => collectRoots(root));
+		const parsedEntries = [
+			...roots.flatMap((root) => collectRoots(root)),
+			...activeRunEntries().map((entry) => ({ runId: entry.runId, path: entry.manifestPath })),
+		];
 		const unique = new Map<string, CachedManifest | undefined>();
 		for (const entry of parsedEntries) {
 			if (entry.runId.length === 0) continue;

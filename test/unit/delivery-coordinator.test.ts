@@ -127,7 +127,7 @@ describe("DeliveryCoordinator", () => {
 		dc.dispose();
 	});
 
-	it("drops deliveries queued before a session switch", () => {
+	it("preserves result deliveries queued before a session switch", () => {
 		const emitted: unknown[] = [];
 		const dc = new DeliveryCoordinator({ emit: (_event, data) => { emitted.push(data); } });
 		dc.deliverResult("run-before", { status: "queued-before-switch" });
@@ -135,7 +135,34 @@ describe("DeliveryCoordinator", () => {
 		dc.deactivate();
 		dc.activate("session-2");
 		assert.equal(dc.getPendingCount(), 0);
-		assert.equal(emitted.length, 0);
+		assert.deepEqual(emitted, [{ status: "queued-before-switch" }]);
+		dc.dispose();
+	});
+
+	it("drops stale steer deliveries across a session switch", () => {
+		const wakeups: string[] = [];
+		const dc = new DeliveryCoordinator({ sendWakeUp: (message) => { wakeups.push(message); } });
+		dc.deliverSteer("run-before", "old steer");
+		assert.equal(dc.getPendingCount(), 1);
+		dc.deactivate();
+		dc.activate("session-2");
+		assert.equal(dc.getPendingCount(), 0);
+		assert.deepEqual(wakeups, []);
+		dc.dispose();
+	});
+
+	it("delivers active emit failures after a session switch", () => {
+		const emitted: unknown[] = [];
+		let shouldThrow = true;
+		const dc = new DeliveryCoordinator({ emit: (_event, data) => { if (shouldThrow) throw new Error("transient"); emitted.push(data); } });
+		dc.activate("session-1");
+		dc.deliverResult("run1", { status: "completed" });
+		assert.equal(dc.getPendingCount(), 1);
+		dc.deactivate();
+		shouldThrow = false;
+		dc.activate("session-2");
+		assert.equal(dc.getPendingCount(), 0);
+		assert.deepEqual(emitted, [{ status: "completed" }]);
 		dc.dispose();
 	});
 

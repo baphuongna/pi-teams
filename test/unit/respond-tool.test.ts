@@ -16,7 +16,7 @@ function createRun(ownerSessionId?: string): { cwd: string; runId: string; manif
 	return { cwd, runId: created.manifest.runId, manifest: created.manifest };
 }
 
-test("handleRespond writes task mailbox and resumes only waiting task", () => {
+test("handleRespond writes task mailbox and re-queues only waiting task", () => {
 	const run = createRun();
 	try {
 		saveRunTasks(run.manifest, [
@@ -26,7 +26,7 @@ test("handleRespond writes task mailbox and resumes only waiting task", () => {
 		const out = handleRespond({ action: "respond", runId: run.runId, taskId: "wait", message: "continue" }, { cwd: run.cwd });
 		assert.equal(out.isError, false);
 		const loaded = loadRunManifestById(run.cwd, run.runId);
-		assert.equal(loaded?.tasks.find((task) => task.id === "wait")?.status, "running");
+		assert.equal(loaded?.tasks.find((task) => task.id === "wait")?.status, "queued");
 		assert.equal(loaded?.tasks.find((task) => task.id === "done")?.status, "completed");
 		const mailbox = readMailbox(run.manifest, "inbox", "wait");
 		assert.equal(mailbox.length, 1);
@@ -62,7 +62,7 @@ test("handleRespond allows owning session", () => {
 		const out = handleRespond({ action: "respond", runId: run.runId, taskId: "wait", message: "continue" }, { cwd: run.cwd, sessionId: "owner-session" });
 		assert.equal(out.isError, false);
 		const loaded = loadRunManifestById(run.cwd, run.runId);
-		assert.equal(loaded?.tasks.find((task) => task.id === "wait")?.status, "running");
+		assert.equal(loaded?.tasks.find((task) => task.id === "wait")?.status, "queued");
 	} finally {
 		fs.rmSync(run.cwd, { recursive: true, force: true });
 	}

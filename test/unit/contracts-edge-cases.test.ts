@@ -21,9 +21,9 @@ describe("interactive subagent edge cases", () => {
 		assert.equal(canTransitionTaskStatus("waiting", "waiting"), true);
 	});
 
-	// Invalid transition from waiting
-	it("waiting cannot transition to queued", () => {
-		assert.equal(canTransitionTaskStatus("waiting", "queued"), false);
+	// Durable respond can re-queue a waiting task for scheduler resume.
+	it("waiting can transition to queued", () => {
+		assert.equal(canTransitionTaskStatus("waiting", "queued"), true);
 	});
 
 	it("waiting cannot transition to skipped", () => {

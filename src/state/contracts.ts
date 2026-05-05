@@ -20,7 +20,7 @@ export const TEAM_RUN_STATUS_TRANSITIONS: Readonly<Record<TeamRunStatus, readonl
 export const TEAM_TASK_STATUS_TRANSITIONS: Readonly<Record<TeamTaskStatus, readonly TeamTaskStatus[]>> = {
 	queued: ["running", "cancelled", "skipped", "failed"],
 	running: ["completed", "failed", "cancelled", "queued", "waiting"],
-	waiting: ["running", "completed", "failed", "cancelled"],
+	waiting: ["running", "queued", "completed", "failed", "cancelled"],
 	completed: ["queued"],
 	failed: ["queued", "cancelled"],
 	cancelled: ["queued"],

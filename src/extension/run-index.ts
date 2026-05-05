@@ -3,7 +3,7 @@ import * as path from "node:path";
 import type { TeamRunManifest } from "../state/types.ts";
 import { DEFAULT_PATHS } from "../config/defaults.ts";
 import { findRepoRoot, projectCrewRoot, userCrewRoot } from "../utils/paths.ts";
-import { activeRunRoots } from "../state/active-run-registry.ts";
+import { activeRunEntries } from "../state/active-run-registry.ts";
 import { isSafePathId, resolveRealContainedPath } from "../utils/safe-paths.ts";
 
 function readManifest(filePath: string): TeamRunManifest | undefined {
@@ -45,18 +45,23 @@ function scopedRunRoots(cwd: string): string[] {
 	roots.add(userCrewRoot());
 	const projectRoot = findRepoRoot(cwd);
 	if (projectRoot) roots.add(projectCrewRoot(cwd));
-	for (const root of activeRunRoots()) roots.add(path.dirname(path.dirname(root)));
 	return [...roots];
+}
+
+function collectActiveRuns(): TeamRunManifest[] {
+	return activeRunEntries()
+		.map((entry) => readManifest(entry.manifestPath))
+		.filter((manifest): manifest is TeamRunManifest => manifest !== undefined);
 }
 
 export function listRuns(cwd: string): TeamRunManifest[] {
 	const roots = scopedRunRoots(cwd);
-	return mergeRuns(roots.map((root) => collectRuns(root)));
+	return mergeRuns([...roots.map((root) => collectRuns(root)), collectActiveRuns()]);
 }
 
 export function listRecentRuns(cwd: string, max = 20): TeamRunManifest[] {
 	const roots = scopedRunRoots(cwd);
-	return mergeRuns(roots.map((root) => collectRuns(root, max)), max);
+	return mergeRuns([...roots.map((root) => collectRuns(root, max)), collectActiveRuns()], max);
 }
 
 /**
