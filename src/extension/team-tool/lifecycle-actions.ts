@@ -60,8 +60,9 @@ export function handlePrune(params: TeamToolParamsValue, ctx: TeamContext): PiTe
 	const keep = params.keep ?? 20;
 	if (!params.confirm) return result("prune requires confirm: true.", { action: "prune", status: "error" }, true);
 	if (keep < 0 || !Number.isInteger(keep)) return result("keep must be an integer >= 0.", { action: "prune", status: "error" }, true);
-	const pruned = pruneFinishedRuns(ctx.cwd, keep);
-	return result([`Pruned finished pi-crew runs.`, `Kept: ${pruned.kept.length}`, `Removed: ${pruned.removed.length}`, ...(pruned.removed.length ? ["Removed runs:", ...pruned.removed.map((runId) => `- ${runId}`)] : [])].join("\n"), { action: "prune", status: "ok" });
+	const intent = intentFromParams(params);
+	const pruned = pruneFinishedRuns(ctx.cwd, keep, { intent });
+	return result([`Pruned finished pi-crew runs.`, `Kept: ${pruned.kept.length}`, `Removed: ${pruned.removed.length}`, ...(pruned.auditPath ? [`Audit: ${pruned.auditPath}`] : []), ...(pruned.removed.length ? ["Removed runs:", ...pruned.removed.map((runId) => `- ${runId}`)] : [])].join("\n"), { action: "prune", status: "ok", intent });
 }
 
 export function handleForget(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
