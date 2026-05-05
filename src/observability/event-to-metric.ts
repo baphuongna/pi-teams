@@ -13,6 +13,13 @@ function numberValue(value: unknown, fallback = 0): number {
 	return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+const CANCELLATION_REASON_LABELS = new Set(["caller_cancelled", "leader_interrupted", "provider_timeout", "worker_timeout", "tool_timeout", "shutdown", "unknown"]);
+
+function cancellationReasonLabel(value: unknown): string {
+	const raw = stringValue(value, "unknown");
+	return CANCELLATION_REASON_LABELS.has(raw) ? raw : "unknown";
+}
+
 export interface EventToMetricSubscription {
 	dispose(): void;
 }
@@ -36,7 +43,7 @@ export function wireEventToMetrics(events: ExtensionAPI["events"] | undefined, r
 	const handlers: Array<[string, (data: unknown) => void]> = [
 		["crew.run.completed", (data) => { const item = recordValue(data); runCount.inc({ status: "completed" }); runDuration.observe({ team: stringValue(item.team, "unknown") }, numberValue(item.durationMs)); }],
 		["crew.run.failed", () => runCount.inc({ status: "failed" })],
-		["crew.run.cancelled", () => runCount.inc({ status: "cancelled" })],
+		["crew.run.cancelled", (data) => { const item = recordValue(data); runCount.inc({ status: "cancelled", reason: cancellationReasonLabel(item.reason) }); }],
 		["crew.task.completed", (data) => { const item = recordValue(data); taskCount.inc({ status: "completed" }); taskDuration.observe({ role: stringValue(item.role, "unknown") }, numberValue(item.durationMs)); tokenUsage.observe({ role: stringValue(item.role, "unknown") }, numberValue(item.tokens)); }],
 		["crew.task.failed", () => taskCount.inc({ status: "failed" })],
 		["crew.task.retry_attempt", (data) => { const item = recordValue(data); taskCount.inc({ status: "retry" }); retryAttemptCount.inc({ runId: stringValue(item.runId, "unknown"), taskId: stringValue(item.taskId, "unknown") }); }],

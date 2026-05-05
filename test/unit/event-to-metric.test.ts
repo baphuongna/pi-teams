@@ -19,6 +19,12 @@ function eventBus() {
 	};
 }
 
+function counterValue(registry: ReturnType<typeof createMetricRegistry>, name: string, labels: Record<string, string>): number {
+	const metric = registry.get(name);
+	const value = metric?.snapshot().values.find((entry) => JSON.stringify(entry.labels) === JSON.stringify(labels));
+	return value && "value" in value ? value.value : 0;
+}
+
 test("wireEventToMetrics maps core crew events and disposes subscribers", () => {
 	const bus = eventBus();
 	const registry = createMetricRegistry();
@@ -30,4 +36,14 @@ test("wireEventToMetrics maps core crew events and disposes subscribers", () => 
 	sub.dispose();
 	assert.equal(bus.count("crew.run.completed"), 0);
 	sub.dispose();
+});
+
+test("wireEventToMetrics labels cancelled runs by structured reason", () => {
+	const bus = eventBus();
+	const registry = createMetricRegistry();
+	wireEventToMetrics(bus, registry);
+	bus.emit("crew.run.cancelled", { reason: "leader_interrupted" });
+	bus.emit("crew.run.cancelled", { reason: "unexpected-provider-text" });
+	assert.equal(counterValue(registry, "crew.run.count", { reason: "leader_interrupted", status: "cancelled" }), 1);
+	assert.equal(counterValue(registry, "crew.run.count", { reason: "unknown", status: "cancelled" }), 1);
 });
