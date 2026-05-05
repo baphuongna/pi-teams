@@ -168,6 +168,7 @@ export interface TaskCheckpointState {
 }
 
 export interface TaskAttemptState {
+	attemptId?: string;
 	startedAt: string;
 	endedAt?: string;
 	error?: string;

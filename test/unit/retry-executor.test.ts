@@ -11,20 +11,25 @@ test("executeWithRetry succeeds on first try", async () => {
 
 test("executeWithRetry retries then succeeds", async () => {
 	let attempts = 0;
-	const failures: number[] = [];
-	const result = await executeWithRetry(async () => {
+	const failures: Array<{ attempt: number; attemptId: string }> = [];
+	const seenAttemptIds: string[] = [];
+	const result = await executeWithRetry(async (_attempt, info) => {
 		attempts += 1;
+		seenAttemptIds.push(info.attemptId);
 		if (attempts < 3) throw new Error("temporary");
 		return "ok";
-	}, { maxAttempts: 3, backoffMs: 1, jitterRatio: 0, exponentialFactor: 1 }, { onAttemptFailed: (attempt) => failures.push(attempt) });
+	}, { maxAttempts: 3, backoffMs: 1, jitterRatio: 0, exponentialFactor: 1 }, { attemptId: (attempt) => `task:attempt-${attempt}`, onAttemptFailed: (attempt, _error, _delay, info) => failures.push({ attempt, attemptId: info.attemptId }) });
 	assert.equal(result, "ok");
-	assert.deepEqual(failures, [1, 2]);
+	assert.deepEqual(failures, [{ attempt: 1, attemptId: "task:attempt-1" }, { attempt: 2, attemptId: "task:attempt-2" }]);
+	assert.deepEqual(seenAttemptIds, ["task:attempt-1", "task:attempt-2", "task:attempt-3"]);
 });
 
 test("executeWithRetry gives up after max attempts and respects retryable patterns", async () => {
 	let givenUp = 0;
-	await assert.rejects(() => executeWithRetry(async () => { throw new Error("fatal"); }, { maxAttempts: 3, backoffMs: 1, jitterRatio: 0, exponentialFactor: 1, retryableErrors: ["temporary*"] }, { onRetryGivenUp: (attempts) => { givenUp = attempts; } }), /fatal/);
+	let givenUpAttemptId = "";
+	await assert.rejects(() => executeWithRetry(async () => { throw new Error("fatal"); }, { maxAttempts: 3, backoffMs: 1, jitterRatio: 0, exponentialFactor: 1, retryableErrors: ["temporary*"] }, { onRetryGivenUp: (attempts, _error, info) => { givenUp = attempts; givenUpAttemptId = info.attemptId; } }), /fatal/);
 	assert.equal(givenUp, 1);
+	assert.equal(givenUpAttemptId, "retry_attempt_1");
 });
 
 test("executeWithRetry reports structured cancellation before first attempt", async () => {

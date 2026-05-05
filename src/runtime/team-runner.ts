@@ -599,9 +599,9 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 				const attemptsSoFar: TaskAttemptState[] = [...(task.attempts ?? [])];
 				const policy = retryPolicyFromConfig(input.reliability);
 				try {
-					return await executeWithRetry(async (attempt) => {
+					return await executeWithRetry(async (attempt, info) => {
 						const startedAt = new Date().toISOString();
-						const inFlightAttempts: TaskAttemptState[] = [...attemptsSoFar, { startedAt }];
+						const inFlightAttempts: TaskAttemptState[] = [...attemptsSoFar, { attemptId: info.attemptId, startedAt }];
 						input.metricRegistry?.counter("crew.task.retry_attempt_total", "Retry attempts by run and task").inc({ runId: manifest.runId, taskId: task.id });
 						const fresh = loadRunManifestById(manifest.cwd, manifest.runId);
 						const freshManifest = fresh?.manifest ?? manifest;
@@ -612,7 +612,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 						const result = await withCorrelation(childCorrelation(freshManifest.runId, task.id), () => runTeamTask({ ...baseInput, manifest: freshManifest, tasks: freshTasks, task: taskWithAttempt }));
 						const failed = failedTaskFrom(result, task.id);
 						const endedAt = new Date().toISOString();
-						const finishedAttempt: TaskAttemptState = { startedAt, endedAt, ...(failed?.error ? { error: failed.error } : {}) };
+						const finishedAttempt: TaskAttemptState = { attemptId: info.attemptId, startedAt, endedAt, ...(failed?.error ? { error: failed.error } : {}) };
 						attemptsSoFar.push(finishedAttempt);
 						const withAttempt = result.tasks.map((item) => item.id === task.id ? { ...item, attempts: [...attemptsSoFar] } : item);
 						const enriched = { manifest: result.manifest, tasks: withAttempt };
@@ -624,8 +624,9 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 						return enriched;
 					}, policy, {
 						signal: input.signal,
-						onAttemptFailed: (attempt, error, delayMs) => {
-							appendEvent(manifest.eventsPath, { type: "crew.task.retry_attempt", runId: manifest.runId, taskId: task.id, message: error.message, data: { attempt, delayMs } });
+						attemptId: (attempt) => `${manifest.runId}:${task.id}:attempt-${attempt}`,
+						onAttemptFailed: (attempt, error, delayMs, info) => {
+							appendEvent(manifest.eventsPath, { type: "crew.task.retry_attempt", runId: manifest.runId, taskId: task.id, message: error.message, data: { attempt, attemptId: info.attemptId, delayMs } });
 							input.metricRegistry?.histogram("crew.task.retry_delay_ms", "Retry backoff delay, milliseconds").observe({ runId: manifest.runId, taskId: task.id }, delayMs);
 						},
 						onRetryGivenUp: (attempts, error) => {

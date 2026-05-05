@@ -9,9 +9,15 @@ export interface RetryPolicy {
 	retryableErrors?: string[];
 }
 
+export interface RetryAttemptInfo {
+	attempt: number;
+	attemptId: string;
+}
+
 export interface RetryHooks {
-	onAttemptFailed?: (attempt: number, error: Error, nextDelayMs: number) => void;
-	onRetryGivenUp?: (attempts: number, error: Error) => void;
+	onAttemptFailed?: (attempt: number, error: Error, nextDelayMs: number, info: RetryAttemptInfo) => void;
+	onRetryGivenUp?: (attempts: number, error: Error, info: RetryAttemptInfo) => void;
+	attemptId?: (attempt: number) => string;
 	signal?: AbortSignal;
 }
 
@@ -38,26 +44,31 @@ export function calculateRetryDelay(attempt: number, policy: RetryPolicy = DEFAU
 	return Math.max(0, base + jitter);
 }
 
-export async function executeWithRetry<T>(fn: (attempt: number) => Promise<T>, policy: RetryPolicy = DEFAULT_RETRY_POLICY, hooks: RetryHooks = {}): Promise<T> {
+function retryAttemptInfo(attempt: number, hooks: RetryHooks): RetryAttemptInfo {
+	return { attempt, attemptId: hooks.attemptId?.(attempt) ?? `retry_attempt_${attempt}` };
+}
+
+export async function executeWithRetry<T>(fn: (attempt: number, info: RetryAttemptInfo) => Promise<T>, policy: RetryPolicy = DEFAULT_RETRY_POLICY, hooks: RetryHooks = {}): Promise<T> {
 	const normalized: RetryPolicy = { ...DEFAULT_RETRY_POLICY, ...policy, maxAttempts: Math.max(1, policy.maxAttempts ?? DEFAULT_RETRY_POLICY.maxAttempts) };
 	let lastError: Error | undefined;
 	for (let attempt = 1; attempt <= normalized.maxAttempts; attempt += 1) {
 		throwIfCancelled(hooks.signal);
+		const info = retryAttemptInfo(attempt, hooks);
 		try {
-			return await fn(attempt);
+			return await fn(attempt, info);
 		} catch (error) {
 			lastError = asError(error);
 			// Never retry if aborted — sleep() would immediately reject on every attempt.
 			if (hooks.signal?.aborted) {
-				hooks.onRetryGivenUp?.(attempt, lastError);
+				hooks.onRetryGivenUp?.(attempt, lastError, info);
 				throw lastError;
 			}
 			if (attempt >= normalized.maxAttempts || !isRetryable(lastError, normalized)) {
-				hooks.onRetryGivenUp?.(attempt, lastError);
+				hooks.onRetryGivenUp?.(attempt, lastError, info);
 				throw lastError;
 			}
 			const delay = calculateRetryDelay(attempt, normalized);
-			hooks.onAttemptFailed?.(attempt, lastError, delay);
+			hooks.onAttemptFailed?.(attempt, lastError, delay, info);
 			await sleep(delay, hooks.signal);
 		}
 	}
