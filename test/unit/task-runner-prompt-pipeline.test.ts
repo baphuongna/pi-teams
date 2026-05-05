@@ -37,14 +37,16 @@ test("runTeamTask writes stable prompt pipeline metadata for scaffold runs", asy
 			"task-packet-built",
 			"dependency-context-collected",
 			"skills-rendered-or-disabled",
+			"capability-inventory-recorded",
 			"coordination-bridge-attached",
 			"prompt-rendered",
 			"prompt-artifact-written",
 		]);
 		assert.deepEqual(pipeline.stages[0]?.references, [`metadata/${task.id}.task-packet.json`]);
 		assert.deepEqual(pipeline.stages[1]?.references, [`metadata/${task.id}.inputs.json`]);
-		assert.deepEqual(pipeline.stages[3]?.references, [`metadata/${task.id}.coordination-bridge.md`]);
-		assert.deepEqual(pipeline.stages[5]?.references, [`prompts/${task.id}.md`]);
+		assert.deepEqual(pipeline.stages[3]?.references, [`metadata/${task.id}.capabilities.json`]);
+		assert.deepEqual(pipeline.stages[4]?.references, [`metadata/${task.id}.coordination-bridge.md`]);
+		assert.deepEqual(pipeline.stages[6]?.references, [`prompts/${task.id}.md`]);
 		assert.equal(pipeline.stages[2]?.details?.disabled, false);
 		assert.equal(typeof pipeline.stages[2]?.details?.skillInstructionCount, "number");
 	} finally {
@@ -77,12 +79,14 @@ test("prompt pipeline omits artifact references outside the artifacts root", () 
 		taskId: "task-1",
 		inputsArtifact: { kind: "metadata", path: path.join(`${artifactsRoot}-sibling`, "task-1.inputs.json"), createdAt: "2026-05-05T00:00:00.000Z", producer: "test", retention: "run" },
 		coordinationArtifact: { kind: "metadata", path: path.join(artifactsRoot, "metadata", "task-1.coordination-bridge.md"), createdAt: "2026-05-05T00:00:00.000Z", producer: "test", retention: "run" },
+		capabilityArtifact: { kind: "metadata", path: path.join(artifactsRoot, "metadata", "task-1.capabilities.json"), createdAt: "2026-05-05T00:00:00.000Z", producer: "test", retention: "run" },
 		promptArtifact: { kind: "prompt", path: path.join(artifactsRoot, "prompts", "task-1.md"), createdAt: "2026-05-05T00:00:00.000Z", producer: "test", retention: "run" },
 		skillInstructionCount: 0,
 		skillsDisabled: true,
 	});
 
 	assert.deepEqual(pipeline.stages[1]?.references, ["metadata/task-1.inputs.json"]);
-	assert.deepEqual(pipeline.stages[3]?.references, ["metadata/task-1.coordination-bridge.md"]);
-	assert.deepEqual(pipeline.stages[5]?.references, ["prompts/task-1.md"]);
+	assert.deepEqual(pipeline.stages[3]?.references, ["metadata/task-1.capabilities.json"]);
+	assert.deepEqual(pipeline.stages[4]?.references, ["metadata/task-1.coordination-bridge.md"]);
+	assert.deepEqual(pipeline.stages[6]?.references, ["prompts/task-1.md"]);
 });
