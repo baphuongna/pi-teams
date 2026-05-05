@@ -15,6 +15,7 @@ export interface BuildPiWorkerArgsInput {
 	model?: string;
 	sessionEnabled?: boolean;
 	maxDepth?: number;
+	skillPaths?: string[];
 	env?: NodeJS.ProcessEnv;
 }
 
@@ -78,6 +79,7 @@ export function buildPiWorkerArgs(input: BuildPiWorkerArgsInput): BuildPiWorkerA
 		args.push("--extension", PROMPT_RUNTIME_EXTENSION_PATH);
 	}
 	if (!input.agent.inheritSkills) args.push("--no-skills");
+	for (const skillPath of input.skillPaths ?? []) args.push("--skill", skillPath);
 
 	let tempDir: string | undefined;
 	if (input.agent.systemPrompt) {

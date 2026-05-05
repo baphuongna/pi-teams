@@ -81,6 +81,13 @@ export function subagentToolResult(text: string, details: Record<string, unknown
 	return { content: [{ type: "text" as const, text }], details, isError };
 }
 
+function parseSkillParam(value: unknown): string | string[] | false | undefined {
+	if (value === false) return false;
+	if (typeof value === "string") return value;
+	if (Array.isArray(value) && value.every((entry) => typeof entry === "string")) return value;
+	return undefined;
+}
+
 export function __test__subagentSpawnParams(params: Record<string, unknown>, ctx: Pick<ExtensionContext, "cwd">): SubagentSpawnOptions {
 	return {
 		cwd: ctx.cwd,
@@ -89,6 +96,7 @@ export function __test__subagentSpawnParams(params: Record<string, unknown>, ctx
 		prompt: typeof params.prompt === "string" ? params.prompt : "",
 		background: params.run_in_background === true,
 		model: typeof params.model === "string" && params.model.trim() ? params.model.trim() : undefined,
+		skill: parseSkillParam(params.skill),
 		maxTurns: typeof params.max_turns === "number" && Number.isFinite(params.max_turns) ? params.max_turns : undefined,
 	};
 }

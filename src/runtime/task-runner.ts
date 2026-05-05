@@ -48,6 +48,7 @@ export interface TaskRunnerInput {
 	dependencyContextText?: string;
 	skillBlock?: string;
 	skillNames?: string[];
+	skillPaths?: string[];
 	/** Optional callback for JSON events from child Pi. Used for overflow recovery tracking. */
 	onJsonEvent?: (taskId: string, runId: string, event: unknown) => void;
 }
@@ -102,7 +103,7 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 	const skillArtifact = input.skillBlock ? writeArtifact(manifest.artifactsRoot, {
 		kind: "metadata",
 		relativePath: `metadata/${task.id}.skills.md`,
-		content: [`Selected skills: ${input.skillNames?.join(", ") ?? "(none)"}`, "", input.skillBlock, ""].join("\n"),
+		content: [`Selected skills: ${input.skillNames?.join(", ") ?? "(none)"}`, `Skill paths passed to child Pi: ${(input.skillPaths ?? []).length}`, "", input.skillBlock, ""].join("\n"),
 		producer: task.id,
 	}) : undefined;
 	const coordinationArtifact = writeArtifact(manifest.artifactsRoot, {
@@ -160,6 +161,7 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 				signal: input.signal,
 				transcriptPath,
 				maxDepth: input.limits?.maxTaskDepth,
+				skillPaths: input.skillPaths,
 				onSpawn: (pid) => {
 					({ task, tasks } = checkpointTask(manifest, tasks, task, "child-spawned", pid));
 				},

@@ -17,6 +17,7 @@ export interface SubagentSpawnOptions {
 	prompt: string;
 	background: boolean;
 	model?: string;
+	skill?: string | string[] | false;
 	maxTurns?: number;
 	ownerSessionGeneration?: number;
 }
@@ -34,6 +35,7 @@ export interface SubagentRecord {
 	error?: string;
 	resultConsumed?: boolean;
 	model?: string;
+	skill?: string | string[] | false;
 	background: boolean;
 	ownerSessionGeneration?: number;
 	stuckNotified?: boolean;
@@ -138,6 +140,7 @@ export class SubagentManager {
 			status: options.background && this.runningBackground >= this.maxConcurrent ? "queued" : "running",
 			startedAt: Date.now(),
 			model: options.model,
+			skill: options.skill,
 			background: options.background,
 			ownerSessionGeneration: options.ownerSessionGeneration,
 		};

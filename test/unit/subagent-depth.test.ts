@@ -54,6 +54,13 @@ test("worker args ignore invalid thinking levels when inheriting parent model", 
 	assert.equal(result.args.includes("--thinking"), false);
 });
 
+test("worker args pass selected skill paths explicitly even with inherited skill discovery disabled", () => {
+	const result = buildPiWorkerArgs({ task: "skills", agent, skillPaths: ["/tmp/pi-crew-skill-a", "/tmp/pi-crew-skill-b"] });
+	assert.ok(result.args.includes("--no-skills"));
+	const skillIndexes = result.args.map((value, index) => value === "--skill" ? index : -1).filter((index) => index >= 0);
+	assert.deepEqual(skillIndexes.map((index) => result.args[index + 1]), ["/tmp/pi-crew-skill-a", "/tmp/pi-crew-skill-b"]);
+});
+
 test("recursive child worker at max depth is blocked before provider execution", async () => {
 	const previousDepth = process.env.PI_CREW_DEPTH;
 	const previousMax = process.env.PI_CREW_MAX_DEPTH;

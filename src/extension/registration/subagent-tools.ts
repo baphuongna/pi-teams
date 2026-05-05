@@ -29,6 +29,7 @@ export function registerSubagentTools(pi: ExtensionAPI, subagentManager: Subagen
 			description: Type.String({ description: "Short 3-5 word task description." }),
 			subagent_type: Type.String({ description: "pi-crew agent name, e.g. explorer, planner, executor, reviewer, verifier, writer, security-reviewer, test-engineer." }),
 			model: Type.Optional(Type.String({ description: "Optional model override. If omitted, pi-crew uses Pi-configured model fallback." })),
+			skill: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String()), Type.Boolean()], { description: "Skill name(s) to inject for this subagent, or false to disable selected/default skills." })),
 			max_turns: Type.Optional(Type.Number({ description: "Reserved for live-session subagents; child-process runtime may ignore this." })),
 			run_in_background: Type.Optional(Type.Boolean({ description: "Run in background and return an agent ID immediately." })),
 		}) as never,
@@ -39,7 +40,7 @@ export function registerSubagentTools(pi: ExtensionAPI, subagentManager: Subagen
 			const spawnOptions = __test__subagentSpawnParams(params as Record<string, unknown>, ctx);
 			spawnOptions.ownerSessionGeneration = options.ownerSessionGeneration?.();
 			if (!spawnOptions.prompt.trim()) return subagentToolResult(t("agent.requiresPrompt"), {}, true);
-			const runner = async (currentOptions: SubagentSpawnOptions, childSignal?: AbortSignal) => handleTeamTool({ action: "run", agent: currentOptions.type, goal: currentOptions.prompt, model: currentOptions.model, async: currentOptions.background, config: currentOptions.maxTurns ? { runtime: { maxTurns: currentOptions.maxTurns } } : undefined } as TeamToolParamsValue, currentOptions.background ? { ...ctx, signal: childSignal } : { ...ctx, signal: childSignal });
+			const runner = async (currentOptions: SubagentSpawnOptions, childSignal?: AbortSignal) => handleTeamTool({ action: "run", agent: currentOptions.type, goal: currentOptions.prompt, model: currentOptions.model, skill: currentOptions.skill, async: currentOptions.background, config: currentOptions.maxTurns ? { runtime: { maxTurns: currentOptions.maxTurns } } : undefined } as TeamToolParamsValue, currentOptions.background ? { ...ctx, signal: childSignal } : { ...ctx, signal: childSignal });
 			const record = subagentManager.spawn(spawnOptions, runner, spawnOptions.background ? undefined : signal);
 			if (spawnOptions.background || record.status === "queued") {
 				// Phase 1.1a: Terminate turn for background queued — no LLM follow-up needed.

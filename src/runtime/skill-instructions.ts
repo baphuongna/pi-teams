@@ -13,16 +13,16 @@ const MAX_SKILL_NAME_CHARS = 80;
 const SKILL_CACHE_MAX_ENTRIES = 128;
 
 const DEFAULT_ROLE_SKILLS: Record<string, string[]> = {
-	explorer: ["read-only-explorer", "safe-bash"],
-	analyst: ["read-only-explorer", "delegation-patterns"],
-	planner: ["delegation-patterns", "task-packet"],
-	critic: ["read-only-explorer", "verify-evidence"],
-	executor: ["state-mutation-locking", "safe-bash", "verify-evidence"],
-	reviewer: ["read-only-explorer", "verify-evidence"],
-	"security-reviewer": ["ownership-session-security", "safe-bash", "verify-evidence"],
-	"test-engineer": ["verify-evidence", "safe-bash"],
-	verifier: ["verify-evidence", "runtime-state-reader"],
-	writer: ["verify-evidence"],
+	explorer: ["read-only-explorer", "context-artifact-hygiene"],
+	analyst: ["read-only-explorer", "requirements-to-task-packet"],
+	planner: ["delegation-patterns", "requirements-to-task-packet"],
+	critic: ["read-only-explorer", "multi-perspective-review"],
+	executor: ["state-mutation-locking", "safe-bash", "verification-before-done"],
+	reviewer: ["read-only-explorer", "multi-perspective-review"],
+	"security-reviewer": ["secure-agent-orchestration-review", "ownership-session-security"],
+	"test-engineer": ["verification-before-done", "safe-bash"],
+	verifier: ["verification-before-done", "runtime-state-reader"],
+	writer: ["context-artifact-hygiene", "verify-evidence"],
 };
 
 export interface ResolveTaskSkillsInput {
@@ -138,10 +138,17 @@ function compactSkillContent(content: string): string {
 	return `${truncated}\n\n[skill instructions truncated]`;
 }
 
-export function renderSkillInstructions(input: RenderSkillInstructionsInput): { names: string[]; block: string } {
+export interface RenderedSkillInstructions {
+	names: string[];
+	paths: string[];
+	block: string;
+}
+
+export function renderSkillInstructions(input: RenderSkillInstructionsInput): RenderedSkillInstructions {
 	const names = resolveTaskSkillNames(input);
-	if (names.length === 0) return { names, block: "" };
+	if (names.length === 0) return { names, paths: [], block: "" };
 	const sections: string[] = [];
+	const skillPaths: string[] = [];
 	let total = 0;
 	for (const name of names) {
 		const safeName = sanitizeSkillName(name);
@@ -152,6 +159,7 @@ export function renderSkillInstructions(input: RenderSkillInstructionsInput): { 
 			total += missing.length;
 			continue;
 		}
+		skillPaths.push(path.dirname(loaded.path));
 		const description = frontmatterDescription(loaded.content);
 		const source = loaded.source === "project" ? `project:skills/${safeName}` : `package:skills/${safeName}`;
 		const header = [`## ${safeName}`, description ? `Description: ${description}` : undefined, `Source: ${source}`].filter(Boolean).join("\n");
@@ -165,6 +173,7 @@ export function renderSkillInstructions(input: RenderSkillInstructionsInput): { 
 	}
 	return {
 		names,
+		paths: [...new Set(skillPaths)],
 		block: [
 			"# Applicable Skills",
 			"The following skills were selected for this worker. Follow them when they match the current task. If a selected skill conflicts with the explicit task packet, project AGENTS.md, or user request, follow the stricter/higher-priority instruction and report the conflict.",

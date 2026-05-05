@@ -88,6 +88,7 @@ export interface ChildPiRunInput {
 	task: string;
 	agent: AgentConfig;
 	model?: string;
+	skillPaths?: string[];
 	signal?: AbortSignal;
 	transcriptPath?: string;
 	onStdoutLine?: (line: string) => void;
@@ -283,7 +284,7 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 		if (mock === "retryable-failure") return { exitCode: 1, stdout: "", stderr: "rate limit: mock failure" };
 		return { exitCode: 1, stdout: "", stderr: `mock failure: ${mock}` };
 	}
-	const built = buildPiWorkerArgs({ task: input.task, agent: input.agent, model: input.model, sessionEnabled: false, maxDepth: input.maxDepth });
+	const built = buildPiWorkerArgs({ task: input.task, agent: input.agent, model: input.model, sessionEnabled: false, maxDepth: input.maxDepth, skillPaths: input.skillPaths });
 	const spawnSpec = getPiSpawnCommand(built.args);
 	try {
 		return await new Promise<ChildPiRunResult>((resolve) => {

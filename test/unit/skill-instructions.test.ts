@@ -43,7 +43,11 @@ const agent: AgentConfig = { name: "explorer", description: "", source: "builtin
 
 test("defaultSkillsForRole maps pi-crew roles to useful skills", () => {
 	assert.ok(defaultSkillsForRole("explorer").includes("read-only-explorer"));
+	assert.ok(defaultSkillsForRole("analyst").includes("requirements-to-task-packet"));
+	assert.ok(defaultSkillsForRole("reviewer").includes("multi-perspective-review"));
+	assert.ok(defaultSkillsForRole("security-reviewer").includes("secure-agent-orchestration-review"));
 	assert.ok(defaultSkillsForRole("security-reviewer").includes("ownership-session-security"));
+	assert.ok(defaultSkillsForRole("verifier").includes("verification-before-done"));
 });
 
 test("resolveTaskSkillNames combines role defaults, agent, team role, step, and override", () => {
@@ -86,6 +90,7 @@ test("renderSkillInstructions loads selected SKILL.md content for worker prompts
 	assert.match(rendered.block, /verify-evidence/);
 	assert.match(rendered.block, /Final verification evidence checklist/);
 	assert.match(rendered.block, /Source: (project|package):skills\/verify-evidence/);
+	assert.ok(rendered.paths.some((entry) => entry.endsWith(path.join("skills", "verify-evidence"))));
 	assert.doesNotMatch(rendered.block, new RegExp(process.cwd().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
 
@@ -147,4 +152,11 @@ test("renderTaskPrompt includes the selected skill instruction block", () => {
 	assert.match(prompt, /# Applicable Skills/);
 	assert.match(prompt, /read-only-explorer/);
 	assert.match(prompt, /# Task Packet|Task:/);
+});
+
+test("distilled awesome-agent-skills are available to default roles", () => {
+	const rendered = renderSkillInstructions({ cwd: process.cwd(), role: "security-reviewer" });
+	assert.match(rendered.block, /secure-agent-orchestration-review/);
+	assert.match(rendered.block, /prompt injection/);
+	assert.doesNotMatch(rendered.block, new RegExp(process.cwd().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
