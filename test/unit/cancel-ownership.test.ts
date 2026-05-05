@@ -48,7 +48,9 @@ describe("abortOwned", () => {
 			assert.equal(loaded?.manifest.status, "cancelled");
 			assert.match(loaded?.manifest.summary ?? "", /leader_interrupted/);
 			assert.match(loaded?.tasks[0]?.error ?? "", /leader stopped run/);
-			assert.ok(readEvents(run.manifest.eventsPath).some((event) => event.type === "task.cancelled" && event.taskId === "task-1" && event.data?.reason === "leader_interrupted"));
+			const events = readEvents(run.manifest.eventsPath);
+			assert.ok(events.some((event) => event.type === "task.cancelled" && event.taskId === "task-1" && event.data?.reason === "leader_interrupted"));
+			assert.ok(events.some((event) => event.type === "run.cancelled" && event.data?.reason === "leader_interrupted"));
 		} finally {
 			fs.rmSync(run.cwd, { recursive: true, force: true });
 		}

@@ -100,7 +100,7 @@ export function handleCancel(params: TeamToolParamsValue, ctx: TeamContext): PiT
 		for (const taskId of abortResult.abortedIds) {
 			appendEvent(loaded.manifest.eventsPath, { type: "task.cancelled", runId: loaded.manifest.runId, taskId, message: cancelMessage, data: { reason: cancelReason.code } });
 		}
-		const updated = updateRunStatus(loaded.manifest, "cancelled", `${cancelMessage} Already-finished worker processes are not retroactively changed.`);
+		const updated = updateRunStatus(loaded.manifest, "cancelled", `${cancelMessage} Already-finished worker processes are not retroactively changed.`, { data: { reason: cancelReason.code } });
 
 		// Build descriptive message including foreign/missing info
 		const parts = [`Cancelled run ${updated.runId}.`];

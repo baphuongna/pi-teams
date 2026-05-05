@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { __test__mergeTaskUpdates, executeTeamRun } from "../../src/runtime/team-runner.ts";
 import { createRunManifest, saveRunTasks } from "../../src/state/state-store.ts";
+import { readEvents } from "../../src/state/event-log.ts";
 import type { TeamTaskState } from "../../src/state/types.ts";
 
 function task(id: string, status: TeamTaskState["status"]): TeamTaskState {
@@ -46,6 +47,7 @@ test("executeTeamRun records structured cancellation reason", async () => {
 		assert.equal(result.manifest.status, "cancelled");
 		assert.match(result.manifest.summary ?? "", /leader_interrupted/);
 		assert.match(result.tasks[0]?.error ?? "", /leader cancelled run/);
+		assert.ok(readEvents(created.manifest.eventsPath).some((event) => event.type === "run.cancelled" && event.data?.reason === "leader_interrupted"));
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}

@@ -196,7 +196,12 @@ export async function saveRunTasksAsync(manifest: TeamRunManifest, tasks: TeamTa
 	invalidateRunCache(manifest.stateRoot);
 }
 
-export function updateRunStatus(manifest: TeamRunManifest, status: TeamRunManifest["status"], summary?: string): TeamRunManifest {
+export interface UpdateRunStatusOptions {
+	data?: Record<string, unknown>;
+	metadata?: Parameters<typeof appendEvent>[1]["metadata"];
+}
+
+export function updateRunStatus(manifest: TeamRunManifest, status: TeamRunManifest["status"], summary?: string, options: UpdateRunStatusOptions = {}): TeamRunManifest {
 	if (!canTransitionRunStatus(manifest.status, status)) {
 		throw new Error(`Invalid run status transition: ${manifest.status} -> ${status}`);
 	}
@@ -206,11 +211,13 @@ export function updateRunStatus(manifest: TeamRunManifest, status: TeamRunManife
 		type: `run.${status}`,
 		runId: updated.runId,
 		message: summary,
+		...(options.data ? { data: options.data } : {}),
 		metadata: {
 			provenance: "team_runner",
 			sessionIdentity: { title: updated.team, workspace: updated.cwd, purpose: updated.goal },
 			ownership: { owner: updated.team, workflowScope: updated.workflow ?? "manual", watcherAction: "act" },
 			confidence: "high",
+			...options.metadata,
 		},
 	});
 	return updated;
