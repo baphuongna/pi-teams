@@ -105,31 +105,20 @@ export class DeliveryCoordinator {
 		const batch = this.pending.splice(0);
 		this.flushing = true;
 		try {
-		for (const delivery of batch) {
-			if (delivery.type === "steer" && delivery.generation !== undefined && delivery.generation !== this.generation) {
-				logInternalError("delivery-coordinator.flush.stale", undefined, `runId=${delivery.runId} type=${delivery.type}`);
-				continue;
-			}
-			try {
-				switch (delivery.type) {
-					case "result":
-						this.deliverResult(delivery.runId, delivery.payload);
-						break;
-					case "notification": {
-						const notification = delivery.payload as NotificationDescriptor;
-						this.deliverNotification(notification);
-						break;
-					}
-					case "steer": {
-						const message = typeof delivery.payload === "string" ? delivery.payload : String(delivery.payload);
-						this.deliverSteer(delivery.runId, message);
-						break;
-					}
+			const retryLater: PendingDelivery[] = [];
+			for (const delivery of batch) {
+				if (delivery.type === "steer" && delivery.generation !== undefined && delivery.generation !== this.generation) {
+					logInternalError("delivery-coordinator.flush.stale", undefined, `runId=${delivery.runId} type=${delivery.type}`);
+					continue;
 				}
-			} catch (error) {
-				logInternalError("delivery-coordinator.flush", error, `runId=${delivery.runId} type=${delivery.type}`);
+				try {
+					if (!this.deliverQueued(delivery)) retryLater.push({ ...delivery, generation: this.generation });
+				} catch (error) {
+					logInternalError("delivery-coordinator.flush", error, `runId=${delivery.runId} type=${delivery.type}`);
+					retryLater.push({ ...delivery, generation: this.generation });
+				}
 			}
-		}
+			this.pending.unshift(...retryLater);
 		} finally {
 			this.flushing = false;
 		}
@@ -141,6 +130,32 @@ export class DeliveryCoordinator {
 		if (this.ttlTimer) {
 			clearInterval(this.ttlTimer);
 			this.ttlTimer = undefined;
+		}
+	}
+
+	private deliverQueued(delivery: PendingDelivery): boolean {
+		switch (delivery.type) {
+			case "result":
+				if (!this.deps.emit) return false;
+				this.deps.emit("pi-crew:run-result", delivery.payload);
+				return true;
+			case "notification": {
+				const notification = delivery.payload as NotificationDescriptor;
+				if (!this.deps.sendFollowUp) return false;
+				this.deps.sendFollowUp(notification.title, notification.body ?? "");
+				try {
+					this.deps.emit?.("pi-crew:notification", notification);
+				} catch {
+					// Secondary event delivery must not consume the user-facing notification.
+				}
+				return true;
+			}
+			case "steer": {
+				if (!this.deps.sendWakeUp) return false;
+				const message = typeof delivery.payload === "string" ? delivery.payload : String(delivery.payload);
+				this.deps.sendWakeUp(message);
+				return true;
+			}
 		}
 	}
 

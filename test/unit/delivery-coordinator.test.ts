@@ -110,12 +110,12 @@ describe("DeliveryCoordinator", () => {
 		dc.dispose();
 	});
 
-	it("does not recursively requeue failing deliveries during flush", () => {
+	it("requeues failing deliveries during flush without recursive retry", () => {
 		const dc = new DeliveryCoordinator({ emit: () => { throw new Error("persistent"); } });
 		dc.deliverResult("run1", { status: "completed" });
 		assert.equal(dc.getPendingCount(), 1);
 		dc.activate("session-1");
-		assert.equal(dc.getPendingCount(), 0);
+		assert.equal(dc.getPendingCount(), 1);
 		dc.dispose();
 	});
 
@@ -157,6 +157,21 @@ describe("DeliveryCoordinator", () => {
 		const dc = new DeliveryCoordinator({ emit: (_event, data) => { if (shouldThrow) throw new Error("transient"); emitted.push(data); } });
 		dc.activate("session-1");
 		dc.deliverResult("run1", { status: "completed" });
+		assert.equal(dc.getPendingCount(), 1);
+		dc.deactivate();
+		shouldThrow = false;
+		dc.activate("session-2");
+		assert.equal(dc.getPendingCount(), 0);
+		assert.deepEqual(emitted, [{ status: "completed" }]);
+		dc.dispose();
+	});
+
+	it("retries flush failures on a later activation", () => {
+		const emitted: unknown[] = [];
+		let shouldThrow = true;
+		const dc = new DeliveryCoordinator({ emit: (_event, data) => { if (shouldThrow) throw new Error("persistent"); emitted.push(data); } });
+		dc.deliverResult("run1", { status: "completed" });
+		dc.activate("session-1");
 		assert.equal(dc.getPendingCount(), 1);
 		dc.deactivate();
 		shouldThrow = false;
