@@ -629,8 +629,8 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 							appendEvent(manifest.eventsPath, { type: "crew.task.retry_attempt", runId: manifest.runId, taskId: task.id, message: error.message, data: { attempt, attemptId: info.attemptId, delayMs } });
 							input.metricRegistry?.histogram("crew.task.retry_delay_ms", "Retry backoff delay, milliseconds").observe({ runId: manifest.runId, taskId: task.id }, delayMs);
 						},
-						onRetryGivenUp: (attempts, error) => {
-							appendDeadletter(manifest, { runId: manifest.runId, taskId: task.id, reason: "max-retries", attempts, lastError: error.message, timestamp: new Date().toISOString() });
+						onRetryGivenUp: (attempts, error, info) => {
+							appendDeadletter(manifest, { runId: manifest.runId, taskId: task.id, reason: "max-retries", attempts, attemptId: info.attemptId, lastError: error.message, timestamp: new Date().toISOString() });
 							input.metricRegistry?.counter("crew.task.deadletter_total", "Deadletter triggers by reason").inc({ reason: "max-retries" });
 							input.metricRegistry?.histogram("crew.task.retry_count", "Retries per task", [0, 1, 2, 3, 5, 10]).observe({ runId: manifest.runId, team: input.team.name }, Math.max(0, attempts - 1));
 						},

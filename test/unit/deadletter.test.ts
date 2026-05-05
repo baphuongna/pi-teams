@@ -13,8 +13,10 @@ test("deadletter appends and reads entries", () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-deadletter-"));
 	try {
 		const { manifest } = createRunManifest({ cwd, team, workflow, goal: "dead" });
-		appendDeadletter(manifest, { runId: manifest.runId, taskId: "01_s", reason: "max-retries", attempts: 3, lastError: "boom", timestamp: "2026-01-01T00:00:00.000Z" });
-		assert.equal(readDeadletter(manifest)[0]?.reason, "max-retries");
+		appendDeadletter(manifest, { runId: manifest.runId, taskId: "01_s", reason: "max-retries", attempts: 3, attemptId: `${manifest.runId}:01_s:attempt-3`, lastError: "boom", timestamp: "2026-01-01T00:00:00.000Z" });
+		const entry = readDeadletter(manifest)[0];
+		assert.equal(entry?.reason, "max-retries");
+		assert.equal(entry?.attemptId, `${manifest.runId}:01_s:attempt-3`);
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}

@@ -12,6 +12,7 @@ export interface DeadletterEntry {
 	reason: DeadletterReason;
 	attempts: number;
 	lastError?: string;
+	attemptId?: string;
 	timestamp: string;
 }
 
