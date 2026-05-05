@@ -478,6 +478,10 @@ async function mailboxFromAsync(manifest: TeamRunManifest, agents: CrewAgentReco
 	return { inboxUnread: inbox.count, outboxPending: outbox.count, needsAttention: inbox.count + attentionAgents, approximate: inbox.approximate || outbox.approximate };
 }
 
+function cancellationReasonFromEvents(events: TeamEvent[]): string | undefined {
+	return [...events].reverse().find((event) => event.type === "run.cancelled" && typeof event.data?.reason === "string")?.data?.reason as string | undefined;
+}
+
 function signatureFor(input: Omit<RunUiSnapshot, "signature" | "fetchedAt">, stamps: SnapshotStamps): string {
 	try {
 		const digest = createHash("sha256");
@@ -489,7 +493,8 @@ function signatureFor(input: Omit<RunUiSnapshot, "signature" | "fetchedAt">, sta
 		usage: input.usage,
 		mailbox: input.mailbox,
 		groupJoins: input.groupJoins,
-		events: input.recentEvents.map((event) => [event.metadata?.seq, event.time, event.type, event.taskId, event.message]),
+		events: input.recentEvents.map((event) => [event.metadata?.seq, event.time, event.type, event.taskId, event.message, event.data?.reason]),
+		cancellationReason: input.cancellationReason,
 		output: input.recentOutputLines,
 		stamps,
 	}));
@@ -571,6 +576,7 @@ export function createRunSnapshotCache(cwd: string, options: RunSnapshotCacheOpt
 		}
 		const mailbox = mailboxFrom(loaded.manifest, agents);
 		const groupJoins = groupJoinsFrom(loaded.manifest);
+		const recentEvents = safeRecentEvents(loaded.manifest.eventsPath, recentEventsLimit);
 		const base = {
 			runId: loaded.manifest.runId,
 			cwd: loaded.manifest.cwd,
@@ -581,7 +587,8 @@ export function createRunSnapshotCache(cwd: string, options: RunSnapshotCacheOpt
 			usage: usageFrom(tasks, agents),
 			mailbox,
 			groupJoins,
-			recentEvents: safeRecentEvents(loaded.manifest.eventsPath, recentEventsLimit),
+			cancellationReason: cancellationReasonFromEvents(recentEvents),
+			recentEvents,
 			recentOutputLines: recentOutputLines(loaded.manifest, agents, recentOutputLimit),
 		};
 		const stamps = stampsFor(loaded.manifest, agents);
@@ -626,6 +633,7 @@ export function createRunSnapshotCache(cwd: string, options: RunSnapshotCacheOpt
 			usage: usageFrom(tasks, agents),
 			mailbox,
 			groupJoins,
+			cancellationReason: cancellationReasonFromEvents(recentEvents),
 			recentEvents,
 			recentOutputLines: recentOutput,
 		};

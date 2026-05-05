@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { saveCrewAgents } from "../../src/runtime/crew-agent-records.ts";
+import { appendEvent } from "../../src/state/event-log.ts";
 import { appendMailboxMessage } from "../../src/state/mailbox.ts";
 import { createRunManifest, saveRunManifest, saveRunTasks } from "../../src/state/state-store.ts";
 import type { TeamRunManifest, TeamTaskState } from "../../src/state/types.ts";
@@ -52,6 +53,19 @@ test("RunSnapshotCache returns previous valid snapshot on parse errors", () => {
 		const afterError = cache.refreshIfStale(manifest.runId);
 		assert.equal(afterError, first);
 		assert.equal(afterError.progress.total, first.progress.total);
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("RunSnapshotCache exposes structured cancellation reason", () => {
+	const cwd = tempCwd("pi-crew-snapshot-cancel-reason-");
+	try {
+		const { manifest } = fixtures(cwd);
+		appendEvent(manifest.eventsPath, { type: "run.cancelled", runId: manifest.runId, message: "leader stopped", data: { reason: "leader_interrupted" } });
+		const cache = createRunSnapshotCache(cwd, { ttlMs: 0 });
+		const snapshot = cache.refresh(manifest.runId);
+		assert.equal(snapshot.cancellationReason, "leader_interrupted");
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}

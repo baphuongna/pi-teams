@@ -46,6 +46,8 @@ export interface RunUiSnapshot {
 	usage: RunUiUsage;
 	mailbox: RunUiMailbox;
 	groupJoins?: RunUiGroupJoin[];
+	/** Structured cancellation reason from run.cancelled event data, when available. */
+	cancellationReason?: string;
 	recentEvents: TeamEvent[];
 	recentOutputLines: string[];
 }
