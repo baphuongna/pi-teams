@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { defaultSkillsForRole, normalizeSkillOverride, renderSkillInstructions, resolveTaskSkillNames } from "../../src/runtime/skill-instructions.ts";
+import { clearSkillInstructionCache, defaultSkillsForRole, normalizeSkillOverride, renderSkillInstructions, resolveTaskSkillNames } from "../../src/runtime/skill-instructions.ts";
 import { renderTaskPrompt } from "../../src/runtime/task-runner/prompt-builder.ts";
 import type { AgentConfig } from "../../src/agents/agent-config.ts";
 import type { TeamRunManifest, TeamTaskState } from "../../src/state/types.ts";
@@ -133,13 +133,39 @@ test("renderSkillInstructions truncates oversized individual skills", () => {
 	}
 });
 
+test("renderSkillInstructions caps selected skill count and missing-skill budget", () => {
+	const names = Array.from({ length: 100 }, (_, index) => `missing-${index}`);
+	const rendered = renderSkillInstructions({ cwd: process.cwd(), role: "unknown", override: names });
+	assert.equal(rendered.names.length, 32);
+	assert.match(rendered.block, /omitted \d+ selected skill\(s\): skill instruction budget exceeded/);
+	assert.ok(rendered.block.length < 7000);
+});
+
+test("renderSkillInstructions refreshes negative and stale cache entries", () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-skill-cache-"));
+	try {
+		clearSkillInstructionCache();
+		const missing = renderSkillInstructions({ cwd, role: "unknown", override: ["late-skill"] });
+		assert.match(missing.block, /no SKILL\.md file was found/);
+		writeProjectSkill(cwd, "late-skill", "# Late\n\ncreated after missing lookup");
+		const created = renderSkillInstructions({ cwd, role: "unknown", override: ["late-skill"] });
+		assert.match(created.block, /created after missing lookup/);
+		writeProjectSkill(cwd, "late-skill", "# Late\n\nupdated content");
+		const updated = renderSkillInstructions({ cwd, role: "unknown", override: ["late-skill"] });
+		assert.match(updated.block, /updated content/);
+	} finally {
+		clearSkillInstructionCache();
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
 test("renderSkillInstructions enforces total skill budget", () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-skill-"));
 	try {
 		const names = ["budget-a", "budget-b", "budget-c", "budget-d", "budget-e", "budget-f"];
 		for (const name of names) writeProjectSkill(cwd, name, `# ${name}\n\n${"B".repeat(5000)}`);
 		const rendered = renderSkillInstructions({ cwd, role: "unknown", override: names });
-		assert.match(rendered.block, /omitted: skill instruction budget exceeded/);
+		assert.match(rendered.block, /skill instruction budget exceeded/);
 		assert.ok(rendered.block.length < 13_000);
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });

@@ -25,7 +25,6 @@ import { childCorrelation, withCorrelation } from "../observability/correlation.
 import { resolveBatchConcurrency } from "./concurrency.ts";
 import { mapConcurrent } from "./parallel-utils.ts";
 import { permissionForRole } from "./role-permission.ts";
-import { renderSkillInstructions } from "./skill-instructions.ts";
 
 export interface ExecuteTeamRunInput {
 	manifest: TeamRunManifest;
@@ -585,8 +584,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 				const step = findStep(workflow, task);
 				const agent = findAgent(input.agents, task);
 				const teamRole = input.team.roles.find((role) => role.name === task.role);
-				const skills = renderSkillInstructions({ cwd: manifest.cwd, role: task.role, agent, teamRole, step, override: input.skillOverride });
-				const baseInput = { manifest, tasks, task, step, agent, signal: input.signal, executeWorkers: input.executeWorkers, runtimeKind: input.runtime?.kind, runtimeConfig: input.runtimeConfig, parentContext: input.parentContext, parentModel: input.parentModel, modelRegistry: input.modelRegistry, modelOverride: input.modelOverride, teamRoleModel: teamRole?.model, limits: input.limits, skillBlock: skills.block, skillNames: skills.names, skillPaths: skills.paths, onJsonEvent: input.onJsonEvent };
+				const baseInput = { manifest, tasks, task, step, agent, signal: input.signal, executeWorkers: input.executeWorkers, runtimeKind: input.runtime?.kind, runtimeConfig: input.runtimeConfig, parentContext: input.parentContext, parentModel: input.parentModel, modelRegistry: input.modelRegistry, modelOverride: input.modelOverride, teamRoleModel: teamRole?.model, teamRoleSkills: teamRole?.skills, skillOverride: input.skillOverride, limits: input.limits, onJsonEvent: input.onJsonEvent };
 				if (input.reliability?.autoRetry !== true) return withCorrelation(childCorrelation(manifest.runId, task.id), () => runTeamTask(baseInput));
 				let lastFailed: { manifest: TeamRunManifest; tasks: TeamTaskState[] } | undefined;
 				const attemptsSoFar: TaskAttemptState[] = [...(task.attempts ?? [])];

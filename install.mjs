@@ -3,7 +3,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-const agentDir = path.join(os.homedir(), ".pi", "agent");
+const home = process.env.PI_TEAMS_HOME?.trim() || os.homedir();
+const agentDir = path.join(home, ".pi", "agent");
 const configPath = path.join(agentDir, "pi-crew.json");
 const legacyConfigPath = path.join(agentDir, "extensions", "pi-crew", "config.json");
 const defaultConfig = {
@@ -29,7 +30,17 @@ const defaultConfig = {
     }
   },
   ui: {
-    showModel: true
+    widgetPlacement: "aboveEditor",
+    widgetMaxLines: 8,
+    powerbar: true,
+    dashboardPlacement: "center",
+    dashboardWidth: 72,
+    dashboardLiveRefreshMs: 1000,
+    autoOpenDashboard: false,
+    autoOpenDashboardForForegroundRuns: false,
+    showModel: true,
+    showTokens: true,
+    showTools: true
   }
 };
 

@@ -10,6 +10,7 @@ const PACKAGE_SKILLS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.u
 const MAX_SKILL_CHARS = 1500;
 const MAX_TOTAL_CHARS = 6000;
 const MAX_SKILL_NAME_CHARS = 80;
+const MAX_SELECTED_SKILLS = 32;
 const SKILL_CACHE_MAX_ENTRIES = 128;
 
 const DEFAULT_ROLE_SKILLS: Record<string, string[]> = {
@@ -69,7 +70,7 @@ export function defaultSkillsForRole(role: string): string[] {
 	return DEFAULT_ROLE_SKILLS[role] ?? [];
 }
 
-export function resolveTaskSkillNames(input: ResolveTaskSkillsInput): string[] {
+function collectTaskSkillNames(input: ResolveTaskSkillsInput): string[] {
 	if (input.override === false) return [];
 	const roleDefaultsDisabled = input.teamRole?.skills === false || input.step?.skills === false;
 	const names = roleDefaultsDisabled ? [] : defaultSkillsForRole(input.role);
@@ -80,6 +81,10 @@ export function resolveTaskSkillNames(input: ResolveTaskSkillsInput): string[] {
 	return unique(names);
 }
 
+export function resolveTaskSkillNames(input: ResolveTaskSkillsInput): string[] {
+	return collectTaskSkillNames(input).slice(0, MAX_SELECTED_SKILLS);
+}
+
 function candidateSkillDirs(cwd: string): Array<{ root: string; source: "project" | "package" }> {
 	return [
 		{ root: path.resolve(cwd, "skills"), source: "project" },
@@ -87,9 +92,17 @@ function candidateSkillDirs(cwd: string): Array<{ root: string; source: "project
 	];
 }
 
-const skillReadCache = new Map<string, { path: string; source: "project" | "package"; content: string } | undefined>();
+interface CachedSkillMarkdown {
+	path: string;
+	source: "project" | "package";
+	content: string;
+	mtimeMs: number;
+	size: number;
+}
 
-function rememberSkill(key: string, value: { path: string; source: "project" | "package"; content: string } | undefined): typeof value {
+const skillReadCache = new Map<string, CachedSkillMarkdown>();
+
+function rememberSkill(key: string, value: CachedSkillMarkdown): CachedSkillMarkdown {
 	if (skillReadCache.has(key)) skillReadCache.delete(key);
 	skillReadCache.set(key, value);
 	while (skillReadCache.size > SKILL_CACHE_MAX_ENTRIES) {
@@ -100,10 +113,25 @@ function rememberSkill(key: string, value: { path: string; source: "project" | "
 	return value;
 }
 
+export function clearSkillInstructionCache(): void {
+	skillReadCache.clear();
+}
+
+function cachedSkillFresh(value: CachedSkillMarkdown): boolean {
+	try {
+		const stat = fs.statSync(value.path);
+		return stat.mtimeMs === value.mtimeMs && stat.size === value.size;
+	} catch {
+		return false;
+	}
+}
+
 function readSkillMarkdown(cwd: string, name: string): { path: string; source: "project" | "package"; content: string } | undefined {
 	if (!isValidSkillName(name)) return undefined;
 	const cacheKey = `${path.resolve(cwd)}:${name}`;
-	if (skillReadCache.has(cacheKey)) return skillReadCache.get(cacheKey);
+	const cached = skillReadCache.get(cacheKey);
+	if (cached && cachedSkillFresh(cached)) return cached;
+	if (cached) skillReadCache.delete(cacheKey);
 	for (const entry of candidateSkillDirs(cwd)) {
 		try {
 			const relative = path.join(name, "SKILL.md");
@@ -111,12 +139,13 @@ function readSkillMarkdown(cwd: string, name: string): { path: string; source: "
 			if (!fs.existsSync(contained)) continue;
 			if (fs.lstatSync(contained).isSymbolicLink()) continue;
 			const filePath = resolveRealContainedPath(entry.root, relative);
-			return rememberSkill(cacheKey, { path: filePath, source: entry.source, content: fs.readFileSync(filePath, "utf-8") });
+			const stat = fs.statSync(filePath);
+			return rememberSkill(cacheKey, { path: filePath, source: entry.source, content: fs.readFileSync(filePath, "utf-8"), mtimeMs: stat.mtimeMs, size: stat.size });
 		} catch {
 			continue;
 		}
 	}
-	return rememberSkill(cacheKey, undefined);
+	return undefined;
 }
 
 function frontmatterDescription(content: string): string | undefined {
@@ -145,18 +174,26 @@ export interface RenderedSkillInstructions {
 }
 
 export function renderSkillInstructions(input: RenderSkillInstructionsInput): RenderedSkillInstructions {
-	const names = resolveTaskSkillNames(input);
+	const allNames = collectTaskSkillNames(input);
+	const names = allNames.slice(0, MAX_SELECTED_SKILLS);
+	const overflowCount = Math.max(0, allNames.length - names.length);
 	if (names.length === 0) return { names, paths: [], block: "" };
 	const sections: string[] = [];
 	const skillPaths: string[] = [];
 	let total = 0;
+	let omittedCount = overflowCount;
+	const pushSection = (section: string): boolean => {
+		if (total + section.length > MAX_TOTAL_CHARS) return false;
+		sections.push(section);
+		total += section.length;
+		return true;
+	};
 	for (const name of names) {
 		const safeName = sanitizeSkillName(name);
 		const loaded = readSkillMarkdown(input.cwd, name);
 		if (!loaded) {
 			const missing = `## ${safeName}\n\nSkill '${safeName}' was selected but no SKILL.md file was found. Continue with the task packet and report this missing skill.`;
-			sections.push(missing);
-			total += missing.length;
+			if (!pushSection(missing)) omittedCount += 1;
 			continue;
 		}
 		skillPaths.push(path.dirname(loaded.path));
@@ -164,12 +201,13 @@ export function renderSkillInstructions(input: RenderSkillInstructionsInput): Re
 		const source = loaded.source === "project" ? `project:skills/${safeName}` : `package:skills/${safeName}`;
 		const header = [`## ${safeName}`, description ? `Description: ${description}` : undefined, `Source: ${source}`].filter(Boolean).join("\n");
 		const section = `${header}\n\n${compactSkillContent(loaded.content)}`;
-		if (total + section.length > MAX_TOTAL_CHARS) {
-			sections.push(`## ${name}\n\n[omitted: skill instruction budget exceeded]`);
-			continue;
+		if (!pushSection(section)) omittedCount += 1;
+	}
+	if (omittedCount > 0) {
+		const summary = `## Omitted skills\n\n[omitted ${omittedCount} selected skill(s): skill instruction budget exceeded]`;
+		if (!pushSection(summary) && sections.length > 0) {
+			sections[sections.length - 1] = summary;
 		}
-		sections.push(section);
-		total += section.length;
 	}
 	return {
 		names,

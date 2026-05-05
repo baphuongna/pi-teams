@@ -28,6 +28,7 @@ import { cleanResultText, isFinalChildEvent } from "./task-runner/result-utils.t
 import { evaluateCompletionMutationGuard } from "./completion-guard.ts";
 import { appendTaskAttentionEvent } from "./attention-events.ts";
 import { parseSupervisorContactFromLine, recordSupervisorContact } from "./supervisor-contact.ts";
+import { renderSkillInstructions } from "./skill-instructions.ts";
 
 export interface TaskRunnerInput {
 	manifest: TeamRunManifest;
@@ -44,6 +45,8 @@ export interface TaskRunnerInput {
 	modelRegistry?: unknown;
 	modelOverride?: string;
 	teamRoleModel?: string;
+	teamRoleSkills?: string[] | false;
+	skillOverride?: string[] | false;
 	limits?: CrewLimitsConfig;
 	dependencyContextText?: string;
 	skillBlock?: string;
@@ -79,8 +82,12 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 	upsertCrewAgent(manifest, recordFromTask(manifest, task, runtimeKind));
 	appendEvent(manifest.eventsPath, { type: "task.started", runId: manifest.runId, taskId: task.id, data: { role: task.role, agent: task.agent, runtime: runtimeKind, cwd: task.cwd, worktreePath: workspace.worktreePath, worktreeBranch: workspace.branch, worktreeReused: workspace.reused } });
 	const permissionMode = permissionForRole(task.role);
+	const renderedSkills = input.skillBlock === undefined ? renderSkillInstructions({ cwd: task.cwd, role: task.role, agent: input.agent, teamRole: { skills: input.teamRoleSkills }, step: input.step, override: input.skillOverride }) : undefined;
+	const skillBlock = input.skillBlock ?? renderedSkills?.block;
+	const skillNames = input.skillNames ?? renderedSkills?.names;
+	const skillPaths = input.skillPaths ?? renderedSkills?.paths;
 
-	const prompt = renderTaskPrompt(manifest, input.step, task, input.agent, input.skillBlock);
+	const prompt = renderTaskPrompt(manifest, input.step, task, input.agent, skillBlock);
 	const promptArtifact = writeArtifact(manifest.artifactsRoot, {
 		kind: "prompt",
 		relativePath: `prompts/${task.id}.md`,
@@ -100,10 +107,10 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 
 	let startupEvidence = createStartupEvidence({ command: runtimeKind === "child-process" ? "pi" : runtimeKind === "live-session" ? "live-session" : "safe-scaffold", startedAt: new Date(task.startedAt ?? new Date().toISOString()), finishedAt: new Date(), promptSentAt: new Date(task.startedAt ?? new Date().toISOString()), promptAccepted: true, exitCode: 0 });
 	const inputsArtifact = writeTaskInputsArtifact(manifest, task, dependencyContext);
-	const skillArtifact = input.skillBlock ? writeArtifact(manifest.artifactsRoot, {
+	const skillArtifact = skillBlock ? writeArtifact(manifest.artifactsRoot, {
 		kind: "metadata",
 		relativePath: `metadata/${task.id}.skills.md`,
-		content: [`Selected skills: ${input.skillNames?.join(", ") ?? "(none)"}`, `Skill paths passed to child Pi: ${(input.skillPaths ?? []).length}`, "", input.skillBlock, ""].join("\n"),
+		content: [`Selected skills: ${skillNames?.join(", ") ?? "(none)"}`, `Skill paths passed to child Pi: ${(skillPaths ?? []).length}`, "", skillBlock, ""].join("\n"),
 		producer: task.id,
 	}) : undefined;
 	const coordinationArtifact = writeArtifact(manifest.artifactsRoot, {
@@ -113,7 +120,7 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 		producer: task.id,
 	});
 	if (runtimeKind === "child-process") {
-		const modelRoutingPlan = buildConfiguredModelRouting({ overrideModel: input.modelOverride, stepModel: input.step.model, teamRoleModel: input.teamRoleModel, agentModel: input.agent.model, fallbackModels: input.agent.fallbackModels, parentModel: input.parentModel, modelRegistry: input.modelRegistry, cwd: manifest.cwd });
+		const modelRoutingPlan = buildConfiguredModelRouting({ overrideModel: input.modelOverride, stepModel: input.step.model, teamRoleModel: input.teamRoleModel, agentModel: input.agent.model, fallbackModels: input.agent.fallbackModels, parentModel: input.parentModel, modelRegistry: input.modelRegistry, cwd: task.cwd });
 		const candidates = modelRoutingPlan.candidates;
 		const attemptModels = candidates.length > 0 ? candidates : [undefined];
 		const logs: string[] = [];
@@ -161,7 +168,7 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 				signal: input.signal,
 				transcriptPath,
 				maxDepth: input.limits?.maxTaskDepth,
-				skillPaths: input.skillPaths,
+				skillPaths,
 				onSpawn: (pid) => {
 					({ task, tasks } = checkpointTask(manifest, tasks, task, "child-spawned", pid));
 				},
