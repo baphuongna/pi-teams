@@ -12,12 +12,15 @@ test("runtime resolver defaults to child-process workers", async () => {
 test("runtime resolver supports explicit scaffold dry-run", async () => {
 	const runtime = await resolveCrewRuntime({ runtime: { mode: "scaffold" } }, {} as NodeJS.ProcessEnv);
 	assert.equal(runtime.kind, "scaffold");
+	assert.equal(runtime.safety, "explicit_dry_run");
 	assert.equal(runtime.steer, false);
 });
 
 test("runtime resolver lets config disable workers", async () => {
 	const runtime = await resolveCrewRuntime({ executeWorkers: false }, {} as NodeJS.ProcessEnv);
 	assert.equal(runtime.kind, "scaffold");
+	assert.equal(runtime.available, false);
+	assert.equal(runtime.safety, "blocked");
 	assert.match(runtime.reason ?? "", /disabled/);
 });
 

@@ -89,7 +89,7 @@ test("implementation blocks when completed assess artifact is unreadable", async
 		const { manifest, tasks } = createRunManifest({ cwd, team, workflow, goal: "missing artifact" });
 		const persistedTasks = tasks.map((task) => ({ ...task, status: "completed" as const, finishedAt: new Date().toISOString(), resultArtifact: { kind: "result" as const, path: path.join(cwd, "missing.txt"), createdAt: new Date().toISOString(), producer: task.id, retention: "run" as const } }));
 		saveRunTasks(manifest, persistedTasks);
-		const result = await executeTeamRun({ manifest, tasks: persistedTasks, team, workflow, agents: allAgents(discoverAgents(cwd)), executeWorkers: true, runtime: { kind: "child-process", requestedMode: "child-process", available: true, steer: false, resume: false, liveToolActivity: false, transcript: true } });
+		const result = await executeTeamRun({ manifest, tasks: persistedTasks, team, workflow, agents: allAgents(discoverAgents(cwd)), executeWorkers: true, runtime: { kind: "child-process", requestedMode: "child-process", available: true, steer: false, resume: false, liveToolActivity: false, transcript: true, safety: "trusted" } });
 		assert.equal(result.manifest.status, "blocked");
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
@@ -113,7 +113,7 @@ test("requirePlanApproval blocks mutating adaptive tasks until approved", async 
 		const assessed = tasks.map((task) => ({ ...task, status: "completed" as const, finishedAt: new Date().toISOString(), resultArtifact: { kind: "result" as const, path: planPath, createdAt: new Date().toISOString(), producer: task.id, retention: "run" as const } }));
 		saveRunTasks(manifest, assessed);
 
-		const blocked = await executeTeamRun({ manifest, tasks: assessed, team, workflow, agents: allAgents(discoverAgents(cwd)), executeWorkers: true, runtimeConfig: { requirePlanApproval: true }, runtime: { kind: "child-process", requestedMode: "child-process", available: true, steer: false, resume: false, liveToolActivity: false, transcript: true } });
+		const blocked = await executeTeamRun({ manifest, tasks: assessed, team, workflow, agents: allAgents(discoverAgents(cwd)), executeWorkers: true, runtimeConfig: { requirePlanApproval: true }, runtime: { kind: "child-process", requestedMode: "child-process", available: true, steer: false, resume: false, liveToolActivity: false, transcript: true, safety: "trusted" } });
 		assert.equal(blocked.manifest.status, "blocked");
 		assert.equal(blocked.manifest.planApproval?.status, "pending");
 		assert.equal(blocked.tasks.find((task) => task.role === "executor")?.status, "queued");
@@ -165,7 +165,7 @@ test("requirePlanApproval gates persisted adaptive tasks on resume", async () =>
 		fs.writeFileSync(path.join(cwd, "assess.txt"), "stale plan", "utf-8");
 		saveRunManifest({ ...manifest, status: "blocked", summary: "waiting for resume" });
 		saveRunTasks(manifest, persistedTasks);
-		const result = await executeTeamRun({ manifest: { ...manifest, status: "blocked", summary: "waiting for resume" }, tasks: persistedTasks, team, workflow, agents: allAgents(discoverAgents(cwd)), executeWorkers: true, runtimeConfig: { requirePlanApproval: true }, runtime: { kind: "child-process", requestedMode: "child-process", available: true, steer: false, resume: false, liveToolActivity: false, transcript: true } });
+		const result = await executeTeamRun({ manifest: { ...manifest, status: "blocked", summary: "waiting for resume" }, tasks: persistedTasks, team, workflow, agents: allAgents(discoverAgents(cwd)), executeWorkers: true, runtimeConfig: { requirePlanApproval: true }, runtime: { kind: "child-process", requestedMode: "child-process", available: true, steer: false, resume: false, liveToolActivity: false, transcript: true, safety: "trusted" } });
 		assert.equal(result.manifest.status, "blocked");
 		assert.equal(result.manifest.planApproval?.status, "pending");
 		assert.equal(result.tasks.find((task) => task.id === "adaptive-01-executor")?.status, "queued");
@@ -200,7 +200,7 @@ test("adaptive workflow steps reconstruct from persisted tasks on resume", async
 		}];
 		fs.writeFileSync(path.join(cwd, "assess.txt"), "stale plan", "utf-8");
 		saveRunTasks(manifest, persistedTasks);
-		const result = await executeTeamRun({ manifest, tasks: persistedTasks, team, workflow, agents: allAgents(discoverAgents(cwd)), executeWorkers: true, runtime: { kind: "child-process", requestedMode: "child-process", available: true, steer: false, resume: false, liveToolActivity: false, transcript: true } });
+		const result = await executeTeamRun({ manifest, tasks: persistedTasks, team, workflow, agents: allAgents(discoverAgents(cwd)), executeWorkers: true, runtime: { kind: "child-process", requestedMode: "child-process", available: true, steer: false, resume: false, liveToolActivity: false, transcript: true, safety: "trusted" } });
 		assert.equal(result.manifest.status, "completed");
 		const completed = result.tasks.find((task) => task.id === "adaptive-01-executor");
 		assert.equal(completed?.status, "completed");

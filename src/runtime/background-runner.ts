@@ -37,6 +37,7 @@ async function main(): Promise<void> {
 		const workflow = expandParallelResearchWorkflow(baseWorkflow, cwd);
 		const loadedConfig = loadConfig(cwd);
 		const runtime = await resolveCrewRuntime(loadedConfig.config);
+		if (runtime.safety === "blocked") throw new Error(runtime.reason ?? "Child worker execution is disabled; refusing to create no-op scaffold subagents.");
 		const executeWorkers = runtime.kind !== "scaffold";
 		const result = await executeTeamRun({ manifest, tasks, team, workflow, agents, executeWorkers, limits: loadedConfig.config.limits, runtime, runtimeConfig: loadedConfig.config.runtime, skillOverride: manifest.skillOverride });
 		manifest = result.manifest;

@@ -135,9 +135,23 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 		return result(text, { action: "run", status: "ok", runId: updatedManifest.runId, artifactsRoot: updatedManifest.artifactsRoot });
 	}
 
-	const runtime = await resolveCrewRuntime(effectiveRunConfig(loadedConfig.config, params.config));
-	const executeWorkers = runtime.kind !== "scaffold";
 	const executedConfig = effectiveRunConfig(loadedConfig.config, params.config);
+	const runtime = await resolveCrewRuntime(executedConfig);
+	if (runtime.safety === "blocked") {
+		const runningManifest = updateRunStatus(updatedManifest, "running", "Checking worker runtime availability.");
+		const blocked = updateRunStatus(runningManifest, "blocked", runtime.reason ?? "Child worker execution is disabled; refusing to create no-op scaffold subagents.");
+		appendEvent(blocked.eventsPath, { type: "run.blocked", runId: blocked.runId, message: blocked.summary, data: { runtime } });
+		unregisterActiveRun(blocked.runId);
+		return result([
+			`Blocked pi-crew run ${blocked.runId}: real subagent workers are disabled.`,
+			`Runtime: ${runtime.kind} (requested ${runtime.requestedMode})`,
+			runtime.reason ?? "Child worker execution is disabled.",
+			"",
+			"To run effective subagents, remove executeWorkers=false / PI_CREW_EXECUTE_WORKERS=0 / PI_TEAMS_EXECUTE_WORKERS=0 or set runtime.mode=child-process.",
+			"Use runtime.mode=scaffold only for explicit dry-run prompt/artifact generation.",
+		].join("\n"), { action: "run", status: "error", runId: blocked.runId, artifactsRoot: blocked.artifactsRoot }, true);
+	}
+	const executeWorkers = runtime.kind !== "scaffold";
 	if (executeWorkers && ctx.startForegroundRun) {
 		ctx.onRunStarted?.(updatedManifest.runId);
 		ctx.startForegroundRun(async (signal) => {

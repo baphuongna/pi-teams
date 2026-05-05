@@ -3,6 +3,8 @@ import type { CrewRuntimeKind } from "./crew-agent-runtime.ts";
 
 export type CrewRuntimeMode = "auto" | "scaffold" | "child-process" | "live-session";
 
+export type CrewRuntimeSafety = "trusted" | "explicit_dry_run" | "blocked";
+
 export interface CrewRuntimeCapabilities {
 	kind: CrewRuntimeKind;
 	requestedMode: CrewRuntimeMode;
@@ -13,6 +15,7 @@ export interface CrewRuntimeCapabilities {
 	liveToolActivity: boolean;
 	transcript: boolean;
 	reason?: string;
+	safety: CrewRuntimeSafety;
 }
 
 export async function isLiveSessionRuntimeAvailable(timeoutMs = 1500, env: NodeJS.ProcessEnv = process.env): Promise<{ available: boolean; reason?: string }> {
@@ -52,8 +55,8 @@ export async function isLiveSessionRuntimeAvailable(timeoutMs = 1500, env: NodeJ
 export async function resolveCrewRuntime(config: PiTeamsConfig, env: NodeJS.ProcessEnv = process.env): Promise<CrewRuntimeCapabilities> {
 	const requestedMode = config.runtime?.mode ?? "auto";
 	const workersDisabled = config.executeWorkers === false || env.PI_CREW_EXECUTE_WORKERS === "0" || env.PI_TEAMS_EXECUTE_WORKERS === "0";
-	if (requestedMode === "scaffold") return scaffoldCaps(requestedMode);
-	if (workersDisabled) return scaffoldCaps(requestedMode, "Child worker execution disabled by config/env. Set runtime.mode=scaffold or executeWorkers=false only for dry runs.");
+	if (requestedMode === "scaffold") return scaffoldCaps(requestedMode, undefined, "explicit_dry_run");
+	if (workersDisabled) return scaffoldCaps(requestedMode, "Child worker execution disabled by config/env. Set runtime.mode=scaffold or executeWorkers=false only for dry runs.", "blocked");
 	if (requestedMode === "child-process") return childCaps(requestedMode);
 	if (requestedMode === "live-session" || (requestedMode === "auto" && config.runtime?.preferLiveSession === true)) {
 		const live = await isLiveSessionRuntimeAvailable(1500, env);
@@ -64,14 +67,14 @@ export async function resolveCrewRuntime(config: PiTeamsConfig, env: NodeJS.Proc
 	return childCaps(requestedMode);
 }
 
-function scaffoldCaps(requestedMode: CrewRuntimeMode, reason?: string): CrewRuntimeCapabilities {
-	return { kind: "scaffold", requestedMode, available: true, steer: false, resume: false, liveToolActivity: false, transcript: false, ...(reason ? { reason } : {}) };
+function scaffoldCaps(requestedMode: CrewRuntimeMode, reason?: string, safety: CrewRuntimeSafety = "explicit_dry_run"): CrewRuntimeCapabilities {
+	return { kind: "scaffold", requestedMode, available: safety !== "blocked", steer: false, resume: false, liveToolActivity: false, transcript: false, safety, ...(reason ? { reason } : {}) };
 }
 
 function childCaps(requestedMode: CrewRuntimeMode, reason?: string): CrewRuntimeCapabilities {
-	return { kind: "child-process", requestedMode, available: true, steer: false, resume: false, liveToolActivity: false, transcript: true, ...(reason ? { reason } : {}) };
+	return { kind: "child-process", requestedMode, available: true, steer: false, resume: false, liveToolActivity: false, transcript: true, safety: "trusted", ...(reason ? { reason } : {}) };
 }
 
 function liveCaps(requestedMode: CrewRuntimeMode): CrewRuntimeCapabilities {
-	return { kind: "live-session", requestedMode, available: true, steer: true, resume: true, liveToolActivity: true, transcript: true };
+	return { kind: "live-session", requestedMode, available: true, steer: true, resume: true, liveToolActivity: true, transcript: true, safety: "trusted" };
 }

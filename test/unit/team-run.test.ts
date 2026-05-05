@@ -6,6 +6,11 @@ import assert from "node:assert/strict";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
 import { firstText } from "../fixtures/tool-result-helpers.ts";
 
+function restoreEnv(name: string, value: string | undefined): void {
+	if (value === undefined) delete process.env[name];
+	else process.env[name] = value;
+}
+
 test("team run creates durable artifacts and status", async () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-run-test-"));
 	fs.mkdirSync(path.join(cwd, ".crew"));
@@ -27,6 +32,22 @@ test("team run creates durable artifacts and status", async () => {
 		assert.match(firstText(status), /Status: completed/);
 		assert.match(firstText(status), /Recent events:/);
 	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("team run blocks implicit scaffold when worker execution is disabled", async () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-run-disabled-workers-"));
+	const previous = process.env.PI_CREW_EXECUTE_WORKERS;
+	process.env.PI_CREW_EXECUTE_WORKERS = "0";
+	fs.mkdirSync(path.join(cwd, ".crew"));
+	try {
+		const run = await handleTeamTool({ action: "run", team: "default", goal: "should not no-op" }, { cwd });
+		assert.equal(run.isError, true);
+		assert.match(firstText(run), /real subagent workers are disabled/i);
+		assert.match(firstText(run), /runtime\.mode=scaffold only for explicit dry-run/i);
+	} finally {
+		restoreEnv("PI_CREW_EXECUTE_WORKERS", previous);
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}
 });
