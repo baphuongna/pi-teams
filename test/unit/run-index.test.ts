@@ -7,6 +7,8 @@ import { createRunManifest } from "../../src/state/state-store.ts";
 import type { TeamConfig } from "../../src/teams/team-config.ts";
 import type { WorkflowConfig } from "../../src/workflows/workflow-config.ts";
 import { listRecentRuns } from "../../src/extension/run-index.ts";
+import { activeRunRoots, registerActiveRun, unregisterActiveRun } from "../../src/state/active-run-registry.ts";
+import { createManifestCache } from "../../src/runtime/manifest-cache.ts";
 
 const team: TeamConfig = { name: "idx", description: "idx", source: "builtin", filePath: "idx.team.md", roles: [{ name: "explorer", agent: "explorer" }] };
 const workflow: WorkflowConfig = { name: "idx", description: "idx", source: "builtin", filePath: "idx.workflow.md", steps: [{ id: "explore", role: "explorer", task: "Explore" }] };
@@ -47,6 +49,43 @@ test("listRecentRuns in project scope ignores user-global runs", () => {
 	}
 });
 
+test("active-run index exposes only registered active runs across cwd", () => {
+	const previousHome = process.env.PI_TEAMS_HOME;
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-active-idx-home-"));
+	process.env.PI_TEAMS_HOME = home;
+	const runCwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-active-origin-"));
+	const viewerCwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-active-viewer-"));
+	fs.mkdirSync(path.join(runCwd, ".crew"), { recursive: true });
+	fs.mkdirSync(path.join(viewerCwd, ".crew"), { recursive: true });
+	try {
+		const created = createRunManifest({ cwd: runCwd, team, workflow, goal: "origin scoped active run" });
+		// Before registration: viewer cwd cannot see the run
+		assert.equal(listRecentRuns(viewerCwd, 10).some((run) => run.runId === created.manifest.runId), false);
+		// Register the run as active
+		registerActiveRun(created.manifest);
+		assert.equal(activeRunRoots().length, 1);
+		// After registration: viewer cwd can see the run via active-run index
+		assert.equal(listRecentRuns(viewerCwd, 10).some((run) => run.runId === created.manifest.runId), true);
+		// Manifest cache also picks it up
+		const cache = createManifestCache(viewerCwd);
+		try {
+			assert.equal(cache.list(10).some((run) => run.runId === created.manifest.runId), true);
+		} finally {
+			cache.dispose();
+		}
+		// Unregister: run disappears from viewer again
+		unregisterActiveRun(created.manifest.runId);
+		assert.equal(listRecentRuns(viewerCwd, 10).some((run) => run.runId === created.manifest.runId), false);
+		assert.equal(activeRunRoots().length, 0);
+	} finally {
+		fs.rmSync(runCwd, { recursive: true, force: true });
+		fs.rmSync(viewerCwd, { recursive: true, force: true });
+		fs.rmSync(home, { recursive: true, force: true });
+		if (previousHome === undefined) delete process.env.PI_TEAMS_HOME;
+		else process.env.PI_TEAMS_HOME = previousHome;
+	}
+});
+
 test("listRecentRuns outside project reads user-global runs only", () => {
 	const previousHome = process.env.PI_TEAMS_HOME;
 	const home = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-run-index-home-"));
@@ -59,7 +98,6 @@ test("listRecentRuns outside project reads user-global runs only", () => {
 		const projectRun = createRunManifest({ cwd: projectCwd, team, workflow, goal: "project scope run" });
 		const recent = listRecentRuns(userCwd, 10);
 		assert.equal(recent.some((run) => run.runId === userRun.manifest.runId), true);
-		// listRecentRuns merges project + user runs; project runs may also appear
 	} finally {
 		fs.rmSync(userCwd, { recursive: true, force: true });
 		fs.rmSync(projectCwd, { recursive: true, force: true });

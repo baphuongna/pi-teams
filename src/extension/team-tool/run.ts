@@ -4,6 +4,7 @@ import { allWorkflows, discoverWorkflows } from "../../workflows/discover-workfl
 import { loadConfig } from "../../config/config.ts";
 import type { TeamToolParamsValue } from "../../schema/team-tool-schema.ts";
 import { writeArtifact } from "../../state/artifact-store.ts";
+import { registerActiveRun, unregisterActiveRun } from "../../state/active-run-registry.ts";
 import { createRunManifest, loadRunManifestById, updateRunStatus } from "../../state/state-store.ts";
 import { atomicWriteJson } from "../../state/atomic-write.ts";
 import { validateWorkflowForTeam } from "../../workflows/validate-workflow.ts";
@@ -109,6 +110,7 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 	});
 	const updatedManifest = { ...manifest, ...(skillOverride !== undefined ? { skillOverride } : {}), artifacts: [goalArtifact], summary: "Run manifest created; worker execution is not implemented yet." };
 	atomicWriteJson(paths.manifestPath, updatedManifest);
+	registerActiveRun(updatedManifest);
 
 	const loadedConfig = loadConfig(ctx.cwd);
 	const runAsync = params.async ?? loadedConfig.config.asyncByDefault ?? false;
@@ -139,7 +141,11 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 	if (executeWorkers && ctx.startForegroundRun) {
 		ctx.onRunStarted?.(updatedManifest.runId);
 		ctx.startForegroundRun(async (signal) => {
-			await executeTeamRun({ manifest: updatedManifest, tasks, team, workflow, agents, executeWorkers, limits: executedConfig.limits, runtime, runtimeConfig: executedConfig.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, skillOverride, signal, reliability: executedConfig.reliability, metricRegistry: ctx.metricRegistry, onJsonEvent: ctx.onJsonEvent });
+			try {
+				await executeTeamRun({ manifest: updatedManifest, tasks, team, workflow, agents, executeWorkers, limits: executedConfig.limits, runtime, runtimeConfig: executedConfig.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, skillOverride, signal, reliability: executedConfig.reliability, metricRegistry: ctx.metricRegistry, onJsonEvent: ctx.onJsonEvent });
+			} finally {
+				unregisterActiveRun(updatedManifest.runId);
+			}
 		}, updatedManifest.runId);
 		const text = [
 			`Started foreground pi-crew run ${updatedManifest.runId}.`,
@@ -155,7 +161,12 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 		].join("\n");
 		return result(text, { action: "run", status: "ok", runId: updatedManifest.runId, artifactsRoot: updatedManifest.artifactsRoot });
 	}
-	const executed = await executeTeamRun({ manifest: updatedManifest, tasks, team, workflow, agents, executeWorkers, limits: executedConfig.limits, runtime, runtimeConfig: executedConfig.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, skillOverride, signal: ctx.signal, reliability: executedConfig.reliability, metricRegistry: ctx.metricRegistry, onJsonEvent: ctx.onJsonEvent });
+	let executed: Awaited<ReturnType<typeof executeTeamRun>>;
+	try {
+		executed = await executeTeamRun({ manifest: updatedManifest, tasks, team, workflow, agents, executeWorkers, limits: executedConfig.limits, runtime, runtimeConfig: executedConfig.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, skillOverride, signal: ctx.signal, reliability: executedConfig.reliability, metricRegistry: ctx.metricRegistry, onJsonEvent: ctx.onJsonEvent });
+	} finally {
+		unregisterActiveRun(updatedManifest.runId);
+	}
 	const text = [
 		`Created pi-crew run ${executed.manifest.runId}.`,
 		`Team: ${team.name}`,

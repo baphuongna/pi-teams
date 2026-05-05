@@ -3,6 +3,7 @@ import * as path from "node:path";
 import type { TeamRunManifest } from "../state/types.ts";
 import { DEFAULT_PATHS } from "../config/defaults.ts";
 import { findRepoRoot, projectCrewRoot, userCrewRoot } from "../utils/paths.ts";
+import { activeRunRoots } from "../state/active-run-registry.ts";
 import { isSafePathId, resolveRealContainedPath } from "../utils/safe-paths.ts";
 
 function readManifest(filePath: string): TeamRunManifest | undefined {
@@ -40,10 +41,12 @@ function mergeRuns(runSets: TeamRunManifest[][], max?: number): TeamRunManifest[
 }
 
 function scopedRunRoots(cwd: string): string[] {
-	const roots: string[] = [userCrewRoot()];
+	const roots = new Set<string>();
+	roots.add(userCrewRoot());
 	const projectRoot = findRepoRoot(cwd);
-	if (projectRoot) roots.unshift(projectCrewRoot(cwd));
-	return roots;
+	if (projectRoot) roots.add(projectCrewRoot(cwd));
+	for (const root of activeRunRoots()) roots.add(path.dirname(path.dirname(root)));
+	return [...roots];
 }
 
 export function listRuns(cwd: string): TeamRunManifest[] {

@@ -51,6 +51,10 @@ export function hasStaleAsyncProcess(run: TeamRunManifest): boolean {
 
 export function isDisplayActiveRun(run: TeamRunManifest, agents: CrewAgentRecord[] = [], now = Date.now()): boolean {
 	if (!isActiveRunStatus(run.status) || hasStaleAsyncProcess(run) || isLikelyOrphanedActiveRun(run, agents, now)) return false;
-	if (agents.length === 0) return true;
+	// Keep the always-visible widget quiet until a worker actually exists.
+	// Empty active manifests can be created briefly at startup, by old fixture/scaffold
+	// runs, or from cross-cwd registry history; showing them causes noisy 0/0 rows and
+	// needless spinner redraws. The full dashboard can still list historical runs.
+	if (agents.length === 0) return false;
 	return agents.some(hasDurableActiveAgentEvidence);
 }

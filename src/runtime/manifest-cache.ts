@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { closeWatcher, watchWithErrorHandler } from "../utils/fs-watch.ts";
 import { findRepoRoot, projectCrewRoot, userCrewRoot } from "../utils/paths.ts";
+import { activeRunRoots } from "../state/active-run-registry.ts";
 import { isSafePathId, resolveContainedRelativePath, resolveRealContainedPath } from "../utils/safe-paths.ts";
 import type { TeamRunManifest } from "../state/types.ts";
 import { DEFAULT_CACHE, DEFAULT_PATHS } from "../config/defaults.ts";
@@ -106,8 +107,11 @@ function parseManifestIfChanged(root: string, runId: string, filePath: string, p
 }
 
 function listRunRoots(cwd: string): string[] {
+	const roots = new Set<string>();
 	const base = findRepoRoot(cwd) ? projectCrewRoot(cwd) : userCrewRoot();
-	return [path.join(base, DEFAULT_PATHS.state.runsSubdir)];
+	roots.add(path.join(base, DEFAULT_PATHS.state.runsSubdir));
+	for (const root of activeRunRoots()) roots.add(root);
+	return [...roots];
 }
 
 function collectRoots(root: string): ParsedEntry[] {

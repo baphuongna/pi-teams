@@ -501,7 +501,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 			}
 		};
 
-		const fallbackMs = loadedConfig.config.ui?.dashboardLiveRefreshMs ?? 250;
+		const fallbackMs = loadedConfig.config.ui?.dashboardLiveRefreshMs ?? DEFAULT_UI.refreshMs;
 		renderScheduler = new RenderScheduler(pi.events, renderTick, {
 			fallbackMs,
 			onInvalidate: () => getRunSnapshotCache(ctx.cwd).invalidate(),
