@@ -70,6 +70,27 @@ test("agent control rejects symlinked durable live-agent queue files", async (t)
 	}
 });
 
+test("agent control queues durable follow-up request when agent is in another process", async () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-live-control-followup-"));
+	try {
+		fs.mkdirSync(path.join(cwd, ".crew"), { recursive: true });
+		const run = await handleTeamTool({ action: "run", config: { runtime: { mode: "scaffold" } }, team: "fast-fix", goal: "follow-up bridge smoke" }, { cwd });
+		assert.equal(run.isError, false);
+		const runId = run.details.runId!;
+		const agentsResult = await handleTeamTool({ action: "api", runId, config: { operation: "list-agents" } }, { cwd });
+		const first = JSON.parse(firstText(agentsResult))[0];
+		const queued = await handleTeamTool({ action: "api", runId, config: { operation: "follow-up-agent", agentId: first.taskId, prompt: "durable follow up" } }, { cwd });
+		assert.equal(queued.isError, false);
+		assert.match(firstText(queued), /"queued": true/);
+		const loaded = loadRunManifestById(cwd, runId)!;
+		const batch = readLiveAgentControlRequests(loaded.manifest, first.taskId);
+		assert.equal(batch.requests[0]?.operation, "follow-up");
+		assert.equal(batch.requests[0]?.message, "durable follow up");
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
 test("agent control queues durable live-agent request when agent is in another process", async () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-live-control-"));
 	try {

@@ -14,7 +14,7 @@ import { touchWorkerHeartbeat } from "../../runtime/worker-heartbeat.ts";
 import { agentOutputPath, readCrewAgentEventsCursor, readCrewAgentStatus, readCrewAgents } from "../../runtime/crew-agent-records.ts";
 import { buildAgentDashboard, readAgentOutput } from "../../runtime/agent-observability.ts";
 import { readForegroundControlStatus, writeForegroundInterruptRequest } from "../../runtime/foreground-control.ts";
-import { getLiveAgent, listLiveAgents, resumeLiveAgent, steerLiveAgent, stopLiveAgent } from "../../subagents/live/manager.ts";
+import { followUpLiveAgent, getLiveAgent, listLiveAgents, resumeLiveAgent, steerLiveAgent, stopLiveAgent } from "../../subagents/live/manager.ts";
 import { appendLiveAgentControlRequest } from "../../subagents/live/control.ts";
 import { liveControlRealtimeMessage, publishLiveControlRealtime } from "../../subagents/live/realtime.ts";
 import { resolveRealContainedPath } from "../../utils/safe-paths.ts";
@@ -220,7 +220,7 @@ export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): 
 	if (operation === "list-live-agents") {
 		return result(JSON.stringify(listLiveAgents().filter((agent) => agent.runId === loaded.manifest.runId), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
 	}
-	if (operation === "steer-agent" || operation === "stop-agent" || operation === "resume-agent" || operation === "interrupt-agent") {
+	if (operation === "steer-agent" || operation === "follow-up-agent" || operation === "stop-agent" || operation === "resume-agent" || operation === "interrupt-agent") {
 		const agentId = typeof cfg.agentId === "string" ? cfg.agentId : undefined;
 		if (!agentId) return result(`API ${operation} requires config.agentId.`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
 		const message = typeof cfg.message === "string" && cfg.message.trim() ? cfg.message.trim() : undefined;
@@ -229,6 +229,10 @@ export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): 
 			const live = getLiveAgent(agentId);
 			if (live && live.runId !== loaded.manifest.runId) return result(`Live agent '${agentId}' does not belong to run ${loaded.manifest.runId}.`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
 			if (operation === "steer-agent") return result(JSON.stringify(await steerLiveAgent(agentId, message ?? "Please report current status and wrap up if possible."), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+			if (operation === "follow-up-agent") {
+				if (!prompt) return result("API follow-up-agent requires config.prompt or config.message.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
+				return result(JSON.stringify(await followUpLiveAgent(agentId, prompt), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+			}
 			if (operation === "resume-agent") {
 				if (!prompt) return result("API resume-agent requires config.prompt or config.message.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
 				return result(JSON.stringify(await resumeLiveAgent(agentId, prompt), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
@@ -243,8 +247,9 @@ export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): 
 			const task = loaded.tasks.find((item) => item.id === agent.taskId);
 			if (!task) return result(`API ${operation} agent '${agentId}' does not match a run task.`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
 			if (operation === "resume-agent" && !prompt) return result("API resume-agent requires config.prompt or config.message.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
+			if (operation === "follow-up-agent" && !prompt) return result("API follow-up-agent requires config.prompt or config.message.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
 			try {
-				const request = appendLiveAgentControlRequest(loaded.manifest, { taskId: task.id, agentId: agent.id, operation: operation === "resume-agent" ? "resume" : operation === "steer-agent" ? "steer" : "stop", message: operation === "resume-agent" ? prompt : message });
+				const request = appendLiveAgentControlRequest(loaded.manifest, { taskId: task.id, agentId: agent.id, operation: operation === "resume-agent" ? "resume" : operation === "follow-up-agent" ? "follow-up" : operation === "steer-agent" ? "steer" : "stop", message: operation === "resume-agent" || operation === "follow-up-agent" ? prompt : message });
 				publishLiveControlRealtime(request);
 				ctx.events?.emit?.("pi-crew:live-control", liveControlRealtimeMessage(request));
 				appendEvent(loaded.manifest.eventsPath, { type: "agent.control.queued", runId: loaded.manifest.runId, taskId: agent.taskId, message: `Queued ${request.operation} control request for live agent.`, data: { request, realtime: true } });

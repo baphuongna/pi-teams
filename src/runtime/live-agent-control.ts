@@ -3,7 +3,7 @@ import * as path from "node:path";
 import type { TeamRunManifest } from "../state/types.ts";
 import { agentStateFile, ensureAgentStateDir } from "./crew-agent-records.ts";
 
-export type LiveAgentControlOperation = "steer" | "stop" | "resume";
+export type LiveAgentControlOperation = "steer" | "follow-up" | "stop" | "resume";
 
 export interface LiveAgentControlRequest {
 	id: string;
@@ -75,6 +75,7 @@ export async function applyLiveAgentControlRequest(input: { request: LiveAgentCo
 	if (request.agentId && request.agentId !== agentId && request.agentId !== taskId) return false;
 	seenRequestIds?.add(request.id);
 	if (request.operation === "steer") await session.steer?.(request.message ?? "Please report current status and wrap up if possible.");
+	else if (request.operation === "follow-up") await session.prompt?.(request.message ?? "Please continue with the follow-up request.", { source: "api", expandPromptTemplates: false });
 	else if (request.operation === "resume") await session.prompt?.(request.message ?? "Please resume and report final status.", { source: "api", expandPromptTemplates: false });
 	else if (request.operation === "stop") await session.abort?.();
 	return true;

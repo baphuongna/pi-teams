@@ -31,3 +31,8 @@ test("live control realtime envelope parses valid control messages", () => {
 	const message = liveControlRealtimeMessage(request);
 	assert.deepEqual(parseLiveControlRealtimeMessage(message), request);
 });
+
+test("live control realtime envelope accepts follow-up operation", () => {
+	const followUp = { ...request, operation: "follow-up" as const };
+	assert.deepEqual(parseLiveControlRealtimeMessage(liveControlRealtimeMessage(followUp)), followUp);
+});

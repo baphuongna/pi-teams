@@ -15,19 +15,25 @@ export interface LiveAgentHandle {
 	updatedAt: string;
 	status: CrewAgentRecord["status"];
 	pendingSteers: string[];
+	pendingFollowUps: string[];
 }
 
 const liveAgents = new Map<string, LiveAgentHandle>();
 
-export function registerLiveAgent(input: Omit<LiveAgentHandle, "createdAt" | "updatedAt" | "pendingSteers">): LiveAgentHandle {
+export function registerLiveAgent(input: Omit<LiveAgentHandle, "createdAt" | "updatedAt" | "pendingSteers" | "pendingFollowUps">): LiveAgentHandle {
 	const now = new Date().toISOString();
 	const existing = liveAgents.get(input.agentId);
-	const handle: LiveAgentHandle = { ...input, createdAt: existing?.createdAt ?? now, updatedAt: now, pendingSteers: existing?.pendingSteers ?? [] };
+	const handle: LiveAgentHandle = { ...input, createdAt: existing?.createdAt ?? now, updatedAt: now, pendingSteers: existing?.pendingSteers ?? [], pendingFollowUps: existing?.pendingFollowUps ?? [] };
 	liveAgents.set(input.agentId, handle);
 	if (handle.pendingSteers.length && typeof handle.session.steer === "function") {
 		const pending = [...handle.pendingSteers];
 		handle.pendingSteers.length = 0;
 		for (const message of pending) void handle.session.steer(message).catch(() => {});
+	}
+	if (handle.pendingFollowUps.length && typeof handle.session.prompt === "function") {
+		const pending = [...handle.pendingFollowUps];
+		handle.pendingFollowUps.length = 0;
+		for (const message of pending) void handle.session.prompt(message, { source: "api", expandPromptTemplates: false }).catch(() => {});
 	}
 	return handle;
 }
@@ -55,6 +61,18 @@ export async function steerLiveAgent(agentIdOrTaskId: string, message: string): 
 		return handle;
 	}
 	await handle.session.steer(message);
+	handle.updatedAt = new Date().toISOString();
+	return handle;
+}
+
+export async function followUpLiveAgent(agentIdOrTaskId: string, prompt: string): Promise<LiveAgentHandle> {
+	const handle = getLiveAgent(agentIdOrTaskId);
+	if (!handle) throw new Error(`Live agent '${agentIdOrTaskId}' is not registered in this process.`);
+	if (typeof handle.session.prompt !== "function") {
+		handle.pendingFollowUps.push(prompt);
+		return handle;
+	}
+	await handle.session.prompt(prompt, { source: "api", expandPromptTemplates: false });
 	handle.updatedAt = new Date().toISOString();
 	return handle;
 }

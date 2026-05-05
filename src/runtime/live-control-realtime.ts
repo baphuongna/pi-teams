@@ -28,7 +28,7 @@ export function parseLiveControlRealtimeMessage(raw: unknown): LiveAgentControlR
 	const message = raw as { type?: unknown; version?: unknown; request?: unknown };
 	if (message.type !== "live-control" || message.version !== 1 || !message.request || typeof message.request !== "object" || Array.isArray(message.request)) return undefined;
 	const request = message.request as Partial<LiveAgentControlRequest>;
-	return typeof request.id === "string" && typeof request.runId === "string" && typeof request.taskId === "string" && (request.operation === "steer" || request.operation === "stop" || request.operation === "resume") && typeof request.createdAt === "string" ? request as LiveAgentControlRequest : undefined;
+	return typeof request.id === "string" && typeof request.runId === "string" && typeof request.taskId === "string" && (request.operation === "steer" || request.operation === "follow-up" || request.operation === "stop" || request.operation === "resume") && typeof request.createdAt === "string" ? request as LiveAgentControlRequest : undefined;
 }
 
 export function clearLiveControlRealtimeForTest(): void {
