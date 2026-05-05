@@ -540,10 +540,15 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 		if (input.signal?.aborted) {
 			const cancelReason = cancellationReasonFromSignal(input.signal);
 			const message = `${cancelReason.message} (${cancelReason.code})`;
-			tasks = tasks.map((task) => task.status === "queued" || task.status === "running" || task.status === "waiting" ? { ...task, status: "cancelled", finishedAt: new Date().toISOString(), error: message } : task);
+			const cancelledTaskIds: string[] = [];
+			tasks = tasks.map((task) => {
+				if (task.status !== "queued" && task.status !== "running" && task.status !== "waiting") return task;
+				cancelledTaskIds.push(task.id);
+				return { ...task, status: "cancelled", finishedAt: new Date().toISOString(), error: message };
+			});
 			await saveRunTasksAsync(manifest, tasks);
-			appendEvent(manifest.eventsPath, { type: "task.cancelled", runId: manifest.runId, message, data: { reason: cancelReason.code } });
-			manifest = updateRunStatus(manifest, "cancelled", message, { data: { reason: cancelReason.code } });
+			for (const taskId of cancelledTaskIds) appendEvent(manifest.eventsPath, { type: "task.cancelled", runId: manifest.runId, taskId, message, data: { reason: cancelReason.code } });
+			manifest = updateRunStatus(manifest, "cancelled", message, { data: { reason: cancelReason.code, cancelledTaskIds } });
 			return { manifest, tasks };
 		}
 

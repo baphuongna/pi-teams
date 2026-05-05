@@ -47,7 +47,9 @@ test("executeTeamRun records structured cancellation reason", async () => {
 		assert.equal(result.manifest.status, "cancelled");
 		assert.match(result.manifest.summary ?? "", /leader_interrupted/);
 		assert.match(result.tasks[0]?.error ?? "", /leader cancelled run/);
-		assert.ok(readEvents(created.manifest.eventsPath).some((event) => event.type === "run.cancelled" && event.data?.reason === "leader_interrupted"));
+		const events = readEvents(created.manifest.eventsPath);
+		assert.ok(events.some((event) => event.type === "task.cancelled" && event.taskId === "work" && event.data?.reason === "leader_interrupted"));
+		assert.ok(events.some((event) => event.type === "run.cancelled" && event.data?.reason === "leader_interrupted" && Array.isArray(event.data?.cancelledTaskIds) && event.data.cancelledTaskIds.includes("work")));
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}
