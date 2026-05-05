@@ -23,6 +23,7 @@ import type { CrewAgentProgress, CrewRuntimeKind } from "./crew-agent-runtime.ts
 import { shouldAppendProgressEventUpdate, type ProgressEventSummary } from "./progress-event-coalescer.ts";
 import { coordinationBridgeInstructions, renderTaskPrompt } from "./task-runner/prompt-builder.ts";
 import { buildWorkerPromptPipeline } from "./task-runner/prompt-pipeline.ts";
+import { buildWorkerCapabilityInventory } from "./task-runner/capabilities.ts";
 import { applyAgentProgressEvent, applyUsageToProgress, progressEventSummary, shouldFlushProgressEvent } from "./task-runner/progress.ts";
 import { checkpointTask, persistSingleTaskUpdate, updateTask } from "./task-runner/state-helpers.ts";
 import { cleanResultText, isFinalChildEvent } from "./task-runner/result-utils.ts";
@@ -358,13 +359,19 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 		content: `${JSON.stringify({ role: task.role, permissionMode }, null, 2)}\n`,
 		producer: task.id,
 	});
+	const capabilityArtifact = writeArtifact(manifest.artifactsRoot, {
+		kind: "metadata",
+		relativePath: `metadata/${task.id}.capabilities.json`,
+		content: `${JSON.stringify(buildWorkerCapabilityInventory({ taskId: task.id, role: task.role, agent: input.agent, runtime: runtimeKind, permissionMode, skillNames, skillPaths, skillsDisabled: input.skillOverride === false || input.teamRoleSkills === false, modelOverride: input.modelOverride, teamRoleModel: input.teamRoleModel, stepModel: input.step.model }), null, 2)}\n`,
+		producer: task.id,
+	});
 	const promptPipelineArtifact = writeArtifact(manifest.artifactsRoot, {
 		kind: "metadata",
 		relativePath: `metadata/${task.id}.prompt-pipeline.json`,
 		content: `${JSON.stringify(buildWorkerPromptPipeline({ artifactsRoot: manifest.artifactsRoot, taskId: task.id, promptArtifact, inputsArtifact, skillArtifact, coordinationArtifact, skillInstructionCount: skillNames?.length ?? 0, skillsDisabled: input.skillOverride === false || input.teamRoleSkills === false }), null, 2)}\n`,
 		producer: task.id,
 	});
-	manifest = { ...manifest, updatedAt: new Date().toISOString(), artifacts: [...manifest.artifacts, promptArtifact, resultArtifact, inputsArtifact, coordinationArtifact, ...(skillArtifact ? [skillArtifact] : []), packetArtifact, verificationArtifact, startupArtifact, permissionArtifact, promptPipelineArtifact, ...(sharedOutputArtifact ? [sharedOutputArtifact] : []), ...(logArtifact ? [logArtifact] : []), ...(transcriptArtifact ? [transcriptArtifact] : []), ...(diffArtifact ? [diffArtifact] : []), ...(diffStatArtifact ? [diffStatArtifact] : [])] };
+	manifest = { ...manifest, updatedAt: new Date().toISOString(), artifacts: [...manifest.artifacts, promptArtifact, resultArtifact, inputsArtifact, coordinationArtifact, ...(skillArtifact ? [skillArtifact] : []), packetArtifact, verificationArtifact, startupArtifact, permissionArtifact, capabilityArtifact, promptPipelineArtifact, ...(sharedOutputArtifact ? [sharedOutputArtifact] : []), ...(logArtifact ? [logArtifact] : []), ...(transcriptArtifact ? [transcriptArtifact] : []), ...(diffArtifact ? [diffArtifact] : []), ...(diffStatArtifact ? [diffStatArtifact] : [])] };
 	saveRunManifest(manifest);
 	tasks = persistSingleTaskUpdate(manifest, tasks, task);
 	upsertCrewAgent(manifest, recordFromTask(manifest, task, runtimeKind));
