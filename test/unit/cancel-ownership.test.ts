@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { abortOwned, handleCancel } from "../../src/extension/team-tool/cancel.ts";
 import { createRunManifest, loadRunManifestById, saveRunTasks } from "../../src/state/state-store.ts";
+import { readEvents } from "../../src/state/event-log.ts";
 
 function createOwnedRun(ownerSessionId: string): { cwd: string; runId: string; manifest: ReturnType<typeof createRunManifest>["manifest"] } {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-cancel-"));
@@ -32,6 +33,22 @@ describe("abortOwned", () => {
 			saveRunTasks(run.manifest, [{ id: "task-1", runId: run.runId, role: "worker", agent: "worker", title: "task", status: "running", dependsOn: [], cwd: run.cwd }]);
 			const result = abortOwned(run.runId, undefined, { cwd: run.cwd, sessionId: "session-b" });
 			assert.deepEqual(result, { abortedIds: [], missingIds: [], foreignIds: ["task-1"] });
+		} finally {
+			fs.rmSync(run.cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("handleCancel records structured cancellation reason", () => {
+		const run = createOwnedRun("session-a");
+		try {
+			saveRunTasks(run.manifest, [{ id: "task-1", runId: run.runId, role: "worker", agent: "worker", title: "task", status: "running", dependsOn: [], cwd: run.cwd }]);
+			const out = handleCancel({ action: "cancel", runId: run.runId, config: { reason: { code: "leader_interrupted", message: "leader stopped run" } } }, { cwd: run.cwd, sessionId: "session-a" });
+			assert.equal(out.isError, false);
+			const loaded = loadRunManifestById(run.cwd, run.runId);
+			assert.equal(loaded?.manifest.status, "cancelled");
+			assert.match(loaded?.manifest.summary ?? "", /leader_interrupted/);
+			assert.match(loaded?.tasks[0]?.error ?? "", /leader stopped run/);
+			assert.ok(readEvents(run.manifest.eventsPath).some((event) => event.type === "task.cancelled" && event.taskId === "task-1" && event.data?.reason === "leader_interrupted"));
 		} finally {
 			fs.rmSync(run.cwd, { recursive: true, force: true });
 		}

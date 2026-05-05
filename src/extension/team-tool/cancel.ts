@@ -3,6 +3,8 @@ import { withRunLockSync } from "../../state/locks.ts";
 import { loadRunManifestById, saveRunTasks, updateRunStatus } from "../../state/state-store.ts";
 import { saveCrewAgents, recordFromTask } from "../../runtime/crew-agent-records.ts";
 import { writeForegroundInterruptRequest } from "../../runtime/foreground-control.ts";
+import { cancellationReasonFromUnknown } from "../../runtime/cancellation.ts";
+import { appendEvent } from "../../state/event-log.ts";
 import { logInternalError } from "../../utils/internal-error.ts";
 import type { PiTeamsToolResult } from "../tool-result.ts";
 import { result, type TeamContext } from "./context.ts";
@@ -55,6 +57,13 @@ export function abortOwned(
 	return result;
 }
 
+function cancelReasonFromParams(params: TeamToolParamsValue): { code: string; message: string } {
+	const config = params.config && typeof params.config === "object" && !Array.isArray(params.config) ? params.config : undefined;
+	const rawReason = config?.reason ?? config?.cancelReason;
+	const reason = rawReason === undefined ? { code: "caller_cancelled" as const, message: "Run cancelled by user request." } : cancellationReasonFromUnknown(rawReason);
+	return { code: reason.code, message: reason.message };
+}
+
 export function handleCancel(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
 	if (!params.runId) return result("Cancel requires runId.", { action: "cancel", status: "error" }, true);
 	const loaded = loadRunManifestById(ctx.cwd, params.runId);
@@ -68,10 +77,12 @@ export function handleCancel(params: TeamToolParamsValue, ctx: TeamContext): PiT
 			return result(`Run ${loaded.manifest.runId} belongs to another session; not cancelled.`, { action: "cancel", status: "error", runId: loaded.manifest.runId, foreignIds: abortResult.foreignIds }, true);
 		}
 		const cancellableIds = new Set(abortResult.abortedIds);
+		const cancelReason = cancelReasonFromParams(params);
+		const cancelMessage = `${cancelReason.message} (${cancelReason.code})`;
 
 		const tasks = loaded.tasks.map((task) => {
 			if (cancellableIds.has(task.id) && (task.status === "queued" || task.status === "running" || task.status === "waiting")) {
-				return { ...task, status: "cancelled" as const, finishedAt: new Date().toISOString(), error: "Run cancelled by user request." };
+				return { ...task, status: "cancelled" as const, finishedAt: new Date().toISOString(), error: cancelMessage };
 			}
 			return task;
 		});
@@ -82,11 +93,14 @@ export function handleCancel(params: TeamToolParamsValue, ctx: TeamContext): PiT
 			logInternalError("team-tool.handleCancel.crewAgents", error, `runId=${loaded.manifest.runId}`);
 		}
 		try {
-			writeForegroundInterruptRequest(loaded.manifest, "Run cancelled by user request.");
+			writeForegroundInterruptRequest(loaded.manifest, cancelMessage);
 		} catch (error) {
 			logInternalError("team-tool.handleCancel.interruptRequest", error, `runId=${loaded.manifest.runId}`);
 		}
-		const updated = updateRunStatus(loaded.manifest, "cancelled", "Run cancelled by user request. Already-finished worker processes are not retroactively changed.");
+		for (const taskId of abortResult.abortedIds) {
+			appendEvent(loaded.manifest.eventsPath, { type: "task.cancelled", runId: loaded.manifest.runId, taskId, message: cancelMessage, data: { reason: cancelReason.code } });
+		}
+		const updated = updateRunStatus(loaded.manifest, "cancelled", `${cancelMessage} Already-finished worker processes are not retroactively changed.`);
 
 		// Build descriptive message including foreign/missing info
 		const parts = [`Cancelled run ${updated.runId}.`];
