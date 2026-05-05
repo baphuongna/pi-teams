@@ -1,4 +1,5 @@
 import { sleep } from "../utils/sleep.ts";
+import { throwIfCancelled } from "./cancellation.ts";
 
 export interface RetryPolicy {
 	maxAttempts: number;
@@ -41,7 +42,7 @@ export async function executeWithRetry<T>(fn: (attempt: number) => Promise<T>, p
 	const normalized: RetryPolicy = { ...DEFAULT_RETRY_POLICY, ...policy, maxAttempts: Math.max(1, policy.maxAttempts ?? DEFAULT_RETRY_POLICY.maxAttempts) };
 	let lastError: Error | undefined;
 	for (let attempt = 1; attempt <= normalized.maxAttempts; attempt += 1) {
-		if (hooks.signal?.aborted) throw new Error("Retry aborted.");
+		throwIfCancelled(hooks.signal);
 		try {
 			return await fn(attempt);
 		} catch (error) {

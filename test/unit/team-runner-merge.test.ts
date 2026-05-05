@@ -31,6 +31,26 @@ test("parallel task merge does not regress completed tasks from stale worker sna
 	assert.equal(merged.find((item) => item.id === "b")?.status, "completed");
 });
 
+test("executeTeamRun records structured cancellation reason", async () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-cancel-run-"));
+	try {
+		fs.mkdirSync(path.join(cwd, ".crew"), { recursive: true });
+		const team = { name: "cancel", description: "", roles: [{ name: "worker", agent: "worker" }], source: "test", filePath: "builtin" } as never;
+		const workflow = { name: "cancel", description: "", steps: [{ id: "work", role: "worker" }], source: "test", filePath: "builtin" } as never;
+		const created = createRunManifest({ cwd, team, workflow, goal: "cancel" });
+		const tasks: TeamTaskState[] = [{ id: "work", runId: created.manifest.runId, stepId: "work", role: "worker", agent: "worker", title: "work", status: "queued", dependsOn: [], cwd }];
+		saveRunTasks(created.manifest, tasks);
+		const controller = new AbortController();
+		controller.abort({ code: "leader_interrupted", message: "leader cancelled run" });
+		const result = await executeTeamRun({ manifest: { ...created.manifest, status: "running" }, tasks, team, workflow, agents: [], executeWorkers: false, signal: controller.signal });
+		assert.equal(result.manifest.status, "cancelled");
+		assert.match(result.manifest.summary ?? "", /leader_interrupted/);
+		assert.match(result.tasks[0]?.error ?? "", /leader cancelled run/);
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
 test("executeTeamRun blocks instead of completing when tasks are waiting", async () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-waiting-run-"));
 	try {

@@ -27,6 +27,15 @@ test("executeWithRetry gives up after max attempts and respects retryable patter
 	assert.equal(givenUp, 1);
 });
 
+test("executeWithRetry reports structured cancellation before first attempt", async () => {
+	const controller = new AbortController();
+	controller.abort({ code: "leader_interrupted", message: "leader stopped retry" });
+	await assert.rejects(
+		() => executeWithRetry(async () => "never", { maxAttempts: 3, backoffMs: 1, jitterRatio: 0, exponentialFactor: 1 }, { signal: controller.signal }),
+		(error: unknown) => error instanceof Error && error.name === "CrewCancellationError" && /leader stopped retry/.test(error.message),
+	);
+});
+
 test("calculateRetryDelay applies exponential backoff and jitter bounds", () => {
 	assert.equal(calculateRetryDelay(3, { maxAttempts: 3, backoffMs: 100, jitterRatio: 0, exponentialFactor: 2 }), 400);
 	const jittered = calculateRetryDelay(1, { maxAttempts: 3, backoffMs: 100, jitterRatio: 0.5, exponentialFactor: 2 }, () => 1);
