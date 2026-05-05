@@ -66,6 +66,27 @@ pi-crew alignment:
 - Prefer manual dashboard/transcript commands for history.
 - Avoid expensive render scans and auto-opening focus-capturing overlays.
 
+## Source/oh-my-pi
+
+Primary source for broader agent runtime, UI, extension, hook, skill, native process, and release patterns.
+
+Detailed distillation: `docs/research-oh-my-pi-distillation.md`.
+
+Key patterns to apply:
+
+- Separate durable run history from worker/provider prompt context.
+- Distinguish steering (interrupt active work) from follow-up (continue after idle).
+- Preserve cancellation invariants with structured cancel reasons and synthetic terminal events.
+- Use shared/exclusive execution semantics and intent tracing for risky actions.
+- Keep TUI components small, width-safe, event-driven, coalesced, and lifecycle-clean.
+- Split extension/plugin lifecycle into register vs initialized side-effect phases.
+- Normalize teams/workflows/agents/skills/hooks/tools into a capability inventory with disabled/shadowed states.
+- Add typed lifecycle hooks for crew operations.
+- Move toward append-only run history with attempt/branch provenance.
+- Use cooperative cancellation tokens and two-phase process teardown for workers.
+- Cache raw scan entries, not final semantic query results.
+- Consider content-addressed blob artifacts for large worker outputs/log chunks.
+
 ## Current refactor checkpoints
 
 - [x] Hide Windows console windows for background runner and child Pi workers.
