@@ -280,6 +280,42 @@ oh-my-pi's skills/rulebook ecosystem suggests additional pi-crew resources:
 4. `capability-inventory-ux` skill: normalized resource inventory and disable/shadow semantics.
 5. `append-only-run-history` skill: event tree, branch/retry provenance.
 
+## Implementation Status as of `v0.1.46`
+
+This distillation has been **partially implemented**. It should remain open as a source of backlog items rather than be marked fully complete.
+
+### Implemented / mostly implemented
+
+- Real worker default, explicit scaffold mode, and disabled-worker blocking.
+- Structured cancellation reasons and worker-level terminal evidence for cancelled child workers.
+- Prompt pipeline artifacts and exact per-task prompt/capability metadata artifacts.
+- Runtime safety metadata persisted on run manifests/status.
+- Effectiveness evidence surfaced in status/summary/progress.
+- Retry attempt IDs and deadletter linkage.
+- Render coalescing/snapshot caching improvements that reduce hot-path UI work.
+- Release checklist basics: typecheck, unit/integration tests, and `npm pack --dry-run` are part of `npm run ci`.
+
+### Partial
+
+- Steering vs follow-up: mailbox semantic fields and durable helpers exist, but separate UI/status queues and a dedicated `/team-follow-up` command are not implemented.
+- Cancellation invariants: `worker.cancelled` evidence exists, but generic synthetic `tool.cancelled` / model-operation terminal records are missing.
+- Durable history vs prompt projection: durable artifacts exist, but explicit projection/conversion functions are still not separated from prompt building.
+- Event-first UI: UI work is coalesced, but several views still use durable file polling as primary data retrieval.
+- Append-only run-history tree: event JSONL is append-only and retry IDs exist, but parent/branch/causation metadata is missing.
+- Process lifecycle: child worker exit status and forced cleanup exist, but pre-spawn controller reservation and full control-channel semantics are missing.
+- Release hardening: GitHub/npm release flow works, but temp tarball install/Pi load smoke/version consistency checks are not yet automated.
+
+### Missing / backlog
+
+- Shared/exclusive operation metadata (`batchId`, `index`, `total`, `conflictKey`) and skip-on-steering semantics.
+- Two-phase pi-crew extension lifecycle for third-party crew plugins.
+- Unified capability inventory/control center with stable capability-disable IDs.
+- Typed hook lifecycle gates.
+- Policy-enforced required intent for destructive actions.
+- Cooperative `CancellationToken` for long internal loops/scans.
+- Content-addressed blob artifacts with metadata sidecars and GC.
+- Raw scan-entry cache shared by dashboard/status/artifact lookup.
+
 ## Prioritized Backlog for pi-crew
 
 ### P0 / High confidence

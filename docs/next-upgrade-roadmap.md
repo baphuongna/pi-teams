@@ -23,6 +23,42 @@ Already implemented and pushed:
 - Retry attempts have `attemptId`; max-retry deadletters link to the final `attemptId`.
 - Worker prompt pipeline and capability inventory metadata artifacts are written per task.
 
+## Implementation Status as of `v0.1.46`
+
+This roadmap is **not complete overall**. The `v0.1.46` release completed several vertical slices, but multiple roadmap items remain partial or unimplemented.
+
+### Implemented / mostly implemented
+
+- Baseline worker behavior: real child-process execution by default, explicit scaffold dry-runs, and blocked implicit scaffold/no-op runs.
+- P0.2 runtime safety persistence: manifests persist `runtimeResolution`; status shows runtime safety; blocked runs persist enough evidence to explain why no worker spawned.
+  - Caveat: implementation emits a separate `runtime.resolved` event rather than embedding the resolution directly in every `run.running` event.
+- Effectiveness reporting: summary/progress/status expose no-observed-work evidence and policy outcome.
+- Structured cancellation basics: cancellation reasons flow through retry/backoff/team-runner paths and run/task events.
+- Retry attempt evidence: retry attempts and max-retry deadletters carry/link `attemptId` data.
+- Prompt pipeline artifacts and per-task capability metadata artifacts are written.
+- P1.3 worker teardown evidence vertical slice: `WorkerExitStatus` and terminal worker cancellation evidence exist.
+
+### Partial / not safe to mark complete
+
+- P0.1 effectiveness policy enforcement: helper/config/policy events exist, but the default guard still permits `completed` runs in `warn` mode unless users configure `runtime.effectivenessGuard` to `block` or `fail`. Default mutating-role blocking is not implemented.
+- P1.1 durable steering/follow-up queues: mailbox semantic fields and durable helpers exist, but UI/status does not yet show separate steering/follow-up backlog, and replay/dedupe semantics are only a vertical slice.
+- P1.2 respond vs follow-up UX: `/team-respond` has better guidance, but there is no dedicated `/team-follow-up` command yet.
+- P1.5 event-tree provenance: retry/deadletter `attemptId` exists, but general `parentEventId`/`branchId`/`causationId` event metadata and attempt timeline UI are missing.
+- P1.6 synthetic terminal results: worker cancellation evidence exists, but generic tool/model synthetic terminal records are not implemented.
+- P2.3 durable history projection: prompt artifacts exist, but explicit projection functions such as `transformRunContextBeforeWorkerStart(...)` / `convertRunHistoryToWorkerPrompt(...)` are not implemented.
+- P2.7 event-first UI: render coalescing and snapshot caches exist, but live UI still relies on durable file polling as a primary source in several panes.
+
+### Missing / backlog
+
+- P1.4 reserve worker control channel before child spawn.
+- P1.7/P1.8 unified capability inventory/control center and stable capability-disable IDs.
+- P2.1 typed hook lifecycle and P2.2 policy-required intent gates.
+- P2.4 cooperative internal `CancellationToken` utility for long scans.
+- P2.5 content-addressed blob artifact store with metadata sidecars and GC.
+- P2.6 dedicated dashboard panes for effectiveness/capability/attempt/deadletter evidence.
+- P2.8 shared raw scan-entry cache.
+- P3.1 tarball-install Pi smoke and version/tag/npm consistency checks as a formal release gate.
+
 ## Priority Legend
 
 - **P0**: correctness/safety issue; should be addressed before next release if feasible.
