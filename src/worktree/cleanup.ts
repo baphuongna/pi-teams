@@ -33,12 +33,13 @@ function captureDiff(worktreePath: string): string {
 	}
 }
 
-export function cleanupRunWorktrees(manifest: TeamRunManifest, options: { force?: boolean } = {}): WorktreeCleanupResult {
+export function cleanupRunWorktrees(manifest: TeamRunManifest, options: { force?: boolean; signal?: AbortSignal } = {}): WorktreeCleanupResult {
 	const worktreeRoot = path.join(projectCrewRoot(manifest.cwd), DEFAULT_PATHS.state.worktreesSubdir, manifest.runId);
 	const result: WorktreeCleanupResult = { removed: [], preserved: [], artifactPaths: [] };
 	if (!fs.existsSync(worktreeRoot)) return result;
 
 	for (const entry of fs.readdirSync(worktreeRoot)) {
+		if (options.signal?.aborted) break;
 		const worktreePath = path.join(worktreeRoot, entry);
 		if (!fs.statSync(worktreePath).isDirectory()) continue;
 		const dirty = isDirty(worktreePath);

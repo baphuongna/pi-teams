@@ -183,16 +183,17 @@ export function readMailbox(manifest: TeamRunManifest, direction?: MailboxDirect
 	return directions.flatMap((item) => safeReadMailboxFile(mailboxFile(manifest, item, taskId), item)).filter((msg) => !kind || msg.kind === kind).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
-export function readAllMailboxMessages(manifest: TeamRunManifest, direction?: MailboxDirection): MailboxMessage[] {
+export function readAllMailboxMessages(manifest: TeamRunManifest, direction?: MailboxDirection, signal?: AbortSignal): MailboxMessage[] {
 	const directions = direction ? [direction] : ["inbox", "outbox"] as const;
-	return directions.flatMap((item) => readAllMessages(manifest, item)).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+	return directions.flatMap((item) => readAllMessages(manifest, item, signal)).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
-function readAllMessages(manifest: TeamRunManifest, direction: MailboxDirection): MailboxMessage[] {
+function readAllMessages(manifest: TeamRunManifest, direction: MailboxDirection, signal?: AbortSignal): MailboxMessage[] {
 	const messages = [...safeReadMailboxFile(mailboxFile(manifest, direction), direction)];
 	const tasksDir = safeMailboxTasksRoot(manifest);
 	if (fs.existsSync(tasksDir)) {
 		for (const entry of fs.readdirSync(tasksDir, { withFileTypes: true })) {
+			if (signal?.aborted) break;
 			if (!entry.isDirectory()) continue;
 			messages.push(...safeReadMailboxFile(mailboxFile(manifest, direction, entry.name), direction));
 		}
@@ -292,15 +293,19 @@ export function replayPendingMailboxMessages(manifest: TeamRunManifest): Mailbox
 	return { messages: pending, updatedAt };
 }
 
-export function validateMailbox(manifest: TeamRunManifest, options: { repair?: boolean } = {}): MailboxValidationReport {
+export function validateMailbox(manifest: TeamRunManifest, options: { repair?: boolean; signal?: AbortSignal } = {}): MailboxValidationReport {
 	ensureRunMailbox(manifest);
 	const issues: MailboxValidationIssue[] = [];
 	const repaired: string[] = [];
 	for (const direction of ["inbox", "outbox"] as const) {
+		if (options.signal?.aborted) break;
 		const filePath = mailboxFile(manifest, direction);
 		const lines = fs.readFileSync(filePath, "utf-8").split(/\r?\n/).filter(Boolean);
 		const validLines: string[] = [];
-		for (const line of lines) {
+		for (let i = 0; i < lines.length; i += 1) {
+			if (options.signal?.aborted) break;
+			const line = lines[i];
+			if (!line) continue;
 			try {
 				const parsed = JSON.parse(line) as unknown;
 				const message = parseMailboxMessage(parsed, direction);
@@ -318,7 +323,10 @@ export function validateMailbox(manifest: TeamRunManifest, options: { repair?: b
 	}
 	const delivery = readDeliveryState(manifest);
 	const allMessages = readMailbox(manifest);
-	for (const message of allMessages) if (!delivery.messages[message.id]) issues.push({ level: "warning", path: deliveryFile(manifest), message: `Missing delivery entry for ${message.id}.` });
+	for (const message of allMessages) {
+		if (options.signal?.aborted) break;
+		if (!delivery.messages[message.id]) issues.push({ level: "warning", path: deliveryFile(manifest), message: `Missing delivery entry for ${message.id}.` });
+	}
 	if (options.repair) {
 		for (const message of allMessages) delivery.messages[message.id] ??= message.status;
 		delivery.updatedAt = new Date().toISOString();

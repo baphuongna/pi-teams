@@ -181,6 +181,13 @@ export async function handleResume(params: TeamToolParamsValue, ctx: TeamContext
 		const recovered = recoverCheckpointedTasks(loaded.manifest, loaded.tasks);
 		const resumeManifest = recovered.manifest;
 		const executedConfig = effectiveRunConfig(loadedConfig.config, params.config);
+		// Preserve original manifest scaffold mode when resume has no explicit mode override
+		// AND workers are not explicitly disabled. If workers are disabled, let
+		// resolveCrewRuntime detect it and return blocked safety.
+		if (!executedConfig.runtime?.mode && resumeManifest.runtimeResolution?.safety === "explicit_dry_run") {
+			const workersDisabled = executedConfig.executeWorkers === false || process.env.PI_CREW_EXECUTE_WORKERS === "0" || process.env.PI_TEAMS_EXECUTE_WORKERS === "0";
+			if (!workersDisabled) executedConfig.runtime = { ...executedConfig.runtime, mode: "scaffold" };
+		}
 		const runtime = await resolveCrewRuntime(executedConfig);
 		const runtimeResolution = runtimeResolutionState(runtime);
 		const runtimeManifest = { ...resumeManifest, runtimeResolution, updatedAt: new Date().toISOString() };

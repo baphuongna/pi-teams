@@ -14,23 +14,24 @@ function readManifest(filePath: string): TeamRunManifest | undefined {
 	}
 }
 
-function collectRuns(root: string, maxEntries?: number): TeamRunManifest[] {
+function collectRuns(root: string, maxEntries?: number, signal?: AbortSignal): TeamRunManifest[] {
 	const runsRoot = path.join(root, DEFAULT_PATHS.state.runsSubdir);
 	if (!fs.existsSync(runsRoot)) return [];
+	if (signal?.aborted) return [];
 	const entries = fs.readdirSync(runsRoot, { withFileTypes: true })
 		.filter((entry) => entry.isDirectory() && isSafePathId(entry.name))
 		.map((entry) => entry.name)
 		.sort((a, b) => b.localeCompare(a));
 	const selected = maxEntries !== undefined ? entries.slice(0, Math.max(0, maxEntries)) : entries;
-	return selected
-		.map((entry) => {
-			try {
-				return readManifest(path.join(resolveRealContainedPath(runsRoot, entry), DEFAULT_PATHS.state.manifestFile));
-			} catch {
-				return undefined;
-			}
-		})
-		.filter((manifest): manifest is TeamRunManifest => manifest !== undefined);
+	const results: TeamRunManifest[] = [];
+	for (const entry of selected) {
+		if (signal?.aborted) break;
+		try {
+			const manifest = readManifest(path.join(resolveRealContainedPath(runsRoot, entry), DEFAULT_PATHS.state.manifestFile));
+			if (manifest) results.push(manifest);
+		} catch { /* skip unreadable manifests */ }
+	}
+	return results;
 }
 
 function mergeRuns(runSets: TeamRunManifest[][], max?: number): TeamRunManifest[] {
@@ -54,14 +55,14 @@ function collectActiveRuns(): TeamRunManifest[] {
 		.filter((manifest): manifest is TeamRunManifest => manifest !== undefined);
 }
 
-export function listRuns(cwd: string): TeamRunManifest[] {
+export function listRuns(cwd: string, signal?: AbortSignal): TeamRunManifest[] {
 	const roots = scopedRunRoots(cwd);
-	return mergeRuns([...roots.map((root) => collectRuns(root)), collectActiveRuns()]);
+	return mergeRuns([...roots.map((root) => collectRuns(root, undefined, signal)), collectActiveRuns()]);
 }
 
-export function listRecentRuns(cwd: string, max = 20): TeamRunManifest[] {
+export function listRecentRuns(cwd: string, max = 20, signal?: AbortSignal): TeamRunManifest[] {
 	const roots = scopedRunRoots(cwd);
-	return mergeRuns([...roots.map((root) => collectRuns(root, max)), collectActiveRuns()], max);
+	return mergeRuns([...roots.map((root) => collectRuns(root, max, signal)), collectActiveRuns()], max);
 }
 
 /**
@@ -70,15 +71,15 @@ export function listRecentRuns(cwd: string, max = 20): TeamRunManifest[] {
  * - "user": only runs in the user crew root
  * - "all" (default): merge both scopes (current behavior)
  */
-export function listRunsByScope(cwd: string, scope: "project" | "user" | "all" = "all", max?: number): TeamRunManifest[] {
+export function listRunsByScope(cwd: string, scope: "project" | "user" | "all" = "all", max?: number, signal?: AbortSignal): TeamRunManifest[] {
 	const projectRoot = findRepoRoot(cwd);
 	switch (scope) {
 		case "project":
-			return projectRoot ? collectRuns(projectCrewRoot(cwd), max) : [];
+			return projectRoot ? collectRuns(projectCrewRoot(cwd), max, signal) : [];
 		case "user":
-			return collectRuns(userCrewRoot(), max);
+			return collectRuns(userCrewRoot(), max, signal);
 		case "all":
 		default:
-			return max !== undefined ? listRecentRuns(cwd, max) : listRuns(cwd);
+			return max !== undefined ? listRecentRuns(cwd, max, signal) : listRuns(cwd, signal);
 	}
 }

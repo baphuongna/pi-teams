@@ -15,6 +15,7 @@ export interface PruneRunsResult {
 
 export interface PruneRunsOptions {
 	intent?: string;
+	signal?: AbortSignal;
 }
 
 function isFinished(run: TeamRunManifest): boolean {
@@ -45,10 +46,11 @@ function appendPruneAudit(cwd: string, payload: Record<string, unknown>): string
 }
 
 export function pruneFinishedRuns(cwd: string, keep: number, options: PruneRunsOptions = {}): PruneRunsResult {
-	const finished = listRuns(cwd).filter((run) => run.cwd === cwd && isFinished(run)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+	const finished = listRuns(cwd, options.signal).filter((run) => run.cwd === cwd && isFinished(run)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 	const kept = finished.slice(0, keep).map((run) => run.runId);
 	const removed: string[] = [];
 	for (const run of finished.slice(keep)) {
+		if (options.signal?.aborted) break;
 		if (!isSafeToPrune(cwd, run)) {
 			logInternalError("prune.path-unsafe", new Error(`Skipping unsafe prune: stateRoot=${run.stateRoot}, artifactsRoot=${run.artifactsRoot}`), `runId=${run.runId}`);
 			continue;
