@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
 import { loadRunManifestById } from "../../src/state/state-store.ts";
+import { appendSteeringMessage, appendFollowUpMessage } from "../../src/state/mailbox.ts";
 import { firstText } from "../fixtures/tool-result-helpers.ts";
 
 function tryDirectorySymlink(target: string, linkPath: string): boolean {
@@ -148,6 +149,31 @@ test("read-mailbox does not create mailbox files on reads", async () => {
 		assert.equal(fs.existsSync(path.join(mailboxDir, "delivery.json")), false);
 		const messages = JSON.parse(firstText(read) || "[]") as Array<unknown>;
 		assert.equal(messages.length, 0);
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("read-mailbox kind filter isolates steering from follow-up", async () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-mailbox-kind-"));
+	fs.mkdirSync(path.join(cwd, ".crew"));
+	try {
+		const run = await handleTeamTool({ action: "run", config: { runtime: { mode: "scaffold" } }, team: "fast-fix", goal: "mailbox kind filter" }, { cwd });
+		const runId = run.details.runId;
+		assert.ok(runId);
+		const loaded = loadRunManifestById(cwd, runId);
+		assert.ok(loaded);
+		const taskId = loaded.tasks[0]!.id;
+		appendSteeringMessage(loaded.manifest, { taskId, body: "urgent", priority: "urgent" });
+		appendFollowUpMessage(loaded.manifest, { taskId, body: "follow" });
+		const steer = await handleTeamTool({ action: "api", runId, config: { operation: "read-mailbox", direction: "inbox", taskId, kind: "steer" } }, { cwd });
+		const steerMessages = JSON.parse(firstText(steer) || "[]") as Array<unknown>;
+		assert.equal(steerMessages.length, 1);
+		assert.equal((steerMessages[0] as { kind?: string }).kind, "steer");
+		const follow = await handleTeamTool({ action: "api", runId, config: { operation: "read-mailbox", direction: "inbox", taskId, kind: "follow-up" } }, { cwd });
+		const followMessages = JSON.parse(firstText(follow) || "[]") as Array<unknown>;
+		assert.equal(followMessages.length, 1);
+		assert.equal((followMessages[0] as { kind?: string }).kind, "follow-up");
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}

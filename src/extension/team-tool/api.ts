@@ -5,7 +5,7 @@ import { loadRunManifestById, saveRunManifest, saveRunTasks, updateRunStatus } f
 import { withRunLockSync } from "../../state/locks.ts";
 import { canTransitionTaskStatus, isTeamTaskStatus } from "../../state/contracts.ts";
 import { claimTask, releaseTaskClaim, transitionClaimedTaskStatus } from "../../state/task-claims.ts";
-import { acknowledgeMailboxMessage, appendFollowUpMessage, appendMailboxMessage, appendSteeringMessage, readDeliveryState, readMailbox, readMailboxMessage, validateMailbox, type MailboxDirection } from "../../state/mailbox.ts";
+import { acknowledgeMailboxMessage, appendFollowUpMessage, appendMailboxMessage, appendSteeringMessage, readDeliveryState, readMailbox, readMailboxMessage, validateMailbox, type MailboxDirection, type MailboxMessageKind } from "../../state/mailbox.ts";
 import { appendEvent, readEvents, readEventsCursor } from "../../state/event-log.ts";
 import { resolveCrewRuntime } from "../../runtime/runtime-resolver.ts";
 import { probeLiveSessionRuntime } from "../../subagents/live/session-runtime.ts";
@@ -280,9 +280,10 @@ export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): 
 	if (operation === "read-mailbox") {
 		const direction = cfg.direction === "inbox" || cfg.direction === "outbox" ? cfg.direction as MailboxDirection : undefined;
 		const taskId = typeof cfg.taskId === "string" ? cfg.taskId : undefined;
+		const kind = typeof cfg.kind === "string" && ["message", "steer", "follow-up", "response", "group_join"].includes(cfg.kind) ? cfg.kind as MailboxMessageKind : undefined;
 		if (taskId && !loaded.tasks.some((task) => task.id === taskId)) return result(`API read-mailbox taskId '${taskId}' does not match a run task.`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
 		try {
-			return result(JSON.stringify(readMailbox(loaded.manifest, direction, taskId), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+			return result(JSON.stringify(readMailbox(loaded.manifest, direction, taskId, kind), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			return result(message, { action: "api", status: "error", runId: loaded.manifest.runId }, true);

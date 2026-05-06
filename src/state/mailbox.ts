@@ -178,9 +178,9 @@ function safeReadMailboxFile(filePath: string, direction: MailboxDirection): Mai
 	return readMailboxFile(filePath, direction);
 }
 
-export function readMailbox(manifest: TeamRunManifest, direction?: MailboxDirection, taskId?: string): MailboxMessage[] {
+export function readMailbox(manifest: TeamRunManifest, direction?: MailboxDirection, taskId?: string, kind?: MailboxMessageKind): MailboxMessage[] {
 	const directions = direction ? [direction] : ["inbox", "outbox"] as const;
-	return directions.flatMap((item) => safeReadMailboxFile(mailboxFile(manifest, item, taskId), item)).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+	return directions.flatMap((item) => safeReadMailboxFile(mailboxFile(manifest, item, taskId), item)).filter((msg) => !kind || msg.kind === kind).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 export function readAllMailboxMessages(manifest: TeamRunManifest, direction?: MailboxDirection): MailboxMessage[] {
