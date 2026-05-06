@@ -1,9 +1,19 @@
+import type { OperationTerminalEvidence } from "../state/types.ts";
+
 export type CancellationReasonCode = "caller_cancelled" | "leader_interrupted" | "provider_timeout" | "worker_timeout" | "tool_timeout" | "shutdown" | "unknown";
 
 export interface CancellationReason {
 	code: CancellationReasonCode;
 	message: string;
 	cause?: unknown;
+}
+
+export function buildSyntheticTerminalEvidence(
+	operation: "worker" | "tool" | "model",
+	reason: CancellationReason,
+	startedAt?: string,
+): OperationTerminalEvidence {
+	return { operation, status: "cancelled", startedAt, finishedAt: new Date().toISOString(), reason };
 }
 
 const KNOWN_CODES: ReadonlySet<string> = new Set(["caller_cancelled", "leader_interrupted", "provider_timeout", "worker_timeout", "tool_timeout", "shutdown", "unknown"]);

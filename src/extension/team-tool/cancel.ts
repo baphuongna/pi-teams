@@ -3,7 +3,7 @@ import { withRunLockSync } from "../../state/locks.ts";
 import { loadRunManifestById, saveRunTasks, updateRunStatus } from "../../state/state-store.ts";
 import { saveCrewAgents, recordFromTask } from "../../runtime/crew-agent-records.ts";
 import { writeForegroundInterruptRequest } from "../../runtime/foreground-control.ts";
-import { cancellationReasonFromUnknown } from "../../runtime/cancellation.ts";
+import { cancellationReasonFromUnknown, buildSyntheticTerminalEvidence, type CancellationReason } from "../../runtime/cancellation.ts";
 import { appendEvent } from "../../state/event-log.ts";
 import { logInternalError } from "../../utils/internal-error.ts";
 import type { PiTeamsToolResult } from "../tool-result.ts";
@@ -62,7 +62,7 @@ function configFromParams(params: TeamToolParamsValue): Record<string, unknown> 
 	return params.config && typeof params.config === "object" && !Array.isArray(params.config) ? params.config : undefined;
 }
 
-function cancelReasonFromParams(params: TeamToolParamsValue): { code: string; message: string } {
+function cancelReasonFromParams(params: TeamToolParamsValue): CancellationReason {
 	const config = configFromParams(params);
 	const rawReason = config?.reason ?? config?.cancelReason;
 	const reason = rawReason === undefined ? { code: "caller_cancelled" as const, message: "Run cancelled by user request." } : cancellationReasonFromUnknown(rawReason);
@@ -91,7 +91,11 @@ export function handleCancel(params: TeamToolParamsValue, ctx: TeamContext): PiT
 
 		const tasks = loaded.tasks.map((task) => {
 			if (cancellableIds.has(task.id) && (task.status === "queued" || task.status === "running" || task.status === "waiting")) {
-				return { ...task, status: "cancelled" as const, finishedAt: new Date().toISOString(), error: cancelMessage };
+				const base = { ...task, status: "cancelled" as const, finishedAt: new Date().toISOString(), error: cancelMessage };
+				if (task.status === "running") {
+					return { ...base, terminalEvidence: [...(task.terminalEvidence ?? []), buildSyntheticTerminalEvidence("worker", cancelReason, task.startedAt)] };
+				}
+				return base;
 			}
 			return task;
 		});

@@ -25,7 +25,7 @@ import { childCorrelation, withCorrelation } from "../observability/correlation.
 import { resolveBatchConcurrency } from "./concurrency.ts";
 import { mapConcurrent } from "./parallel-utils.ts";
 import { permissionForRole } from "./role-permission.ts";
-import { CrewCancellationError, cancellationReasonFromSignal } from "./cancellation.ts";
+import { CrewCancellationError, buildSyntheticTerminalEvidence, cancellationReasonFromSignal } from "./cancellation.ts";
 import { effectivenessPolicyDecision, evaluateRunEffectiveness, formatRunEffectivenessLines } from "./effectiveness.ts";
 
 export interface ExecuteTeamRunInput {
@@ -552,7 +552,11 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 			tasks = tasks.map((task) => {
 				if (task.status !== "queued" && task.status !== "running" && task.status !== "waiting") return task;
 				cancelledTaskIds.push(task.id);
-				return { ...task, status: "cancelled", finishedAt: new Date().toISOString(), error: message };
+				const base = { ...task, status: "cancelled" as const, finishedAt: new Date().toISOString(), error: message };
+				if (task.status === "running") {
+					return { ...base, terminalEvidence: [...(task.terminalEvidence ?? []), buildSyntheticTerminalEvidence("worker", cancelReason, task.startedAt)] };
+				}
+				return base;
 			});
 			await saveRunTasksAsync(manifest, tasks);
 			for (const taskId of cancelledTaskIds) appendEvent(manifest.eventsPath, { type: "task.cancelled", runId: manifest.runId, taskId, message, data: { reason: cancelReason.code } });
