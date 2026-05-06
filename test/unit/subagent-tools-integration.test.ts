@@ -60,13 +60,14 @@ function fakeCtx(cwd: string) {
 }
 
 async function removeDirWithRetry(dir: string): Promise<void> {
-	for (let attempt = 0; attempt < 8; attempt += 1) {
+	for (let attempt = 0; attempt < 30; attempt += 1) {
 		try {
 			fs.rmSync(dir, { recursive: true, force: true });
 			return;
 		} catch (error) {
-			if (attempt === 7) throw error;
-			await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
+			if (attempt === 29) throw error;
+			// Windows can keep child-process temp files briefly locked after process exit.
+			await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)));
 		}
 	}
 }
