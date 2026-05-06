@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import type { AgentConfig } from "../agents/agent-config.ts";
 import type { CrewLimitsConfig, CrewRuntimeConfig } from "../config/config.ts";
-import type { ArtifactDescriptor, TeamRunManifest, TeamTaskState, UsageState } from "../state/types.ts";
+import type { ArtifactDescriptor, OperationTerminalEvidence, TeamRunManifest, TeamTaskState, UsageState } from "../state/types.ts";
 import { writeArtifact } from "../state/artifact-store.ts";
 import { appendEvent } from "../state/event-log.ts";
 import { saveRunManifest } from "../state/state-store.ts";
@@ -28,6 +28,7 @@ import { applyAgentProgressEvent, applyUsageToProgress, progressEventSummary, sh
 import { checkpointTask, persistSingleTaskUpdate, updateTask } from "./task-runner/state-helpers.ts";
 import { cleanResultText, isFinalChildEvent } from "./task-runner/result-utils.ts";
 import { evaluateCompletionMutationGuard } from "./completion-guard.ts";
+import { cancellationReasonFromSignal } from "./cancellation.ts";
 import { appendTaskAttentionEvent } from "./attention-events.ts";
 import { parseSupervisorContactFromLine, recordSupervisorContact } from "./supervisor-contact.ts";
 import { renderSkillInstructions } from "./skill-instructions.ts";
@@ -106,6 +107,7 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 	let parsedOutput: ParsedPiJsonOutput | undefined;
 	let finalStdout = "";
 	let transcriptPath: string | undefined;
+	let terminalEvidence: OperationTerminalEvidence[] = [];
 
 	let startupEvidence = createStartupEvidence({ command: runtimeKind === "child-process" ? "pi" : runtimeKind === "live-session" ? "live-session" : "safe-scaffold", startedAt: new Date(task.startedAt ?? new Date().toISOString()), finishedAt: new Date(), promptSentAt: new Date(task.startedAt ?? new Date().toISOString()), promptAccepted: true, exitCode: 0 });
 	const inputsArtifact = writeTaskInputsArtifact(manifest, task, dependencyContext);
@@ -201,6 +203,9 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 					persistChildProgress(event);
 				},
 			});
+			const evidenceStatus = childResult.exitStatus?.cancelled ? "cancelled" : childResult.error || (childResult.exitCode && childResult.exitCode !== 0) ? "failed" : "completed";
+			terminalEvidence = [...terminalEvidence, { operation: "worker", status: evidenceStatus, startedAt: attemptStartedAt.toISOString(), finishedAt: new Date().toISOString(), ...(input.signal?.aborted ? { reason: cancellationReasonFromSignal(input.signal) } : {}), ...(childResult.exitStatus ? { exitStatus: childResult.exitStatus } : {}) }];
+			if (evidenceStatus === "cancelled") appendEvent(manifest.eventsPath, { type: "worker.cancelled", runId: manifest.runId, taskId: task.id, message: input.signal?.aborted ? cancellationReasonFromSignal(input.signal).message : "Worker cancelled.", data: { terminalEvidence: terminalEvidence.at(-1) } });
 			startupEvidence = createStartupEvidence({ command: "pi", startedAt: attemptStartedAt, finishedAt: new Date(), promptSentAt: attemptStartedAt, promptAccepted: childResult.exitCode === 0 && !childResult.error, stderr: childResult.stderr, error: childResult.error, exitCode: childResult.exitCode });
 			exitCode = childResult.exitCode;
 			finalStdout = childResult.stdout;
@@ -330,6 +335,8 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 		resultArtifact,
 		claim: undefined,
 		heartbeat: touchWorkerHeartbeat(task.heartbeat ?? createWorkerHeartbeat(task.id), { alive: false }),
+		workerExitStatus: terminalEvidence.at(-1)?.exitStatus,
+		terminalEvidence: terminalEvidence.length ? [...(task.terminalEvidence ?? []), ...terminalEvidence] : task.terminalEvidence,
 		...(logArtifact ? { logArtifact } : {}),
 		...(transcriptArtifact ? { transcriptArtifact } : {}),
 	};

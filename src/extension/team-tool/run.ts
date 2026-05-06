@@ -11,7 +11,7 @@ import { validateWorkflowForTeam } from "../../workflows/validate-workflow.ts";
 import { executeTeamRun } from "../../runtime/team-runner.ts";
 import { spawnBackgroundTeamRun } from "../../subagents/async-entry.ts";
 import { appendEvent, readEvents } from "../../state/event-log.ts";
-import { resolveCrewRuntime } from "../../runtime/runtime-resolver.ts";
+import { resolveCrewRuntime, runtimeResolutionState } from "../../runtime/runtime-resolver.ts";
 import { normalizeSkillOverride } from "../../runtime/skill-instructions.ts";
 import { expandParallelResearchWorkflow } from "../../runtime/parallel-research.ts";
 import { checkProcessLiveness, isActiveRunStatus } from "../../runtime/process-status.ts";
@@ -113,13 +113,30 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 	registerActiveRun(updatedManifest);
 
 	const loadedConfig = loadConfig(ctx.cwd);
+	const executedConfig = effectiveRunConfig(loadedConfig.config, params.config);
+	const runtime = await resolveCrewRuntime(executedConfig);
+	const runtimeResolution = runtimeResolutionState(runtime);
+	const executionManifest = { ...updatedManifest, runtimeResolution, runConfig: executedConfig, updatedAt: new Date().toISOString() };
+	atomicWriteJson(paths.manifestPath, executionManifest);
+	appendEvent(executionManifest.eventsPath, { type: "runtime.resolved", runId: executionManifest.runId, message: `Runtime resolved: ${runtime.kind} safety=${runtime.safety}`, data: { runtimeResolution } });
 	const runAsync = params.async ?? loadedConfig.config.asyncByDefault ?? false;
 	if (runAsync) {
-		const spawned = spawnBackgroundTeamRun(updatedManifest);
-		const asyncManifest = { ...updatedManifest, async: { pid: spawned.pid, logPath: spawned.logPath, spawnedAt: new Date().toISOString() } };
+		if (runtime.safety === "blocked") {
+			const runningManifest = updateRunStatus(executionManifest, "running", "Checking worker runtime availability.");
+			const blocked = updateRunStatus(runningManifest, "blocked", runtime.reason ?? "Child worker execution is disabled; refusing to create no-op scaffold subagents.");
+			appendEvent(blocked.eventsPath, { type: "run.blocked", runId: blocked.runId, message: blocked.summary, data: { runtime, runtimeResolution, async: true } });
+			unregisterActiveRun(blocked.runId);
+			return result([
+				`Blocked pi-crew run ${blocked.runId}: real subagent workers are disabled.`,
+				`Runtime: ${runtime.kind} (requested ${runtime.requestedMode})`,
+				runtime.reason ?? "Child worker execution is disabled.",
+			].join("\n"), { action: "run", status: "error", runId: blocked.runId, artifactsRoot: blocked.artifactsRoot }, true);
+		}
+		const spawned = spawnBackgroundTeamRun(executionManifest);
+		const asyncManifest = { ...executionManifest, async: { pid: spawned.pid, logPath: spawned.logPath, spawnedAt: new Date().toISOString() } };
 		atomicWriteJson(paths.manifestPath, asyncManifest);
-		appendEvent(updatedManifest.eventsPath, { type: "async.spawned", runId: updatedManifest.runId, data: { pid: spawned.pid, logPath: spawned.logPath } });
-		scheduleBackgroundEarlyExitGuard(ctx.cwd, updatedManifest.runId, spawned.pid, spawned.logPath);
+		appendEvent(executionManifest.eventsPath, { type: "async.spawned", runId: executionManifest.runId, data: { pid: spawned.pid, logPath: spawned.logPath } });
+		scheduleBackgroundEarlyExitGuard(ctx.cwd, executionManifest.runId, spawned.pid, spawned.logPath);
 		const text = [
 			`Started async pi-crew run ${updatedManifest.runId}.`,
 			`Team: ${team.name}`,
@@ -135,12 +152,10 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 		return result(text, { action: "run", status: "ok", runId: updatedManifest.runId, artifactsRoot: updatedManifest.artifactsRoot });
 	}
 
-	const executedConfig = effectiveRunConfig(loadedConfig.config, params.config);
-	const runtime = await resolveCrewRuntime(executedConfig);
 	if (runtime.safety === "blocked") {
-		const runningManifest = updateRunStatus(updatedManifest, "running", "Checking worker runtime availability.");
+		const runningManifest = updateRunStatus(executionManifest, "running", "Checking worker runtime availability.");
 		const blocked = updateRunStatus(runningManifest, "blocked", runtime.reason ?? "Child worker execution is disabled; refusing to create no-op scaffold subagents.");
-		appendEvent(blocked.eventsPath, { type: "run.blocked", runId: blocked.runId, message: blocked.summary, data: { runtime } });
+		appendEvent(blocked.eventsPath, { type: "run.blocked", runId: blocked.runId, message: blocked.summary, data: { runtime, runtimeResolution } });
 		unregisterActiveRun(blocked.runId);
 		return result([
 			`Blocked pi-crew run ${blocked.runId}: real subagent workers are disabled.`,
@@ -156,7 +171,7 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 		ctx.onRunStarted?.(updatedManifest.runId);
 		ctx.startForegroundRun(async (signal) => {
 			try {
-				await executeTeamRun({ manifest: updatedManifest, tasks, team, workflow, agents, executeWorkers, limits: executedConfig.limits, runtime, runtimeConfig: executedConfig.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, skillOverride, signal, reliability: executedConfig.reliability, metricRegistry: ctx.metricRegistry, onJsonEvent: ctx.onJsonEvent });
+				await executeTeamRun({ manifest: executionManifest, tasks, team, workflow, agents, executeWorkers, limits: executedConfig.limits, runtime, runtimeConfig: executedConfig.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, skillOverride, signal, reliability: executedConfig.reliability, metricRegistry: ctx.metricRegistry, onJsonEvent: ctx.onJsonEvent });
 			} finally {
 				unregisterActiveRun(updatedManifest.runId);
 			}
@@ -177,7 +192,7 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 	}
 	let executed: Awaited<ReturnType<typeof executeTeamRun>>;
 	try {
-		executed = await executeTeamRun({ manifest: updatedManifest, tasks, team, workflow, agents, executeWorkers, limits: executedConfig.limits, runtime, runtimeConfig: executedConfig.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, skillOverride, signal: ctx.signal, reliability: executedConfig.reliability, metricRegistry: ctx.metricRegistry, onJsonEvent: ctx.onJsonEvent });
+		executed = await executeTeamRun({ manifest: executionManifest, tasks, team, workflow, agents, executeWorkers, limits: executedConfig.limits, runtime, runtimeConfig: executedConfig.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, skillOverride, signal: ctx.signal, reliability: executedConfig.reliability, metricRegistry: ctx.metricRegistry, onJsonEvent: ctx.onJsonEvent });
 	} finally {
 		unregisterActiveRun(updatedManifest.runId);
 	}

@@ -69,7 +69,12 @@ export async function executeWithRetry<T>(fn: (attempt: number, info: RetryAttem
 			}
 			const delay = calculateRetryDelay(attempt, normalized);
 			hooks.onAttemptFailed?.(attempt, lastError, delay, info);
-			await sleep(delay, hooks.signal);
+			try {
+				await sleep(delay, hooks.signal);
+			} catch (sleepError) {
+				if (hooks.signal?.aborted) throwIfCancelled(hooks.signal);
+				throw sleepError;
+			}
 		}
 	}
 	throw lastError ?? new Error("Retry failed without error.");

@@ -35,12 +35,13 @@ export function handleRespond(params: TeamToolParamsValue, ctx: TeamContext): Pi
 
 		if (targetTasks.length === 0) {
 			const existing = taskId ? fresh.tasks.find((t) => t.id === taskId) : undefined;
+			const hint = " Use api operation=follow-up-agent for continuation prompts or api operation=steer-agent to interrupt active work.";
 			return result(
-				taskId
+				(taskId
 					? existing
 						? `Task '${taskId}' is ${existing.status}, not waiting.`
 						: `Task '${taskId}' not found.`
-					: `No waiting tasks in run ${fresh.manifest.runId}.`,
+					: `No waiting tasks in run ${fresh.manifest.runId}.`) + hint,
 				{ action: "respond", status: "error", runId: fresh.manifest.runId },
 				true,
 			);
@@ -55,7 +56,10 @@ export function handleRespond(params: TeamToolParamsValue, ctx: TeamContext): Pi
 				to: task.id,
 				taskId: task.id,
 				body: message || "(resume)",
-				data: { action: "respond" },
+				kind: "response",
+				priority: "normal",
+				deliveryMode: "next_turn",
+				data: { action: "respond", kind: "response" },
 			});
 			mailboxIds.push(mailbox.id);
 		}

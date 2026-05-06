@@ -6,6 +6,9 @@ import { redactSecrets } from "../utils/redaction.ts";
 
 export type MailboxDirection = "inbox" | "outbox";
 export type MailboxMessageStatus = "queued" | "delivered" | "acknowledged";
+export type MailboxMessageKind = "message" | "steer" | "follow-up" | "response" | "group_join";
+export type MailboxMessagePriority = "urgent" | "normal" | "low";
+export type MailboxDeliveryMode = "interrupt" | "next_turn";
 
 export interface MailboxMessage {
 	id: string;
@@ -16,6 +19,9 @@ export interface MailboxMessage {
 	body: string;
 	createdAt: string;
 	status: MailboxMessageStatus;
+	kind?: MailboxMessageKind;
+	priority?: MailboxMessagePriority;
+	deliveryMode?: MailboxDeliveryMode;
 	taskId?: string;
 	acknowledgedAt?: string;
 	data?: Record<string, unknown>;
@@ -130,12 +136,26 @@ function isStatus(value: unknown): value is MailboxMessageStatus {
 	return value === "queued" || value === "delivered" || value === "acknowledged";
 }
 
+function isKind(value: unknown): value is MailboxMessageKind {
+	return value === "message" || value === "steer" || value === "follow-up" || value === "response" || value === "group_join";
+}
+
+function isPriority(value: unknown): value is MailboxMessagePriority {
+	return value === "urgent" || value === "normal" || value === "low";
+}
+
+function isDeliveryMode(value: unknown): value is MailboxDeliveryMode {
+	return value === "interrupt" || value === "next_turn";
+}
+
 function parseMailboxMessage(raw: unknown, expectedDirection: MailboxDirection): MailboxMessage | undefined {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
 	const obj = raw as Record<string, unknown>;
 	if (typeof obj.id !== "string" || typeof obj.runId !== "string" || !isDirection(obj.direction) || typeof obj.from !== "string" || typeof obj.to !== "string" || typeof obj.body !== "string" || typeof obj.createdAt !== "string" || !isStatus(obj.status)) return undefined;
 	if (obj.direction !== expectedDirection) return undefined;
-	return { id: obj.id, runId: obj.runId, direction: obj.direction, from: obj.from, to: obj.to, body: obj.body, createdAt: obj.createdAt, status: obj.status, taskId: typeof obj.taskId === "string" ? obj.taskId : undefined, acknowledgedAt: typeof obj.acknowledgedAt === "string" ? obj.acknowledgedAt : undefined, data: obj.data && typeof obj.data === "object" && !Array.isArray(obj.data) ? obj.data as Record<string, unknown> : undefined };
+	const data = obj.data && typeof obj.data === "object" && !Array.isArray(obj.data) ? obj.data as Record<string, unknown> : undefined;
+	const dataKind = data?.kind;
+	return { id: obj.id, runId: obj.runId, direction: obj.direction, from: obj.from, to: obj.to, body: obj.body, createdAt: obj.createdAt, status: obj.status, kind: isKind(obj.kind) ? obj.kind : isKind(dataKind) ? dataKind : undefined, priority: isPriority(obj.priority) ? obj.priority : undefined, deliveryMode: isDeliveryMode(obj.deliveryMode) ? obj.deliveryMode : undefined, taskId: typeof obj.taskId === "string" ? obj.taskId : undefined, acknowledgedAt: typeof obj.acknowledgedAt === "string" ? obj.acknowledgedAt : undefined, data };
 }
 
 function readMailboxFile(filePath: string, direction: MailboxDirection): MailboxMessage[] {
@@ -163,16 +183,20 @@ export function readMailbox(manifest: TeamRunManifest, direction?: MailboxDirect
 	return directions.flatMap((item) => safeReadMailboxFile(mailboxFile(manifest, item, taskId), item)).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
-function readAllInboxMessages(manifest: TeamRunManifest): MailboxMessage[] {
-	const messages = [...safeReadMailboxFile(mailboxFile(manifest, "inbox"), "inbox")];
+function readAllMessages(manifest: TeamRunManifest, direction: MailboxDirection): MailboxMessage[] {
+	const messages = [...safeReadMailboxFile(mailboxFile(manifest, direction), direction)];
 	const tasksDir = safeMailboxTasksRoot(manifest);
 	if (fs.existsSync(tasksDir)) {
 		for (const entry of fs.readdirSync(tasksDir, { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
-			messages.push(...safeReadMailboxFile(mailboxFile(manifest, "inbox", entry.name), "inbox"));
+			messages.push(...safeReadMailboxFile(mailboxFile(manifest, direction, entry.name), direction));
 		}
 	}
 	return messages.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+function readAllInboxMessages(manifest: TeamRunManifest): MailboxMessage[] {
+	return readAllMessages(manifest, "inbox");
 }
 
 export function readDeliveryState(manifest: TeamRunManifest): MailboxDeliveryState {
@@ -208,6 +232,9 @@ export function appendMailboxMessage(manifest: TeamRunManifest, message: Omit<Ma
 		body: message.body,
 		createdAt,
 		status: message.status ?? "queued",
+		kind: message.kind,
+		priority: message.priority,
+		deliveryMode: message.deliveryMode,
 		taskId: message.taskId,
 		data: message.data,
 	};
@@ -217,6 +244,19 @@ export function appendMailboxMessage(manifest: TeamRunManifest, message: Omit<Ma
 	delivery.updatedAt = createdAt;
 	writeDeliveryState(manifest, delivery);
 	return complete;
+}
+
+export function appendSteeringMessage(manifest: TeamRunManifest, input: { taskId: string; body: string; from?: string; to?: string; priority?: MailboxMessagePriority; status?: MailboxMessageStatus; data?: Record<string, unknown> }): MailboxMessage {
+	return appendMailboxMessage(manifest, { direction: "inbox", from: input.from ?? "leader", to: input.to ?? input.taskId, taskId: input.taskId, body: input.body, kind: "steer", priority: input.priority ?? "urgent", deliveryMode: "interrupt", status: input.status, data: { ...(input.data ?? {}), kind: "steer" } });
+}
+
+export function appendFollowUpMessage(manifest: TeamRunManifest, input: { taskId: string; body: string; from?: string; to?: string; priority?: MailboxMessagePriority; status?: MailboxMessageStatus; data?: Record<string, unknown> }): MailboxMessage {
+	return appendMailboxMessage(manifest, { direction: "inbox", from: input.from ?? "leader", to: input.to ?? input.taskId, taskId: input.taskId, body: input.body, kind: "follow-up", priority: input.priority ?? "normal", deliveryMode: "next_turn", status: input.status, data: { ...(input.data ?? {}), kind: "follow-up" } });
+}
+
+export function listMailboxByKind(manifest: TeamRunManifest, kind: MailboxMessageKind, direction?: MailboxDirection): MailboxMessage[] {
+	const messages = direction ? readAllMessages(manifest, direction) : [...readAllMessages(manifest, "inbox"), ...readAllMessages(manifest, "outbox")].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+	return messages.filter((message) => message.kind === kind || message.data?.kind === kind);
 }
 
 export function findMailboxMessageByRequestId(manifest: TeamRunManifest, requestId: string): MailboxMessage | undefined {

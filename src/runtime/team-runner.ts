@@ -25,7 +25,8 @@ import { childCorrelation, withCorrelation } from "../observability/correlation.
 import { resolveBatchConcurrency } from "./concurrency.ts";
 import { mapConcurrent } from "./parallel-utils.ts";
 import { permissionForRole } from "./role-permission.ts";
-import { cancellationReasonFromSignal } from "./cancellation.ts";
+import { CrewCancellationError, cancellationReasonFromSignal } from "./cancellation.ts";
+import { effectivenessPolicyDecision, evaluateRunEffectiveness, formatRunEffectivenessLines } from "./effectiveness.ts";
 
 export interface ExecuteTeamRunInput {
 	manifest: TeamRunManifest;
@@ -383,24 +384,11 @@ function formatTaskProgress(task: TeamTaskState): string {
 	return `- ${task.id}: ${task.status} (${task.role} -> ${task.agent})${task.taskPacket ? ` scope=${task.taskPacket.scope}` : ""}${task.verification ? ` green=${task.verification.observedGreenLevel}/${task.verification.requiredGreenLevel}` : ""}${task.error ? ` - ${task.error}` : ""}`;
 }
 
-function taskObservedWork(task: TeamTaskState): boolean {
-	return Boolean((task.agentProgress?.toolCount ?? 0) > 0 || task.usage || task.transcriptArtifact || task.modelAttempts?.length || task.jsonEvents);
+function runEffectivenessLines(manifest: TeamRunManifest, tasks: TeamTaskState[], executeWorkers: boolean, runtimeConfig?: CrewRuntimeConfig): string[] {
+	return formatRunEffectivenessLines(evaluateRunEffectiveness({ manifest, tasks, executeWorkers, runtimeConfig }));
 }
 
-function runEffectivenessLines(tasks: TeamTaskState[], executeWorkers: boolean): string[] {
-	const completed = tasks.filter((task) => task.status === "completed");
-	const noObservedWork = completed.filter((task) => !taskObservedWork(task));
-	const needsAttention = tasks.filter((task) => task.agentProgress?.activityState === "needs_attention");
-	const score = completed.length ? Math.max(0, completed.length - noObservedWork.length - needsAttention.length) : 0;
-	return [
-		`Score: ${score}/${Math.max(1, completed.length)} completed task(s) with observable worker activity`,
-		`Worker execution: ${executeWorkers ? "enabled" : "disabled/scaffold"}`,
-		...(noObservedWork.length ? [`No observable worker activity: ${noObservedWork.map((task) => task.id).join(", ")}`] : ["No observable worker activity: none"]),
-		...(needsAttention.length ? [`Needs attention: ${needsAttention.map((task) => task.id).join(", ")}`] : ["Needs attention: none"]),
-	];
-}
-
-function writeProgress(manifest: TeamRunManifest, tasks: TeamTaskState[], producer: string, executeWorkers = true): TeamRunManifest {
+function writeProgress(manifest: TeamRunManifest, tasks: TeamTaskState[], producer: string, executeWorkers = true, runtimeConfig?: CrewRuntimeConfig): TeamRunManifest {
 	const counts = new Map<string, number>();
 	for (const task of tasks) counts.set(task.status, (counts.get(task.status) ?? 0) + 1);
 	const queue = taskGraphSnapshot(tasks);
@@ -422,7 +410,7 @@ function writeProgress(manifest: TeamRunManifest, tasks: TeamTaskState[], produc
 			...tasks.map(formatTaskProgress),
 			"",
 			"## Effectiveness",
-			...runEffectivenessLines(tasks, executeWorkers),
+			...runEffectivenessLines(manifest, tasks, executeWorkers, runtimeConfig),
 			"",
 		].join("\n"),
 	});
@@ -551,7 +539,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 		manifest = updateRunStatus(manifest, "cancelled", "Plan approval was cancelled.");
 		return { manifest, tasks };
 	}
-	manifest = writeProgress(manifest, tasks, "team-runner", input.executeWorkers);
+	manifest = writeProgress(manifest, tasks, "team-runner", input.executeWorkers, input.runtimeConfig);
 	await saveRunManifestAsync(manifest);
 	const runtimeKind = input.runtime?.kind ?? (input.executeWorkers ? "child-process" : "scaffold");
 	saveCrewAgents(manifest, recordsForMaterializedTasks(manifest, tasks, runtimeKind));
@@ -655,7 +643,16 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 							input.metricRegistry?.histogram("crew.task.retry_count", "Retries per task", [0, 1, 2, 3, 5, 10]).observe({ runId: manifest.runId, team: input.team.name }, Math.max(0, attempts - 1));
 						},
 					});
-				} catch {
+				} catch (retryError) {
+					if (retryError instanceof CrewCancellationError || input.signal?.aborted) {
+						const reason = retryError instanceof CrewCancellationError ? retryError.reason : cancellationReasonFromSignal(input.signal);
+						const fresh = loadRunManifestById(manifest.cwd, manifest.runId);
+						const freshManifest = fresh?.manifest ?? manifest;
+						const freshTasks = fresh?.tasks ?? tasks;
+						const cancelledTasks = freshTasks.map((item) => item.id === task.id && (item.status === "queued" || item.status === "running") ? { ...item, status: "cancelled" as const, finishedAt: new Date().toISOString(), error: `${reason.message} (${reason.code})` } : item);
+						appendEvent(freshManifest.eventsPath, { type: "task.cancelled", runId: freshManifest.runId, taskId: task.id, message: reason.message, data: { reason, phase: "retry" } });
+						return { manifest: updateRunStatus(freshManifest, "cancelled", reason.message), tasks: cancelledTasks };
+					}
 					if (lastFailed) return lastFailed;
 					const fresh = loadRunManifestById(manifest.cwd, manifest.runId);
 					const freshManifest = fresh?.manifest ?? manifest;
@@ -668,6 +665,18 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 		);
 		manifest = { ...results.at(-1)!.manifest, artifacts: mergeArtifacts([manifest.artifacts, ...results.map((item) => item.manifest.artifacts)].flat()) };
 		tasks = __test__mergeTaskUpdates(tasks, results);
+		const cancelledResult = results.find((item) => item.manifest.status === "cancelled");
+		if (cancelledResult || input.signal?.aborted) {
+			const reason = input.signal?.aborted ? cancellationReasonFromSignal(input.signal) : undefined;
+			const message = reason?.message ?? cancelledResult?.manifest.summary ?? "Run cancelled during task execution.";
+			manifest = { ...manifest, status: "running" };
+			manifest = updateRunStatus(manifest, "cancelled", message);
+			await saveRunTasksAsync(manifest, tasks);
+			saveCrewAgents(manifest, recordsForMaterializedTasks(manifest, tasks, runtimeKind));
+			await saveRunManifestAsync(manifest);
+			appendEvent(manifest.eventsPath, { type: "run.cancelled", runId: manifest.runId, message, data: { reason, phase: "task-batch", cancelledResultRunId: cancelledResult?.manifest.runId } });
+			return { manifest, tasks };
+		}
 		queueIndex = buildTaskGraphIndex(tasks);
 		const injectedAfterBatch = attemptAdaptivePlan();
 		if (injectedAfterBatch.missing) {
@@ -701,7 +710,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 		});
 		const groupDelivery = deliverGroupJoin({ manifest, mode: resolveGroupJoinMode(input.runtimeConfig), batch: readyBatch, allTasks: tasks });
 		manifest = { ...manifest, artifacts: mergeArtifacts([...manifest.artifacts, batchArtifact, ...(groupDelivery?.artifact ? [groupDelivery.artifact] : [])]) };
-		manifest = writeProgress(manifest, tasks, "team-runner", input.executeWorkers);
+		manifest = writeProgress(manifest, tasks, "team-runner", input.executeWorkers, input.runtimeConfig);
 		await saveRunManifestAsync(manifest);
 	}
 
@@ -709,6 +718,12 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 	const waiting = tasks.find((task) => task.status === "waiting");
 	const running = tasks.find((task) => task.status === "running");
 	manifest = applyPolicy(manifest, tasks, input.limits);
+	const effectiveness = evaluateRunEffectiveness({ manifest, tasks, executeWorkers: input.executeWorkers, runtimeConfig: input.runtimeConfig });
+	const effectivenessDecision = effectivenessPolicyDecision(effectiveness);
+	if (effectivenessDecision) {
+		manifest = { ...manifest, policyDecisions: [...(manifest.policyDecisions ?? []), effectivenessDecision], updatedAt: new Date().toISOString() };
+		appendEvent(manifest.eventsPath, { type: "run.effectiveness", runId: manifest.runId, message: effectivenessDecision.message, data: { effectiveness, policyDecision: effectivenessDecision } });
+	}
 	const blockingDecision = manifest.policyDecisions?.find((item) => item.action === "block" || item.action === "escalate");
 	if (failed) {
 		manifest = updateRunStatus(manifest, "failed", `Failed at task '${failed.id}'.`);
@@ -716,12 +731,16 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 		manifest = updateRunStatus(manifest, "blocked", `Waiting for response to task '${waiting.id}'.`);
 	} else if (running) {
 		manifest = updateRunStatus(manifest, "blocked", `Task '${running.id}' is still running.`);
+	} else if (effectiveness.severity === "failed") {
+		manifest = updateRunStatus(manifest, "failed", effectivenessDecision?.message ?? "Run effectiveness guard failed.");
+	} else if (effectiveness.severity === "blocked") {
+		manifest = updateRunStatus(manifest, "blocked", effectivenessDecision?.message ?? "Run effectiveness guard blocked completion.");
 	} else if (blockingDecision) {
 		manifest = updateRunStatus(manifest, "blocked", blockingDecision.message);
 	} else {
 		manifest = updateRunStatus(manifest, "completed", input.executeWorkers ? "Team workflow completed." : "Team workflow scaffold completed without launching child workers.");
 	}
-	manifest = writeProgress(manifest, tasks, "team-runner", input.executeWorkers);
+	manifest = writeProgress(manifest, tasks, "team-runner", input.executeWorkers, input.runtimeConfig);
 	await saveRunManifestAsync(manifest);
 	const usage = aggregateUsage(tasks);
 	const summaryArtifact = writeArtifact(manifest.artifactsRoot, {
@@ -741,7 +760,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 			...tasks.map(formatTaskProgress),
 			"",
 			"## Effectiveness",
-			...runEffectivenessLines(tasks, input.executeWorkers),
+			...runEffectivenessLines(manifest, tasks, input.executeWorkers, input.runtimeConfig),
 			"",
 			"## Policy decisions",
 			...(manifest.policyDecisions?.length ? summarizePolicyDecisions(manifest.policyDecisions) : ["- (none)"]),

@@ -9,6 +9,7 @@ import { readCrewAgents } from "../../runtime/crew-agent-records.ts";
 import { checkProcessLiveness, isActiveRunStatus } from "../../runtime/process-status.ts";
 import { formatTaskGraphLines, waitingReason } from "../../runtime/task-display.ts";
 import { verifyTaskCompletion, formatOutputPreview } from "../../runtime/completion-guard.ts";
+import { evaluateRunEffectiveness } from "../../runtime/effectiveness.ts";
 import type { PiTeamsToolResult } from "../tool-result.ts";
 import { result, type TeamContext } from "./context.ts";
 
@@ -52,8 +53,9 @@ export function handleStatus(params: TeamToolParamsValue, ctx: TeamContext): PiT
 	}
 	const totalUsage = aggregateUsage(tasks);
 	const completedTasks = tasks.filter((task) => task.status === "completed");
-	const noObservedWorkTasks = completedTasks.filter((task) => !((task.agentProgress?.toolCount ?? 0) > 0 || task.usage || task.transcriptArtifact || task.modelAttempts?.length || task.jsonEvents));
-	const attentionTasks = tasks.filter((task) => task.agentProgress?.activityState === "needs_attention");
+	const effectiveness = evaluateRunEffectiveness({ manifest, tasks, executeWorkers: manifest.runtimeResolution?.kind !== "scaffold", runtimeConfig: loadConfig(ctx.cwd).config.runtime });
+	const noObservedWorkTasks = effectiveness.noObservedWorkTaskIds.map((id) => tasks.find((task) => task.id === id)).filter((task): task is typeof tasks[number] => task !== undefined);
+	const attentionTasks = effectiveness.needsAttentionTaskIds.map((id) => tasks.find((task) => task.id === id)).filter((task): task is typeof tasks[number] => task !== undefined);
 	const activeAgents = crewAgents.filter((agent) => agent.status === "running");
 	const completedAgents = crewAgents.filter((agent) => agent.status !== "running");
 	const waitingTasks = tasks.filter((task) => task.status === "queued" || task.status === "waiting");
@@ -64,6 +66,7 @@ export function handleStatus(params: TeamToolParamsValue, ctx: TeamContext): PiT
 		`Workflow: ${manifest.workflow ?? "(none)"}`,
 		`Status: ${manifest.status}`,
 		`Workspace mode: ${manifest.workspaceMode}`,
+		...(manifest.runtimeResolution ? [`Runtime: ${manifest.runtimeResolution.kind}`, `Runtime safety: ${manifest.runtimeResolution.safety}`, `Runtime requested: ${manifest.runtimeResolution.requestedMode}${manifest.runtimeResolution.reason ? ` (${manifest.runtimeResolution.reason})` : ""}`] : []),
 		`Goal: ${manifest.goal}`,
 		`Created: ${manifest.createdAt}`,
 		`Updated: ${manifest.updatedAt}`,
@@ -76,9 +79,10 @@ export function handleStatus(params: TeamToolParamsValue, ctx: TeamContext): PiT
 		...(tasks.length ? tasks.map((task) => `- ${task.id} [${task.status}] ${task.role} -> ${task.agent}${task.taskPacket ? ` scope=${task.taskPacket.scope}` : ""}${task.verification ? ` green=${task.verification.observedGreenLevel}/${task.verification.requiredGreenLevel}` : ""}${task.modelAttempts?.length ? ` attempts=${task.modelAttempts.length}` : ""}${task.modelRouting ? ` modelRouting=${task.modelRouting.requested ? `${task.modelRouting.requested}->` : ""}${task.modelRouting.resolved}${task.modelRouting.usedAttempt ? ` attempt=${task.modelRouting.usedAttempt + 1}` : ""}` : ""}${task.agentProgress?.activityState ? ` activityState=${task.agentProgress.activityState}` : ""}${attentionByTask.get(task.id)?.data?.reason ? ` attention=${String(attentionByTask.get(task.id)?.data?.reason)}` : ""}${task.jsonEvents !== undefined ? ` jsonEvents=${task.jsonEvents}` : ""}${task.usage ? ` usage=${JSON.stringify(task.usage)}` : ""}${task.resultArtifact ? ` result=${task.resultArtifact.path}` : ""}${task.transcriptArtifact ? ` transcript=${task.transcriptArtifact.path}` : ""}${task.worktree ? ` worktree=${task.worktree.path}` : ""}${task.error ? ` error=${task.error}` : ""}`) : ["- (none)"]),
 		`Task counts: ${[...counts.entries()].map(([status, count]) => `${status}=${count}`).join(", ") || "none"}`,
 		"Effectiveness:",
-		`- observable=${Math.max(0, completedTasks.length - noObservedWorkTasks.length - attentionTasks.length)}/${Math.max(1, completedTasks.length)} completed tasks`,
-		`- noObservedWork=${noObservedWorkTasks.length ? noObservedWorkTasks.map((task) => task.id).join(",") : "none"}`,
-		`- needsAttention=${attentionTasks.length ? attentionTasks.map((task) => task.id).join(",") : "none"}`,
+		`- observable=${effectiveness.observable}/${Math.max(1, effectiveness.completed)} completed tasks`,
+		`- workerExecution=${effectiveness.workerExecution} guard=${effectiveness.guardMode} severity=${effectiveness.severity}`,
+		`- noObservedWork=${effectiveness.noObservedWorkTaskIds.length ? effectiveness.noObservedWorkTaskIds.join(",") : "none"}`,
+		`- needsAttention=${effectiveness.needsAttentionTaskIds.length ? effectiveness.needsAttentionTaskIds.join(",") : "none"}`,
 		"Completion verification",
 		...(tasks.filter((t) => t.status === "completed").length ? tasks.filter((t) => t.status === "completed").map((t) => {
 			const guard = verifyTaskCompletion(t, manifest);

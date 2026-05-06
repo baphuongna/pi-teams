@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { calculateRetryDelay, executeWithRetry } from "../../src/runtime/retry-executor.ts";
+import { CrewCancellationError } from "../../src/runtime/cancellation.ts";
 
 test("executeWithRetry succeeds on first try", async () => {
 	let attempts = 0;
@@ -37,7 +38,20 @@ test("executeWithRetry reports structured cancellation before first attempt", as
 	controller.abort({ code: "leader_interrupted", message: "leader stopped retry" });
 	await assert.rejects(
 		() => executeWithRetry(async () => "never", { maxAttempts: 3, backoffMs: 1, jitterRatio: 0, exponentialFactor: 1 }, { signal: controller.signal }),
-		(error: unknown) => error instanceof Error && error.name === "CrewCancellationError" && /leader stopped retry/.test(error.message),
+		(error: unknown) => error instanceof CrewCancellationError && error.reason.code === "leader_interrupted" && /leader stopped retry/.test(error.message),
+	);
+});
+
+test("executeWithRetry preserves structured cancellation during retry backoff", async () => {
+	const controller = new AbortController();
+	await assert.rejects(
+		() => executeWithRetry(async () => {
+			throw new Error("temporary");
+		}, { maxAttempts: 3, backoffMs: 50, jitterRatio: 0, exponentialFactor: 1 }, {
+			signal: controller.signal,
+			onAttemptFailed: () => controller.abort({ code: "leader_interrupted", message: "leader stopped during retry backoff" }),
+		}),
+		(error: unknown) => error instanceof CrewCancellationError && error.reason.code === "leader_interrupted" && /leader stopped during retry backoff/.test(error.message),
 	);
 });
 

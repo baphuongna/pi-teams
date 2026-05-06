@@ -29,14 +29,14 @@ import type { ArtifactDescriptor, TeamRunManifest, TeamTaskState } from "../stat
 import { executeTeamRun } from "../runtime/team-runner.ts";
 import { checkProcessLiveness, isActiveRunStatus } from "../runtime/process-status.ts";
 import { saveCrewAgents, readCrewAgents, recordFromTask } from "../runtime/crew-agent-records.ts";
-import { resolveCrewRuntime } from "../runtime/runtime-resolver.ts";
+import { resolveCrewRuntime, runtimeResolutionState } from "../runtime/runtime-resolver.ts";
 import { applyAttentionState, formatActivityAge, resolveCrewControlConfig } from "../runtime/agent-control.ts";
 import { writeForegroundInterruptRequest } from "../runtime/foreground-control.ts";
 import { formatTaskGraphLines, waitingReason } from "../runtime/task-display.ts";
 import { directTeamAndWorkflowFromRun } from "../runtime/direct-run.ts";
 import { parsePiJsonOutput } from "../runtime/pi-json-output.ts";
 import { buildParentContext, configRecord, formatScoped, result, type TeamContext } from "./team-tool/context.ts";
-import { autonomousPatchFromConfig, configPatchFromConfig, formatAutonomyStatus } from "./team-tool/config-patch.ts";
+import { autonomousPatchFromConfig, configPatchFromConfig, effectiveRunConfig, formatAutonomyStatus } from "./team-tool/config-patch.ts";
 import { handleApi } from "./team-tool/api.ts";
 import { handleRun } from "./team-tool/run.ts";
 import { handleDoctor } from "./team-tool/doctor.ts";
@@ -177,19 +177,37 @@ export async function handleResume(params: TeamToolParamsValue, ctx: TeamContext
 	const workflow = direct?.workflow ?? allWorkflows(discoverWorkflows(ctx.cwd)).find((candidate) => candidate.name === loaded.manifest.workflow);
 	if (!workflow) return result(`Workflow '${loaded.manifest.workflow}' not found.`, { action: "resume", status: "error" }, true);
 	return await withRunLock(loaded.manifest, async () => {
+		const loadedConfig = loadConfig(ctx.cwd);
 		const recovered = recoverCheckpointedTasks(loaded.manifest, loaded.tasks);
 		const resumeManifest = recovered.manifest;
+		const executedConfig = effectiveRunConfig(loadedConfig.config, params.config);
+		const runtime = await resolveCrewRuntime(executedConfig);
+		const runtimeResolution = runtimeResolutionState(runtime);
+		const runtimeManifest = { ...resumeManifest, runtimeResolution, updatedAt: new Date().toISOString() };
+		saveRunManifest(runtimeManifest);
+		appendEvent(runtimeManifest.eventsPath, { type: "runtime.resolved", runId: runtimeManifest.runId, message: `Runtime resolved for resume: ${runtime.kind} safety=${runtime.safety}`, data: { runtimeResolution, action: "resume" } });
+		if (runtime.safety === "blocked") {
+			const runningManifest = updateRunStatus(runtimeManifest, "running", "Checking worker runtime availability before resume.");
+			const blocked = updateRunStatus(runningManifest, "blocked", runtime.reason ?? "Child worker execution is disabled; refusing to resume with no-op scaffold subagents.");
+			appendEvent(blocked.eventsPath, { type: "run.blocked", runId: blocked.runId, message: blocked.summary, data: { runtime, action: "resume" } });
+			return result([
+				`Blocked resume for pi-crew run ${blocked.runId}: real subagent workers are disabled.`,
+				`Runtime: ${runtime.kind} (requested ${runtime.requestedMode})`,
+				runtime.reason ?? "Child worker execution is disabled.",
+				"",
+				"To resume effective subagents, remove executeWorkers=false / PI_CREW_EXECUTE_WORKERS=0 / PI_TEAMS_EXECUTE_WORKERS=0 or set runtime.mode=child-process.",
+				"Use runtime.mode=scaffold only for explicit dry-run prompt/artifact generation.",
+			].join("\n"), { action: "resume", status: "error", runId: blocked.runId, artifactsRoot: blocked.artifactsRoot }, true);
+		}
 		const resetTasks = recovered.tasks.map((task) => task.status === "failed" || task.status === "cancelled" || task.status === "skipped" || task.status === "running" ? { ...task, status: "queued" as const, error: undefined, startedAt: undefined, finishedAt: undefined, claim: undefined } : task);
-		saveRunTasks(resumeManifest, resetTasks);
-		const replay = replayPendingMailboxMessages(resumeManifest);
-		appendEvent(resumeManifest.eventsPath, { type: "run.resume_requested", runId: resumeManifest.runId, data: { replayedMailboxMessages: replay.messages.length, recoveredCheckpointTasks: recovered.recovered } });
-		if (recovered.recovered.length) appendEvent(resumeManifest.eventsPath, { type: "task.checkpoint_recovered", runId: resumeManifest.runId, message: `Recovered ${recovered.recovered.length} task(s) from artifact-written checkpoints.`, data: { taskIds: recovered.recovered } });
-		if (replay.messages.length) appendEvent(resumeManifest.eventsPath, { type: "mailbox.replayed", runId: resumeManifest.runId, message: `Replayed ${replay.messages.length} pending inbox message(s).`, data: { messageIds: replay.messages.map((message) => message.id), taskIds: replay.messages.map((message) => message.taskId).filter(Boolean) } });
-		const loadedConfig = loadConfig(ctx.cwd);
-		const runtime = await resolveCrewRuntime(loadedConfig.config);
+		saveRunTasks(runtimeManifest, resetTasks);
+		const replay = replayPendingMailboxMessages(runtimeManifest);
+		appendEvent(runtimeManifest.eventsPath, { type: "run.resume_requested", runId: runtimeManifest.runId, data: { replayedMailboxMessages: replay.messages.length, recoveredCheckpointTasks: recovered.recovered } });
+		if (recovered.recovered.length) appendEvent(runtimeManifest.eventsPath, { type: "task.checkpoint_recovered", runId: runtimeManifest.runId, message: `Recovered ${recovered.recovered.length} task(s) from artifact-written checkpoints.`, data: { taskIds: recovered.recovered } });
+		if (replay.messages.length) appendEvent(runtimeManifest.eventsPath, { type: "mailbox.replayed", runId: runtimeManifest.runId, message: `Replayed ${replay.messages.length} pending inbox message(s).`, data: { messageIds: replay.messages.map((message) => message.id), taskIds: replay.messages.map((message) => message.taskId).filter(Boolean) } });
 		const executeWorkers = runtime.kind !== "scaffold";
-		const resumeSkillOverride = normalizeSkillOverride(params.skill) ?? resumeManifest.skillOverride;
-		const executed = await executeTeamRun({ manifest: resumeManifest, tasks: resetTasks, team, workflow, agents, executeWorkers, limits: loadedConfig.config.limits, runtime, runtimeConfig: loadedConfig.config.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, skillOverride: resumeSkillOverride, signal: ctx.signal, reliability: loadedConfig.config.reliability, metricRegistry: ctx.metricRegistry });
+		const resumeSkillOverride = normalizeSkillOverride(params.skill) ?? runtimeManifest.skillOverride;
+		const executed = await executeTeamRun({ manifest: runtimeManifest, tasks: resetTasks, team, workflow, agents, executeWorkers, limits: executedConfig.limits, runtime, runtimeConfig: executedConfig.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, skillOverride: resumeSkillOverride, signal: ctx.signal, reliability: executedConfig.reliability, metricRegistry: ctx.metricRegistry });
 		return result([`Resumed run ${executed.manifest.runId}.`, `Status: ${executed.manifest.status}`, `Tasks: ${executed.tasks.length}`, `Artifacts: ${executed.manifest.artifactsRoot}`].join("\n"), { action: "resume", status: executed.manifest.status === "failed" ? "error" : "ok", runId: executed.manifest.runId, artifactsRoot: executed.manifest.artifactsRoot }, executed.manifest.status === "failed");
 	});
 }

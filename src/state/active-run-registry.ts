@@ -151,7 +151,7 @@ export function activeRunEntries(): ActiveRunRegistryEntry[] {
 			if (!fs.existsSync(entry.stateRoot) || !fs.existsSync(entry.manifestPath)) continue;
 			if (fs.lstatSync(entry.stateRoot).isSymbolicLink()) continue;
 			const manifest = JSON.parse(fs.readFileSync(entry.manifestPath, "utf-8")) as { status?: unknown };
-			if (manifest.status !== "queued" && manifest.status !== "planning" && manifest.status !== "running" && manifest.status !== "blocked") continue;
+			if (manifest.status !== "queued" && manifest.status !== "planning" && manifest.status !== "running") continue;
 			entries.push(entry);
 		} catch {
 			// Ignore stale entries; callers filter active status from manifests.

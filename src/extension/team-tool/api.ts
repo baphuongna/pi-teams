@@ -5,7 +5,7 @@ import { loadRunManifestById, saveRunManifest, saveRunTasks, updateRunStatus } f
 import { withRunLockSync } from "../../state/locks.ts";
 import { canTransitionTaskStatus, isTeamTaskStatus } from "../../state/contracts.ts";
 import { claimTask, releaseTaskClaim, transitionClaimedTaskStatus } from "../../state/task-claims.ts";
-import { acknowledgeMailboxMessage, appendMailboxMessage, readDeliveryState, readMailbox, readMailboxMessage, validateMailbox, type MailboxDirection } from "../../state/mailbox.ts";
+import { acknowledgeMailboxMessage, appendFollowUpMessage, appendMailboxMessage, appendSteeringMessage, readDeliveryState, readMailbox, readMailboxMessage, validateMailbox, type MailboxDirection } from "../../state/mailbox.ts";
 import { appendEvent, readEvents, readEventsCursor } from "../../state/event-log.ts";
 import { resolveCrewRuntime } from "../../runtime/runtime-resolver.ts";
 import { probeLiveSessionRuntime } from "../../subagents/live/session-runtime.ts";
@@ -212,7 +212,7 @@ export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): 
 		const agent = readCrewAgents(loaded.manifest).find((item) => item.id === agentId || item.taskId === agentId);
 		if (!agent) return result("API nudge-agent requires config.agentId matching an agent id or task id.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
 		const messageText = typeof cfg.message === "string" && cfg.message.trim() ? cfg.message.trim() : "Please report your current status, blocker, or smallest next step.";
-		const message = appendMailboxMessage(loaded.manifest, { direction: "inbox", from: "leader", to: agent.taskId, taskId: agent.taskId, body: messageText });
+		const message = appendSteeringMessage(loaded.manifest, { taskId: agent.taskId, to: agent.taskId, body: messageText, priority: "normal", data: { source: "nudge-agent" } });
 		appendEvent(loaded.manifest.eventsPath, { type: "agent.nudged", runId: loaded.manifest.runId, taskId: agent.taskId, message: messageText, data: { agentId: agent.id, mailboxMessageId: message.id } });
 		ctx.events?.emit?.("crew.mailbox.message", { runId: loaded.manifest.runId, id: message.id, direction: message.direction, from: message.from, to: message.to, taskId: message.taskId, source: "nudge-agent" });
 		return result(JSON.stringify({ agentId: agent.id, mailboxMessage: message }, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
@@ -228,10 +228,21 @@ export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): 
 		try {
 			const live = getLiveAgent(agentId);
 			if (live && live.runId !== loaded.manifest.runId) return result(`Live agent '${agentId}' does not belong to run ${loaded.manifest.runId}.`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-			if (operation === "steer-agent") return result(JSON.stringify(await steerLiveAgent(agentId, message ?? "Please report current status and wrap up if possible."), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+			if (!live && (operation === "steer-agent" || operation === "follow-up-agent")) throw new Error(`Live agent '${agentId}' not found.`);
+			const liveTaskId = live?.taskId;
+			if ((operation === "steer-agent" || operation === "follow-up-agent") && !liveTaskId) throw new Error(`Live agent '${agentId}' not found.`);
+			const targetTaskId = liveTaskId ?? agentId;
+			if (operation === "steer-agent") {
+				const text = message ?? "Please report current status and wrap up if possible.";
+				const realtime = await steerLiveAgent(agentId, text);
+				const mailboxMessage = appendSteeringMessage(loaded.manifest, { taskId: targetTaskId, body: text, status: "delivered", data: { source: "steer-agent", realtime: true } });
+				return result(JSON.stringify({ realtime, mailboxMessage }, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+			}
 			if (operation === "follow-up-agent") {
 				if (!prompt) return result("API follow-up-agent requires config.prompt or config.message.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
-				return result(JSON.stringify(await followUpLiveAgent(agentId, prompt), null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+				const realtime = await followUpLiveAgent(agentId, prompt);
+				const mailboxMessage = appendFollowUpMessage(loaded.manifest, { taskId: targetTaskId, body: prompt, status: "delivered", data: { source: "follow-up-agent", realtime: true } });
+				return result(JSON.stringify({ realtime, mailboxMessage }, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
 			}
 			if (operation === "resume-agent") {
 				if (!prompt) return result("API resume-agent requires config.prompt or config.message.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
@@ -250,10 +261,11 @@ export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): 
 			if (operation === "follow-up-agent" && !prompt) return result("API follow-up-agent requires config.prompt or config.message.", { action: "api", status: "error", runId: loaded.manifest.runId }, true);
 			try {
 				const request = appendLiveAgentControlRequest(loaded.manifest, { taskId: task.id, agentId: agent.id, operation: operation === "resume-agent" ? "resume" : operation === "follow-up-agent" ? "follow-up" : operation === "steer-agent" ? "steer" : "stop", message: operation === "resume-agent" || operation === "follow-up-agent" ? prompt : message });
+				const mailboxMessage = operation === "steer-agent" ? appendSteeringMessage(loaded.manifest, { taskId: task.id, to: agent.id, body: message ?? "Please report current status and wrap up if possible.", status: "delivered", data: { source: "steer-agent", liveControlRequestId: request.id } }) : operation === "follow-up-agent" && prompt ? appendFollowUpMessage(loaded.manifest, { taskId: task.id, to: agent.id, body: prompt, status: "delivered", data: { source: "follow-up-agent", liveControlRequestId: request.id } }) : undefined;
 				publishLiveControlRealtime(request);
 				ctx.events?.emit?.("pi-crew:live-control", liveControlRealtimeMessage(request));
-				appendEvent(loaded.manifest.eventsPath, { type: "agent.control.queued", runId: loaded.manifest.runId, taskId: agent.taskId, message: `Queued ${request.operation} control request for live agent.`, data: { request, realtime: true } });
-				return result(JSON.stringify({ queued: true, request }, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
+				appendEvent(loaded.manifest.eventsPath, { type: "agent.control.queued", runId: loaded.manifest.runId, taskId: agent.taskId, message: `Queued ${request.operation} control request for live agent.`, data: { request, mailboxMessageId: mailboxMessage?.id, realtime: true } });
+				return result(JSON.stringify({ queued: true, request, mailboxMessage }, null, 2), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
 			} catch (queueError) {
 				const message = queueError instanceof Error ? queueError.message : String(queueError);
 				return result(message, { action: "api", status: "error", runId: loaded.manifest.runId }, true);

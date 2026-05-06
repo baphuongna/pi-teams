@@ -4,7 +4,7 @@ import * as path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readActiveRunRegistry, registerActiveRun, unregisterActiveRun, activeRunRoots } from "../../src/state/active-run-registry.ts";
-import { createRunManifest } from "../../src/state/state-store.ts";
+import { createRunManifest, updateRunStatus } from "../../src/state/state-store.ts";
 import type { TeamConfig } from "../../src/teams/team-config.ts";
 import type { WorkflowConfig } from "../../src/workflows/workflow-config.ts";
 
@@ -94,6 +94,23 @@ test("activeRunRoots skips entries with missing stateRoot", () => {
 			assert.equal(activeRunRoots().length, 1);
 			// Remove the state root to simulate cleanup
 			fs.rmSync(created.manifest.stateRoot, { recursive: true, force: true });
+			assert.equal(activeRunRoots().length, 0);
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+});
+
+test("blocked runs are not active-run registry roots", () => {
+	withIsolatedHome(() => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-active-blocked-"));
+		fs.mkdirSync(path.join(cwd, ".crew"), { recursive: true });
+		try {
+			const created = createRunManifest({ cwd, team, workflow, goal: "blocked is terminal" });
+			registerActiveRun(created.manifest);
+			assert.equal(activeRunRoots().length, 1);
+			const running = updateRunStatus(created.manifest, "running", "started");
+			updateRunStatus(running, "blocked", "blocked terminal state");
 			assert.equal(activeRunRoots().length, 0);
 		} finally {
 			fs.rmSync(cwd, { recursive: true, force: true });

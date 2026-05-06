@@ -55,8 +55,8 @@ export interface TaskPacket {
 	verification: VerificationContract;
 }
 
-export type PolicyDecisionAction = "retry" | "reassign" | "escalate" | "block" | "notify" | "cleanup" | "closeout";
-export type PolicyDecisionReason = "task_failed" | "worker_stale" | "green_unsatisfied" | "limit_exceeded" | "run_complete" | "mailbox_timeout" | "review_rejected" | "branch_stale" | "scope_mismatch";
+export type PolicyDecisionAction = "retry" | "reassign" | "escalate" | "block" | "notify" | "cleanup" | "closeout" | "fail";
+export type PolicyDecisionReason = "task_failed" | "worker_stale" | "green_unsatisfied" | "limit_exceeded" | "run_complete" | "mailbox_timeout" | "review_rejected" | "branch_stale" | "scope_mismatch" | "ineffective_worker";
 
 export interface PolicyDecision {
 	action: PolicyDecisionAction;
@@ -79,6 +79,39 @@ export interface AsyncRunState {
 	pid?: number;
 	logPath: string;
 	spawnedAt: string;
+}
+
+export interface RuntimeResolutionState {
+	kind: "scaffold" | "child-process" | "live-session";
+	requestedMode: "auto" | "scaffold" | "child-process" | "live-session";
+	safety: "trusted" | "explicit_dry_run" | "blocked";
+	available: boolean;
+	fallback?: "scaffold" | "child-process" | "live-session";
+	reason?: string;
+	resolvedAt: string;
+}
+
+export interface WorkerExitStatus {
+	exitCode: number | null;
+	cancelled: boolean;
+	timedOut: boolean;
+	killed: boolean;
+	signal?: string;
+	cleanupErrors: string[];
+	finalDrainMs: number;
+}
+
+export interface OperationTerminalEvidence {
+	operation: "worker" | "tool" | "model";
+	status: "cancelled" | "failed" | "completed";
+	startedAt?: string;
+	finishedAt: string;
+	attemptId?: string;
+	reason?: {
+		code: string;
+		message: string;
+	};
+	exitStatus?: WorkerExitStatus;
 }
 
 export interface PlanApprovalState {
@@ -127,6 +160,10 @@ export interface TeamRunManifest {
 	ownerSessionId?: string;
 	/** pi-crew skill override selected when the run was created. false disables injected skill instructions. */
 	skillOverride?: string[] | false;
+	/** Resolved runtime/safety mode used for execution. Optional for backward compatibility with older manifests. */
+	runtimeResolution?: RuntimeResolutionState;
+	/** Effective run config snapshot used by async background workers. Optional for backward compatibility. */
+	runConfig?: unknown;
 	summary?: string;
 	policyDecisions?: PolicyDecision[];
 }
@@ -203,6 +240,8 @@ export interface TeamTaskState {
 	heartbeat?: WorkerHeartbeatState;
 	checkpoint?: TaskCheckpointState;
 	attempts?: TaskAttemptState[];
+	workerExitStatus?: WorkerExitStatus;
+	terminalEvidence?: OperationTerminalEvidence[];
 	taskPacket?: TaskPacket;
 	verification?: VerificationEvidence;
 	graph?: TaskGraphNode;

@@ -71,7 +71,8 @@
         "groupJoin": { "type": "string", "enum": ["off", "group", "smart"] },
         "groupJoinAckTimeoutMs": { "type": "integer", "minimum": 1 },
         "requirePlanApproval": { "type": "boolean" },
-        "completionMutationGuard": { "type": "string", "enum": ["off", "warn", "fail"] }
+        "completionMutationGuard": { "type": "string", "enum": ["off", "warn", "fail"] },
+        "effectivenessGuard": { "type": "string", "enum": ["off", "warn", "block", "fail"] }
       }
     },
     "control": {

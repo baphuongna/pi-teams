@@ -2,6 +2,7 @@ import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process"
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentConfig } from "../agents/agent-config.ts";
+import type { WorkerExitStatus } from "../state/types.ts";
 import { buildPiWorkerArgs, checkCrewDepth, cleanupTempDir } from "./pi-args.ts";
 import { getPiSpawnCommand } from "./pi-spawn.ts";
 import { DEFAULT_CHILD_PI } from "../config/defaults.ts";
@@ -105,6 +106,7 @@ export interface ChildPiRunResult {
 	stdout: string;
 	stderr: string;
 	error?: string;
+	exitStatus?: WorkerExitStatus;
 }
 
 export function buildChildPiSpawnOptions(cwd: string, env: NodeJS.ProcessEnv): SpawnOptions {
@@ -307,6 +309,9 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 			const responseTimeoutMs = Number.isFinite(responseTimeoutEnv) && responseTimeoutEnv >= 0 ? responseTimeoutEnv : input.responseTimeoutMs ?? RESPONSE_TIMEOUT_MS;
 			let responseTimeoutHit = false;
 			let forcedFinalDrain = false;
+			let abortRequested = input.signal?.aborted === true;
+			let hardKilled = false;
+			const cleanupErrors: string[] = [];
 			const restartNoResponseTimer = (): void => {
 				if (responseTimeoutMs <= 0) return;
 				if (noResponseTimer) clearTimeout(noResponseTimer);
@@ -348,6 +353,7 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 						hardKillTimer = setTimeout(() => {
 							if (settled || childExited) return;
 							try {
+								hardKilled = true;
 								child.kill(process.platform === "win32" ? undefined : "SIGKILL");
 							} catch (error) {
 								logInternalError("child-pi.final-drain-kill", error, `pid=${child.pid}`);
@@ -383,11 +389,16 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 				clearChildPiTimeouts();
 				lineObserver.flush();
 				input.signal?.removeEventListener("abort", abort);
-				cleanupTempDir(built.tempDir);
-				resolve(result);
+				try {
+					cleanupTempDir(built.tempDir);
+				} catch (error) {
+					cleanupErrors.push(error instanceof Error ? error.message : String(error));
+				}
+				resolve({ ...result, exitStatus: result.exitStatus ?? { exitCode: result.exitCode, cancelled: abortRequested, timedOut: responseTimeoutHit, killed: hardKilled, cleanupErrors, finalDrainMs } });
 			};
 
 			const abort = (): void => {
+				abortRequested = true;
 				killProcessTree(child.pid, child);
 				if (process.platform !== "win32") {
 					trySignalChild(child, "SIGTERM");
@@ -432,11 +443,12 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 					clearHardKillTimer(child.pid);
 				}
 				const timeoutError = responseTimeoutHit && !stderr.trim() ? { error: `Child Pi produced no new output for ${responseTimeoutMs}ms; process was terminated as unresponsive.` } : undefined;
+				const finalExitCode = forcedFinalDrain && !timeoutError ? 0 : exitCode;
 				// A final assistant event is the child Pi contract for "the worker produced its answer".
 				// Some Pi processes can linger during post-final cleanup/stdio shutdown; finalDrain terminates
 				// that lingering process so the parent can continue, but it must not turn a completed
 				// subagent answer into a failed task. Real pre-final response timeouts still report errors.
-				settle({ exitCode: forcedFinalDrain && !timeoutError ? 0 : exitCode, stdout, stderr, ...(timeoutError ? { error: timeoutError.error } : {}) });
+				settle({ exitCode: finalExitCode, stdout, stderr, ...(timeoutError ? { error: timeoutError.error } : {}), exitStatus: { exitCode: finalExitCode, cancelled: abortRequested, timedOut: responseTimeoutHit, killed: hardKilled, cleanupErrors, finalDrainMs } });
 			});
 		});
 	} finally {

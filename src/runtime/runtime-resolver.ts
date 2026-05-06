@@ -1,4 +1,5 @@
 import type { PiTeamsConfig } from "../config/config.ts";
+import type { RuntimeResolutionState } from "../state/types.ts";
 import type { CrewRuntimeKind } from "./crew-agent-runtime.ts";
 
 export type CrewRuntimeMode = "auto" | "scaffold" | "child-process" | "live-session";
@@ -16,6 +17,18 @@ export interface CrewRuntimeCapabilities {
 	transcript: boolean;
 	reason?: string;
 	safety: CrewRuntimeSafety;
+}
+
+export function runtimeResolutionState(runtime: CrewRuntimeCapabilities, resolvedAt = new Date().toISOString()): RuntimeResolutionState {
+	return {
+		kind: runtime.kind,
+		requestedMode: runtime.requestedMode,
+		safety: runtime.safety,
+		available: runtime.available,
+		...(runtime.fallback ? { fallback: runtime.fallback } : {}),
+		...(runtime.reason ? { reason: runtime.reason } : {}),
+		resolvedAt,
+	};
 }
 
 export async function isLiveSessionRuntimeAvailable(timeoutMs = 1500, env: NodeJS.ProcessEnv = process.env): Promise<{ available: boolean; reason?: string }> {

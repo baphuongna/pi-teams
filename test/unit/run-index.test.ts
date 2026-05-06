@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createRunManifest } from "../../src/state/state-store.ts";
+import { createRunManifest, updateRunStatus } from "../../src/state/state-store.ts";
 import type { TeamConfig } from "../../src/teams/team-config.ts";
 import type { WorkflowConfig } from "../../src/workflows/workflow-config.ts";
 import { listRecentRuns } from "../../src/extension/run-index.ts";
@@ -77,6 +77,36 @@ test("active-run index exposes only registered active runs across cwd", () => {
 		unregisterActiveRun(created.manifest.runId);
 		assert.equal(listRecentRuns(viewerCwd, 10).some((run) => run.runId === created.manifest.runId), false);
 		assert.equal(activeRunRoots().length, 0);
+	} finally {
+		fs.rmSync(runCwd, { recursive: true, force: true });
+		fs.rmSync(viewerCwd, { recursive: true, force: true });
+		fs.rmSync(home, { recursive: true, force: true });
+		if (previousHome === undefined) delete process.env.PI_TEAMS_HOME;
+		else process.env.PI_TEAMS_HOME = previousHome;
+	}
+});
+
+test("blocked active-run registry entries are not surfaced across cwd", () => {
+	const previousHome = process.env.PI_TEAMS_HOME;
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-active-blocked-idx-home-"));
+	process.env.PI_TEAMS_HOME = home;
+	const runCwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-active-blocked-origin-"));
+	const viewerCwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-active-blocked-viewer-"));
+	fs.mkdirSync(path.join(runCwd, ".crew"), { recursive: true });
+	fs.mkdirSync(path.join(viewerCwd, ".crew"), { recursive: true });
+	try {
+		const created = createRunManifest({ cwd: runCwd, team, workflow, goal: "blocked hidden run" });
+		registerActiveRun(created.manifest);
+		const running = updateRunStatus(created.manifest, "running", "started");
+		updateRunStatus(running, "blocked", "blocked is terminal");
+		assert.equal(activeRunRoots().length, 0);
+		assert.equal(listRecentRuns(viewerCwd, 10).some((run) => run.runId === created.manifest.runId), false);
+		const cache = createManifestCache(viewerCwd);
+		try {
+			assert.equal(cache.list(10).some((run) => run.runId === created.manifest.runId), false);
+		} finally {
+			cache.dispose();
+		}
 	} finally {
 		fs.rmSync(runCwd, { recursive: true, force: true });
 		fs.rmSync(viewerCwd, { recursive: true, force: true });

@@ -39,6 +39,7 @@ export const PiTeamsRuntimeConfigSchema = Type.Object({
 	groupJoinAckTimeoutMs: Type.Optional(Type.Integer({ minimum: 1 })),
 	requirePlanApproval: Type.Optional(Type.Boolean()),
 	completionMutationGuard: Type.Optional(Type.Union([Type.Literal("off"), Type.Literal("warn"), Type.Literal("fail")])),
+	effectivenessGuard: Type.Optional(Type.Union([Type.Literal("off"), Type.Literal("warn"), Type.Literal("block"), Type.Literal("fail")])),
 }, { additionalProperties: false });
 
 export const PiTeamsControlConfigSchema = Type.Object({
