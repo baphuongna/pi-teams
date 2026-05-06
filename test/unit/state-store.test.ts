@@ -58,6 +58,19 @@ function removeDirectoryLink(linkPath: string): void {
 	}
 }
 
+function withIsolatedHome<T>(fn: () => T): T {
+	const previousHome = process.env.PI_TEAMS_HOME;
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-home-"));
+	process.env.PI_TEAMS_HOME = home;
+	try {
+		return fn();
+	} finally {
+		if (previousHome === undefined) delete process.env.PI_TEAMS_HOME;
+		else process.env.PI_TEAMS_HOME = previousHome;
+		fs.rmSync(home, { recursive: true, force: true });
+	}
+}
+
 test("createRunManifest writes manifest and tasks", () => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-test-"));
 	fs.mkdirSync(path.join(cwd, ".crew"));
@@ -130,23 +143,26 @@ test("loadRunManifestById revalidates cached artifact root containment", (t) => 
 });
 
 test("runtime manifest cache rejects tampered manifest paths", () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-runtime-manifest-cache-safe-"));
-	fs.mkdirSync(path.join(cwd, ".crew"));
-	try {
-		const created = createRunManifest({ cwd, team, workflow, goal: "runtime cache safe" });
-		const manifestPath = path.join(created.paths.stateRoot, "manifest.json");
-		const raw = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
-		fs.writeFileSync(manifestPath, `${JSON.stringify({ ...raw, artifactsRoot: path.join(cwd, "outside") }, null, 2)}\n`, "utf-8");
-		const cache = createManifestCache(cwd, { watch: false, debounceMs: 0 });
+	withIsolatedHome(() => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-runtime-manifest-cache-safe-"));
+		fs.mkdirSync(path.join(cwd, ".crew"));
 		try {
-			assert.equal(cache.get(created.manifest.runId), undefined);
-			assert.deepEqual(cache.list(), []);
+			const created = createRunManifest({ cwd, team, workflow, goal: "runtime cache safe" });
+			const manifestPath = path.join(created.paths.stateRoot, "manifest.json");
+			const raw = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+			fs.writeFileSync(manifestPath, `${JSON.stringify({ ...raw, artifactsRoot: path.join(cwd, "outside") }, null, 2)}\n`, "utf-8");
+			const cache = createManifestCache(cwd, { watch: false, debounceMs: 0 });
+			try {
+				assert.equal(cache.get(created.manifest.runId), undefined);
+				assert.deepEqual(cache.list(), []);
+			} finally {
+				cache.dispose();
+			}
 		} finally {
-			cache.dispose();
+			__test__clearManifestCache();
+			fs.rmSync(cwd, { recursive: true, force: true });
 		}
-	} finally {
-		fs.rmSync(cwd, { recursive: true, force: true });
-	}
+	});
 });
 
 test("loadRunManifestById preserves lexical paths for symlinked workspaces", (t) => {
