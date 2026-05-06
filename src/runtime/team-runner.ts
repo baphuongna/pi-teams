@@ -3,6 +3,7 @@ import type { AgentConfig } from "../agents/agent-config.ts";
 import type { CrewLimitsConfig, CrewRuntimeConfig, CrewReliabilityConfig } from "../config/config.ts";
 import type { CrewRuntimeCapabilities } from "./runtime-resolver.ts";
 import { writeArtifact } from "../state/artifact-store.ts";
+import { executeHook, appendHookEvent } from "../hooks/registry.ts";
 import { appendEvent } from "../state/event-log.ts";
 import type { TeamConfig } from "../teams/team-config.ts";
 import type { ArtifactDescriptor, PolicyDecision, TeamRunManifest, TaskAttemptState, TeamTaskState } from "../state/types.ts";
@@ -506,6 +507,13 @@ function hasPendingMutatingAdaptiveTask(tasks: TeamTaskState[]): boolean {
 export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ manifest: TeamRunManifest; tasks: TeamTaskState[] }> {
 	let workflow = input.workflow;
 	let manifest = updateRunStatus(input.manifest, "running", input.executeWorkers ? "Executing team workflow." : "Creating workflow prompts and placeholder results.");
+	// Execute before_run_start hook (non-blocking by default)
+	const beforeRunReport = await executeHook("before_run_start", { runId: manifest.runId, cwd: manifest.cwd });
+	appendHookEvent(manifest, beforeRunReport);
+	if (beforeRunReport.outcome === "block") {
+		manifest = updateRunStatus(manifest, "blocked", beforeRunReport.reason ?? "before_run_start hook blocked the run.");
+		return { manifest, tasks: input.tasks };
+	}
 	let tasks = refreshTaskGraphQueues(input.tasks);
 	let queueIndex = buildTaskGraphIndex(tasks);
 	const canInjectAdaptivePlan = workflow.name === "implementation";
@@ -598,8 +606,18 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 		}
 
 		appendEvent(manifest.eventsPath, { type: "task.progress", runId: manifest.runId, message: `Starting ready batch with ${readyBatch.length} task(s).`, data: { taskIds: readyBatch.map((task) => task.id), readyCount: snapshot.ready.length, blockedCount: snapshot.blocked.length, runningCount: snapshot.running.length, doneCount: snapshot.done.length, selectedCount: readyBatch.length, maxConcurrent: concurrency.maxConcurrent, defaultConcurrency: concurrency.defaultConcurrency, concurrencyReason: approvalPending ? `${concurrency.reason};plan-approval-read-only` : concurrency.reason } });
+		// Execute before_task_start hooks for the batch
+		for (const task of readyBatch) {
+			const taskReport = await executeHook("before_task_start", { runId: manifest.runId, taskId: task.id, cwd: manifest.cwd });
+			appendHookEvent(manifest, taskReport);
+			if (taskReport.outcome === "block") {
+				tasks = tasks.map((t) => t.id === task.id ? { ...t, status: "skipped" as const, error: taskReport.reason ?? "before_task_start hook blocked execution." } : t);
+				manifest = updateRunStatus(manifest, manifest.status, `Task '${task.id}' blocked by hook.`);
+			}
+		}
+		const batchTasks = readyBatch.filter((task) => tasks.find((t) => t.id === task.id && t.status !== "skipped"));
 		const results = await mapConcurrent(
-			readyBatch,
+			batchTasks,
 			concurrency.selectedCount,
 			async (task) => {
 				const step = findStep(workflow, task);
@@ -708,14 +726,14 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 		}
 		await saveRunTasksAsync(manifest, tasks);
 		saveCrewAgents(manifest, recordsForMaterializedTasks(manifest, tasks, runtimeKind));
-		const completedBatch = readyBatch.map((task) => tasks.find((item) => item.id === task.id) ?? task);
+		const completedBatch = batchTasks.map((task) => tasks.find((item) => item.id === task.id) ?? task);
 		const batchArtifact = writeArtifact(manifest.artifactsRoot, {
 			kind: "summary",
-			relativePath: `batches/${readyBatch.map((task) => task.id).join("+")}.md`,
+			relativePath: `batches/${batchTasks.map((task) => task.id).join("+")}.md`,
 			producer: "team-runner",
 			content: aggregateTaskOutputs(completedBatch, manifest),
 		});
-		const groupDelivery = deliverGroupJoin({ manifest, mode: resolveGroupJoinMode(input.runtimeConfig), batch: readyBatch, allTasks: tasks });
+		const groupDelivery = deliverGroupJoin({ manifest, mode: resolveGroupJoinMode(input.runtimeConfig), batch: batchTasks, allTasks: tasks });
 		manifest = { ...manifest, artifacts: mergeArtifacts([...manifest.artifacts, batchArtifact, ...(groupDelivery?.artifact ? [groupDelivery.artifact] : [])]) };
 		manifest = writeProgress(manifest, tasks, "team-runner", input.executeWorkers, input.runtimeConfig);
 		await saveRunManifestAsync(manifest);
