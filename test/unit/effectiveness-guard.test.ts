@@ -40,11 +40,33 @@ function task(id: string, observed = false): TeamTaskState {
 	};
 }
 
-test("effectiveness guard warns by default for real workers without observed work", () => {
-	const summary = evaluateRunEffectiveness({ manifest: manifest("trusted"), tasks: [task("01_exec")], executeWorkers: true });
+function taskWithRole(id: string, role: string, observed = false): TeamTaskState {
+	return {
+		id,
+		runId: "run_effective",
+		role,
+		agent: role,
+		title: id,
+		status: "completed",
+		dependsOn: [],
+		cwd: "/tmp/project",
+		finishedAt: "2026-01-01T00:00:01.000Z",
+		resultArtifact: { kind: "result", path: `/tmp/project/.crew/artifacts/run_effective/results/${id}.txt`, createdAt: "2026-01-01T00:00:01.000Z", producer: id, retention: "run" },
+		...(observed ? { jsonEvents: 1 } : {}),
+	};
+}
+
+test("effectiveness guard warns by default for read-only workers without observed work", () => {
+	const summary = evaluateRunEffectiveness({ manifest: manifest("trusted"), tasks: [taskWithRole("01_explore", "explorer")], executeWorkers: true });
 	assert.equal(summary.severity, "warning");
+	assert.deepEqual(summary.noObservedWorkTaskIds, ["01_explore"]);
+});
+
+test("effectiveness guard escalates warn to blocked for mutating workers without observed work", () => {
+	const summary = evaluateRunEffectiveness({ manifest: manifest("trusted"), tasks: [task("01_exec")], executeWorkers: true });
+	assert.equal(summary.severity, "blocked");
 	assert.deepEqual(summary.noObservedWorkTaskIds, ["01_exec"]);
-	assert.equal(effectivenessPolicyDecision(summary)?.reason, "ineffective_worker");
+	assert.equal(effectivenessPolicyDecision(summary)?.action, "block");
 });
 
 test("effectiveness guard can block or fail", () => {

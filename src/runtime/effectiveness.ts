@@ -1,3 +1,4 @@
+import { permissionForRole } from "./role-permission.ts";
 import type { CrewRuntimeConfig } from "../config/config.ts";
 import type { PolicyDecision, TeamRunManifest, TeamTaskState } from "../state/types.ts";
 
@@ -42,6 +43,10 @@ export function evaluateRunEffectiveness(input: { manifest?: TeamRunManifest; ta
 	let severity: RunEffectivenessSeverity = "ok";
 	if (input.executeWorkers && guardMode !== "off" && noObservedWorkTasks.length > 0) {
 		severity = guardMode === "fail" ? "failed" : guardMode === "block" ? "blocked" : "warning";
+		// P0.1: default warn escalates to blocked for mutating-role tasks without observed work
+		if (severity === "warning" && noObservedWorkTasks.some((task) => permissionForRole(task.role) !== "read_only")) {
+			severity = "blocked";
+		}
 	}
 	return {
 		completed: completedTasks.length,
