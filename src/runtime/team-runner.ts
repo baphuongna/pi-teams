@@ -608,6 +608,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 				const baseInput = { manifest, tasks, task, step, agent, signal: input.signal, executeWorkers: input.executeWorkers, runtimeKind: input.runtime?.kind, runtimeConfig: input.runtimeConfig, parentContext: input.parentContext, parentModel: input.parentModel, modelRegistry: input.modelRegistry, modelOverride: input.modelOverride, teamRoleModel: teamRole?.model, teamRoleSkills: teamRole?.skills, skillOverride: input.skillOverride, limits: input.limits, onJsonEvent: input.onJsonEvent };
 				if (input.reliability?.autoRetry !== true) return withCorrelation(childCorrelation(manifest.runId, task.id), () => runTeamTask(baseInput));
 				let lastFailed: { manifest: TeamRunManifest; tasks: TeamTaskState[] } | undefined;
+				let lastAttemptId: string | undefined;
 				const attemptsSoFar: TaskAttemptState[] = [...(task.attempts ?? [])];
 				const policy = retryPolicyFromConfig(input.reliability);
 				try {
@@ -638,10 +639,12 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 						signal: input.signal,
 						attemptId: (attempt) => `${manifest.runId}:${task.id}:attempt-${attempt}`,
 						onAttemptFailed: (attempt, error, delayMs, info) => {
-							appendEvent(manifest.eventsPath, { type: "crew.task.retry_attempt", runId: manifest.runId, taskId: task.id, message: error.message, data: { attempt, attemptId: info.attemptId, delayMs } });
+							lastAttemptId = info.attemptId;
+							appendEvent(manifest.eventsPath, { type: "crew.task.retry_attempt", runId: manifest.runId, taskId: task.id, message: error.message, data: { attempt, attemptId: info.attemptId, delayMs }, metadata: { attemptId: info.attemptId } });
 							input.metricRegistry?.histogram("crew.task.retry_delay_ms", "Retry backoff delay, milliseconds").observe({ runId: manifest.runId, taskId: task.id }, delayMs);
 						},
 						onRetryGivenUp: (attempts, error, info) => {
+							lastAttemptId = info.attemptId;
 							appendDeadletter(manifest, { runId: manifest.runId, taskId: task.id, reason: "max-retries", attempts, attemptId: info.attemptId, lastError: error.message, timestamp: new Date().toISOString() });
 							input.metricRegistry?.counter("crew.task.deadletter_total", "Deadletter triggers by reason").inc({ reason: "max-retries" });
 							input.metricRegistry?.histogram("crew.task.retry_count", "Retries per task", [0, 1, 2, 3, 5, 10]).observe({ runId: manifest.runId, team: input.team.name }, Math.max(0, attempts - 1));
@@ -654,7 +657,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 						const freshManifest = fresh?.manifest ?? manifest;
 						const freshTasks = fresh?.tasks ?? tasks;
 						const cancelledTasks = freshTasks.map((item) => item.id === task.id && (item.status === "queued" || item.status === "running") ? { ...item, status: "cancelled" as const, finishedAt: new Date().toISOString(), error: `${reason.message} (${reason.code})` } : item);
-						appendEvent(freshManifest.eventsPath, { type: "task.cancelled", runId: freshManifest.runId, taskId: task.id, message: reason.message, data: { reason, phase: "retry" } });
+						appendEvent(freshManifest.eventsPath, { type: "task.cancelled", runId: freshManifest.runId, taskId: task.id, message: reason.message, data: { reason, phase: "retry" }, metadata: lastAttemptId ? { attemptId: lastAttemptId } : undefined });
 						return { manifest: updateRunStatus(freshManifest, "cancelled", reason.message), tasks: cancelledTasks };
 					}
 					if (lastFailed) return lastFailed;

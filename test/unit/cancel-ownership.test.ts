@@ -51,7 +51,7 @@ describe("abortOwned", () => {
 			const events = readEvents(run.manifest.eventsPath);
 			assert.ok(events.some((event) => event.type === "task.cancelled" && event.taskId === "task-1" && event.data?.reason === "leader_interrupted"));
 			assert.ok(events.some((event) => event.type === "run.cancelled" && event.data?.reason === "leader_interrupted"));
-			assert.ok(loaded?.tasks[0]?.terminalEvidence?.length > 0);
+			assert.ok((loaded?.tasks[0]?.terminalEvidence?.length ?? 0) > 0);
 			assert.equal(loaded?.tasks[0]?.terminalEvidence?.[0]?.operation, "worker");
 			assert.equal(loaded?.tasks[0]?.terminalEvidence?.[0]?.status, "cancelled");
 		} finally {

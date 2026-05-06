@@ -25,6 +25,11 @@ export interface TeamEventOwnership {
 export interface TeamEventMetadata {
 	seq: number;
 	provenance: TeamEventProvenance;
+	parentEventId?: string;
+	attemptId?: string;
+	branchId?: string;
+	causationId?: string;
+	correlationId?: string;
 	sessionIdentity?: TeamEventSessionIdentity;
 	ownership?: TeamEventOwnership;
 	nudgeId?: string;
@@ -113,6 +118,11 @@ export function appendEvent(eventsPath: string, event: AppendTeamEvent): TeamEve
 	let metadata: TeamEventMetadata = {
 		seq: baseMetadata?.seq ?? nextSequence(eventsPath),
 		provenance: baseMetadata?.provenance ?? "team_runner",
+		...(baseMetadata?.parentEventId ? { parentEventId: baseMetadata.parentEventId } : {}),
+		...(baseMetadata?.attemptId ? { attemptId: baseMetadata.attemptId } : {}),
+		...(baseMetadata?.branchId ? { branchId: baseMetadata.branchId } : {}),
+		...(baseMetadata?.causationId ? { causationId: baseMetadata.causationId } : {}),
+		...(baseMetadata?.correlationId ? { correlationId: baseMetadata.correlationId } : {}),
 		...(baseMetadata?.sessionIdentity ? { sessionIdentity: baseMetadata.sessionIdentity } : {}),
 		...(baseMetadata?.ownership ? { ownership: baseMetadata.ownership } : {}),
 		...(baseMetadata?.nudgeId ? { nudgeId: baseMetadata.nudgeId } : {}),
