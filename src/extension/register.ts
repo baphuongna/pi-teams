@@ -552,10 +552,11 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		const action = typeof input.action === "string" ? input.action : undefined;
 		const destructiveActions = new Set(["delete", "forget", "prune", "cleanup"]);
 		if (!action || !destructiveActions.has(action)) return;
-		if (input.confirm === true || input.force === true) return;
+		const forceBypassesReferenceChecks = action === "delete" && input.force === true;
+		if (input.confirm === true || forceBypassesReferenceChecks) return;
 		return {
 			block: true,
-			reason: `Destructive action '${action}' requires confirm=true (or force=true to bypass reference checks).`,
+			reason: `Destructive action '${action}' requires confirm=true${action === "delete" ? " (or force=true to bypass reference checks)" : ""}.`,
 		};
 	});
 

@@ -77,6 +77,10 @@ export const PiTeamsTelemetryConfigSchema = Type.Object({
 	enabled: Type.Optional(Type.Boolean()),
 }, { additionalProperties: false });
 
+export const PiTeamsPolicyConfigSchema = Type.Object({
+	requireIntentForDestructiveActions: Type.Optional(Type.Boolean()),
+}, { additionalProperties: false });
+
 export const PiTeamsNotificationsConfigSchema = Type.Object({
 	enabled: Type.Optional(Type.Boolean()),
 	severityFilter: Type.Optional(Type.Array(Type.Union([Type.Literal("info"), Type.Literal("warning"), Type.Literal("error"), Type.Literal("critical")]))),
@@ -142,6 +146,7 @@ export const PiTeamsConfigSchema = Type.Object({
 	agents: Type.Optional(PiTeamsAgentsConfigSchema),
 	tools: Type.Optional(PiTeamsToolsConfigSchema),
 	telemetry: Type.Optional(PiTeamsTelemetryConfigSchema),
+	policy: Type.Optional(PiTeamsPolicyConfigSchema),
 	notifications: Type.Optional(PiTeamsNotificationsConfigSchema),
 	observability: Type.Optional(PiTeamsObservabilityConfigSchema),
 	reliability: Type.Optional(PiTeamsReliabilityConfigSchema),

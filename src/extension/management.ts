@@ -6,6 +6,8 @@ import { allAgents, discoverAgents } from "../agents/discover-agents.ts";
 import type { TeamToolDetails } from "./team-tool-types.ts";
 import { toolResult, type PiTeamsToolResult } from "./tool-result.ts";
 import type { TeamToolParamsValue } from "../schema/team-tool-schema.ts";
+import type { PiTeamsConfig } from "../config/config.ts";
+import { enforceDestructiveIntent } from "./team-tool/intent-policy.ts";
 import type { TeamConfig, TeamRole } from "../teams/team-config.ts";
 import { serializeTeam } from "../teams/team-serializer.ts";
 import { allTeams, discoverTeams } from "../teams/discover-teams.ts";
@@ -17,6 +19,7 @@ import { hasOwn, parseConfigObject, requireString, sanitizeName } from "../utils
 
 interface ManagementContext {
 	cwd: string;
+	config?: PiTeamsConfig;
 }
 
 type MutableSource = "user" | "project";
@@ -359,6 +362,8 @@ export function handleUpdate(params: TeamToolParamsValue, ctx: ManagementContext
 }
 
 export function handleDelete(params: TeamToolParamsValue, ctx: ManagementContext): PiTeamsToolResult {
+	const intentError = enforceDestructiveIntent("delete", params, ctx.config);
+	if (intentError) return intentError;
 	if (!params.confirm) return result("delete requires confirm: true.", "error", true);
 	const resolved = resolveMutable(ctx, params);
 	if (resolved.error) return resolved.error;

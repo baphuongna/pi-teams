@@ -9,14 +9,7 @@ import { importRunBundle } from "../run-import.ts";
 import { pruneFinishedRuns } from "../run-maintenance.ts";
 import type { PiTeamsToolResult } from "../tool-result.ts";
 import { configRecord, result, type TeamContext } from "./context.ts";
-
-function intentFromParams(params: TeamToolParamsValue): string | undefined {
-	const cfg = configRecord(params.config);
-	const rawIntent = cfg.intent ?? cfg._intent;
-	if (typeof rawIntent !== "string") return undefined;
-	const intent = rawIntent.replace(/\s+/g, " ").trim();
-	return intent ? intent.slice(0, 500) : undefined;
-}
+import { enforceDestructiveIntent, intentFromConfig } from "./intent-policy.ts";
 
 export function handleWorktrees(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
 	if (!params.runId) return result("Worktrees requires runId.", { action: "worktrees", status: "error" }, true);
@@ -57,22 +50,26 @@ export function handleExport(params: TeamToolParamsValue, ctx: TeamContext): PiT
 }
 
 export function handlePrune(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
+	const intentError = enforceDestructiveIntent("prune", params, ctx.config);
+	if (intentError) return intentError;
 	const keep = params.keep ?? 20;
 	if (!params.confirm) return result("prune requires confirm: true.", { action: "prune", status: "error" }, true);
 	if (keep < 0 || !Number.isInteger(keep)) return result("keep must be an integer >= 0.", { action: "prune", status: "error" }, true);
-	const intent = intentFromParams(params);
+	const intent = intentFromConfig(params.config);
 	const pruned = pruneFinishedRuns(ctx.cwd, keep, { intent });
 	return result([`Pruned finished pi-crew runs.`, `Kept: ${pruned.kept.length}`, `Removed: ${pruned.removed.length}`, ...(pruned.auditPath ? [`Audit: ${pruned.auditPath}`] : []), ...(pruned.removed.length ? ["Removed runs:", ...pruned.removed.map((runId) => `- ${runId}`)] : [])].join("\n"), { action: "prune", status: "ok", intent });
 }
 
 export function handleForget(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
+	const intentError = enforceDestructiveIntent("forget", params, ctx.config);
+	if (intentError) return intentError;
 	if (!params.runId) return result("Forget requires runId.", { action: "forget", status: "error" }, true);
 	if (!params.confirm) return result("forget requires confirm: true.", { action: "forget", status: "error" }, true);
 	const loaded = loadRunManifestById(ctx.cwd, params.runId);
 	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "forget", status: "error" }, true);
 	const cleanup = cleanupRunWorktrees(loaded.manifest, { force: params.force });
 	if (cleanup.preserved.length > 0 && !params.force) return result([`Run '${params.runId}' has preserved worktrees. Use force: true to forget anyway.`, ...cleanup.preserved.map((item) => `- ${item.path}: ${item.reason}`)].join("\n"), { action: "forget", status: "error", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot }, true);
-	const intent = intentFromParams(params);
+	const intent = intentFromConfig(params.config);
 	appendEvent(loaded.manifest.eventsPath, { type: "run.forget_requested", runId: loaded.manifest.runId, message: "Run state and artifacts are being forgotten.", data: { force: params.force === true, removedWorktrees: cleanup.removed, preservedWorktrees: cleanup.preserved, intent } });
 	fs.rmSync(loaded.manifest.stateRoot, { recursive: true, force: true });
 	fs.rmSync(loaded.manifest.artifactsRoot, { recursive: true, force: true });
@@ -80,11 +77,13 @@ export function handleForget(params: TeamToolParamsValue, ctx: TeamContext): PiT
 }
 
 export function handleCleanup(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
+	const intentError = enforceDestructiveIntent("cleanup", params, ctx.config);
+	if (intentError) return intentError;
 	if (!params.runId) return result("Cleanup requires runId.", { action: "cleanup", status: "error" }, true);
 	const loaded = loadRunManifestById(ctx.cwd, params.runId);
 	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "cleanup", status: "error" }, true);
 	const cleanup = cleanupRunWorktrees(loaded.manifest, { force: params.force });
-	const intent = intentFromParams(params);
+	const intent = intentFromConfig(params.config);
 	appendEvent(loaded.manifest.eventsPath, { type: "worktree.cleanup", runId: loaded.manifest.runId, data: { removed: cleanup.removed, preserved: cleanup.preserved, artifacts: cleanup.artifactPaths, intent } });
 	const lines = [`Worktree cleanup for ${loaded.manifest.runId}:`, "Removed:", ...(cleanup.removed.length ? cleanup.removed.map((item) => `- ${item}`) : ["- (none)"]), "Preserved:", ...(cleanup.preserved.length ? cleanup.preserved.map((item) => `- ${item.path}: ${item.reason}`) : ["- (none)"]), "Artifacts:", ...(cleanup.artifactPaths.length ? cleanup.artifactPaths.map((item) => `- ${item}`) : ["- (none)"])];
 	return result(lines.join("\n"), { action: "cleanup", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot, intent });

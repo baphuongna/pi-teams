@@ -100,6 +100,10 @@ export interface CrewTelemetryConfig {
 	enabled?: boolean;
 }
 
+export interface CrewPolicyConfig {
+	requireIntentForDestructiveActions?: boolean;
+}
+
 export type CrewNotificationSeverity = "info" | "warning" | "error" | "critical";
 
 export interface CrewNotificationsConfig {
@@ -152,6 +156,7 @@ export interface PiTeamsConfig {
 	agents?: CrewAgentsConfig;
 	tools?: CrewToolsConfig;
 	telemetry?: CrewTelemetryConfig;
+	policy?: CrewPolicyConfig;
 	notifications?: CrewNotificationsConfig;
 	observability?: CrewObservabilityConfig;
 	reliability?: CrewReliabilityConfig;
@@ -361,6 +366,12 @@ function mergeConfig(base: PiTeamsConfig, override: PiTeamsConfig): PiTeamsConfi
 		merged.telemetry = {
 			...(base.telemetry ?? {}),
 			...withoutUndefined((override.telemetry ?? {}) as Record<string, unknown>),
+		};
+	}
+	if (base.policy || override.policy) {
+		merged.policy = {
+			...(base.policy ?? {}),
+			...withoutUndefined((override.policy ?? {}) as Record<string, unknown>),
 		};
 	}
 	if (base.notifications || override.notifications) {
@@ -619,6 +630,15 @@ function parseTelemetryConfig(value: unknown): CrewTelemetryConfig | undefined {
 	return Object.values(telemetry).some((entry) => entry !== undefined) ? telemetry : undefined;
 }
 
+function parsePolicyConfig(value: unknown): CrewPolicyConfig | undefined {
+	const obj = asRecord(value);
+	if (!obj) return undefined;
+	const policy: CrewPolicyConfig = {
+		requireIntentForDestructiveActions: parseWithSchema(Type.Boolean(), obj.requireIntentForDestructiveActions),
+	};
+	return Object.values(policy).some((entry) => entry !== undefined) ? policy : undefined;
+}
+
 function parseNotificationsConfig(value: unknown): CrewNotificationsConfig | undefined {
 	const obj = asRecord(value);
 	if (!obj) return undefined;
@@ -700,6 +720,7 @@ export function parseConfig(raw: unknown): PiTeamsConfig {
 		agents: parseAgentsConfig(obj.agents),
 		tools: parseToolsConfig(obj.tools),
 		telemetry: parseTelemetryConfig(obj.telemetry),
+		policy: parsePolicyConfig(obj.policy),
 		notifications: parseNotificationsConfig(obj.notifications),
 		observability: parseObservabilityConfig(obj.observability),
 		reliability: parseReliabilityConfig(obj.reliability),

@@ -311,8 +311,8 @@ This distillation has been **partially implemented**. It should remain open as a
 - Two-phase pi-crew extension lifecycle for third-party crew plugins.
 - Unified capability inventory/control center with stable capability-disable IDs.
 - Typed hook lifecycle gates.
-- Policy-enforced required intent for destructive actions.
-- Cooperative `CancellationToken` for long internal loops/scans.
+- Policy-enforced required intent for destructive actions is implemented as a configurable vertical slice.
+- Cooperative `CancellationToken` helper exists and is tested, but it is not yet wired into long internal loops/scans.
 - Content-addressed blob artifacts with metadata sidecars and GC.
 - Raw scan-entry cache shared by dashboard/status/artifact lookup.
 

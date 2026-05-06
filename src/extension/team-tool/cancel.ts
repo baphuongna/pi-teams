@@ -8,6 +8,7 @@ import { appendEvent } from "../../state/event-log.ts";
 import { logInternalError } from "../../utils/internal-error.ts";
 import type { PiTeamsToolResult } from "../tool-result.ts";
 import { result, type TeamContext } from "./context.ts";
+import { enforceDestructiveIntent, intentFromConfig } from "./intent-policy.ts";
 
 export interface AbortOwnedResult {
 	abortedIds: string[];
@@ -68,15 +69,9 @@ function cancelReasonFromParams(params: TeamToolParamsValue): { code: string; me
 	return { code: reason.code, message: reason.message };
 }
 
-function intentFromParams(params: TeamToolParamsValue): string | undefined {
-	const config = configFromParams(params);
-	const rawIntent = config?.intent ?? config?._intent;
-	if (typeof rawIntent !== "string") return undefined;
-	const intent = rawIntent.replace(/\s+/g, " ").trim();
-	return intent ? intent.slice(0, 500) : undefined;
-}
-
 export function handleCancel(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
+	const intentError = enforceDestructiveIntent("cancel", params, ctx.config);
+	if (intentError) return intentError;
 	if (!params.runId) return result("Cancel requires runId.", { action: "cancel", status: "error" }, true);
 	const loaded = loadRunManifestById(ctx.cwd, params.runId);
 	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "cancel", status: "error" }, true);
@@ -90,7 +85,7 @@ export function handleCancel(params: TeamToolParamsValue, ctx: TeamContext): PiT
 		}
 		const cancellableIds = new Set(abortResult.abortedIds);
 		const cancelReason = cancelReasonFromParams(params);
-		const cancelIntent = intentFromParams(params);
+		const cancelIntent = intentFromConfig(params.config);
 		const cancelData = cancelIntent ? { reason: cancelReason.code, intent: cancelIntent } : { reason: cancelReason.code };
 		const cancelMessage = `${cancelReason.message} (${cancelReason.code})`;
 

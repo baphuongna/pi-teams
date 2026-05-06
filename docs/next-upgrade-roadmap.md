@@ -52,8 +52,9 @@ This roadmap is **not complete overall**. The `v0.1.46` release completed severa
 
 - P1.4 reserve worker control channel before child spawn.
 - P1.7/P1.8 unified capability inventory/control center and stable capability-disable IDs.
-- P2.1 typed hook lifecycle and P2.2 policy-required intent gates.
-- P2.4 cooperative internal `CancellationToken` utility for long scans.
+- P2.1 typed hook lifecycle.
+- P2.2 policy-required intent gates for destructive actions are implemented as a configurable vertical slice.
+- P2.4 cooperative internal `CancellationToken` utility exists as a tested helper, but it is not yet wired into long scans.
 - P2.5 content-addressed blob artifact store with metadata sidecars and GC.
 - P2.6 dedicated dashboard panes for effectiveness/capability/attempt/deadletter evidence.
 - P2.8 shared raw scan-entry cache.
