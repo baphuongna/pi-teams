@@ -74,7 +74,7 @@ export async function resolveCrewRuntime(config: PiTeamsConfig, env: NodeJS.Proc
 	if (requestedMode === "live-session" || (requestedMode === "auto" && config.runtime?.preferLiveSession === true)) {
 		const live = await isLiveSessionRuntimeAvailable(1500, env);
 		if (live.available) return liveCaps(requestedMode);
-		if (requestedMode === "live-session" && config.runtime?.allowChildProcessFallback === false) return { ...scaffoldCaps(requestedMode), available: false, reason: live.reason };
+		if (requestedMode === "live-session" && config.runtime?.allowChildProcessFallback === false) return scaffoldCaps(requestedMode, live.reason, "blocked");
 		return { ...childCaps(requestedMode), fallback: "child-process", reason: live.reason };
 	}
 	return childCaps(requestedMode);

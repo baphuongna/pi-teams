@@ -10,6 +10,7 @@ test("registration commands module registers the public slash command set", () =
 	const names: string[] = [];
 	registerTeamCommands(fakePi(names) as never, {
 		startForegroundRun: () => undefined,
+		abortForegroundRun: () => false,
 		openLiveSidebar: () => undefined,
 		getManifestCache: () => ({ list: () => [] }),
 	});

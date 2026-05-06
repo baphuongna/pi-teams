@@ -86,7 +86,7 @@ test("active-run index exposes only registered active runs across cwd", () => {
 	}
 });
 
-test("blocked active-run registry entries are not surfaced across cwd", () => {
+test("blocked active-run registry entries are surfaced across cwd", () => {
 	const previousHome = process.env.PI_TEAMS_HOME;
 	const home = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-active-blocked-idx-home-"));
 	process.env.PI_TEAMS_HOME = home;
@@ -99,11 +99,11 @@ test("blocked active-run registry entries are not surfaced across cwd", () => {
 		registerActiveRun(created.manifest);
 		const running = updateRunStatus(created.manifest, "running", "started");
 		updateRunStatus(running, "blocked", "blocked is terminal");
-		assert.equal(activeRunRoots().length, 0);
-		assert.equal(listRecentRuns(viewerCwd, 10).some((run) => run.runId === created.manifest.runId), false);
+		assert.equal(activeRunRoots().length, 1);
+		assert.equal(listRecentRuns(viewerCwd, 10).some((run) => run.runId === created.manifest.runId), true);
 		const cache = createManifestCache(viewerCwd);
 		try {
-			assert.equal(cache.list(10).some((run) => run.runId === created.manifest.runId), false);
+			assert.equal(cache.list(10).some((run) => run.runId === created.manifest.runId), true);
 		} finally {
 			cache.dispose();
 		}

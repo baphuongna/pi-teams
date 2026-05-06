@@ -3,7 +3,7 @@ import { listRecentRuns } from "../run-index.ts";
 import type { ArtifactDescriptor, TeamRunManifest } from "../../state/types.ts";
 
 export interface RegisterCompactionGuardOptions {
-	foregroundControllers: Set<AbortController>;
+	foregroundControllers: Map<string | symbol, AbortController>;
 }
 
 const TRIGGER_RATIO = 0.75;

@@ -106,6 +106,7 @@ export function handleCancel(params: TeamToolParamsValue, ctx: TeamContext): PiT
 		} catch (error) {
 			logInternalError("team-tool.handleCancel.interruptRequest", error, `runId=${loaded.manifest.runId}`);
 		}
+		ctx.abortForegroundRun?.(loaded.manifest.runId);
 		for (const taskId of abortResult.abortedIds) {
 			appendEvent(loaded.manifest.eventsPath, { type: "task.cancelled", runId: loaded.manifest.runId, taskId, message: cancelMessage, data: cancelData });
 		}

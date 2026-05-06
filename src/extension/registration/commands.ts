@@ -27,6 +27,7 @@ import type { MetricRegistry } from "../../observability/metric-registry.ts";
 
 export interface RegisterTeamCommandsDeps {
 	startForegroundRun: (ctx: ExtensionContext, runner: (signal?: AbortSignal) => Promise<void>, runId?: string) => void;
+	abortForegroundRun: (runId: string) => boolean;
 	openLiveSidebar: (ctx: ExtensionContext, runId: string) => void;
 	getManifestCache: (cwd: string) => { list(max?: number): TeamRunManifest[] };
 	getRunSnapshotCache?: (cwd: string) => ReturnType<typeof createRunSnapshotCache>;
@@ -135,7 +136,7 @@ export function registerTeamCommands(pi: ExtensionAPI, deps: RegisterTeamCommand
 	pi.registerCommand("team-run", {
 		description: "Manually start a pi-crew run (agent may also use the team tool autonomously)",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
-			const result = await handleTeamTool(parseRunArgs(args), { ...teamCommandContext(ctx), metricRegistry: deps.getMetricRegistry?.(), startForegroundRun: (runner, runId) => deps.startForegroundRun(ctx as ExtensionContext, runner, runId), onRunStarted: (runId) => deps.openLiveSidebar(ctx as ExtensionContext, runId) });
+			const result = await handleTeamTool(parseRunArgs(args), { ...teamCommandContext(ctx), metricRegistry: deps.getMetricRegistry?.(), startForegroundRun: (runner, runId) => deps.startForegroundRun(ctx as ExtensionContext, runner, runId), abortForegroundRun: deps.abortForegroundRun, onRunStarted: (runId) => deps.openLiveSidebar(ctx as ExtensionContext, runId) });
 			await notifyCommandResult(ctx, commandText(result));
 		},
 	});

@@ -183,6 +183,11 @@ export function readMailbox(manifest: TeamRunManifest, direction?: MailboxDirect
 	return directions.flatMap((item) => safeReadMailboxFile(mailboxFile(manifest, item, taskId), item)).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
+export function readAllMailboxMessages(manifest: TeamRunManifest, direction?: MailboxDirection): MailboxMessage[] {
+	const directions = direction ? [direction] : ["inbox", "outbox"] as const;
+	return directions.flatMap((item) => readAllMessages(manifest, item)).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
 function readAllMessages(manifest: TeamRunManifest, direction: MailboxDirection): MailboxMessage[] {
 	const messages = [...safeReadMailboxFile(mailboxFile(manifest, direction), direction)];
 	const tasksDir = safeMailboxTasksRoot(manifest);

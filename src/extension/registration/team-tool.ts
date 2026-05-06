@@ -14,8 +14,9 @@ import { withSessionId } from "../team-tool/context.ts";
 import { toolResult } from "../tool-result.ts";
 
 export interface RegisterTeamToolDeps {
-	foregroundControllers: Set<AbortController>;
+	foregroundControllers: Map<string | symbol, AbortController>;
 	startForegroundRun: (ctx: ExtensionContext, runner: (signal?: AbortSignal) => Promise<void>, runId?: string) => void;
+	abortForegroundRun: (runId: string) => boolean;
 	openLiveSidebar: (ctx: ExtensionContext, runId: string) => void;
 	getManifestCache: (cwd: string) => ReturnType<typeof createManifestCache>;
 	getRunSnapshotCache?: (cwd: string) => ReturnType<typeof createRunSnapshotCache>;
@@ -46,7 +47,8 @@ export function registerTeamTool(pi: ExtensionAPI, deps: RegisterTeamToolDeps): 
 		parameters: TeamToolParams as never,
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			const controller = new AbortController();
-			deps.foregroundControllers.add(controller);
+			const toolKey = Symbol();
+			deps.foregroundControllers.set(toolKey, controller);
 			const abort = (): void => controller.abort();
 			signal?.addEventListener("abort", abort, { once: true });
 			try {
@@ -59,7 +61,7 @@ export function registerTeamTool(pi: ExtensionAPI, deps: RegisterTeamToolDeps): 
 					const runLabel = resolved.team ?? resolved.agent ?? "direct";
 					pi.setSessionName(`pi-crew: ${runLabel}/${resolved.workflow ?? "default"} — ${resolved.goal.slice(0, 60)}`);
 				}
-				const output = await handleTeamTool(resolved, { ...toolCtx, signal: controller.signal, metricRegistry: deps.getMetricRegistry?.(), startForegroundRun: (runner, runId) => deps.startForegroundRun(toolCtx, runner, runId), onRunStarted: (runId) => deps.openLiveSidebar(toolCtx, runId), onJsonEvent: deps.onJsonEvent });
+				const output = await handleTeamTool(resolved, { ...toolCtx, signal: controller.signal, metricRegistry: deps.getMetricRegistry?.(), startForegroundRun: (runner, runId) => deps.startForegroundRun(toolCtx, runner, runId), abortForegroundRun: deps.abortForegroundRun, onRunStarted: (runId) => deps.openLiveSidebar(toolCtx, runId), onJsonEvent: deps.onJsonEvent });
 				if (resolved.action === "run" && !output.isError && typeof output.details?.runId === "string") {
 					pi.appendEntry("crew:run-started", {
 						runId: output.details.runId,
@@ -79,7 +81,7 @@ export function registerTeamTool(pi: ExtensionAPI, deps: RegisterTeamToolDeps): 
 				return output;
 			} finally {
 				signal?.removeEventListener("abort", abort);
-				deps.foregroundControllers.delete(controller);
+				deps.foregroundControllers.delete(toolKey);
 			}
 		},
 	};

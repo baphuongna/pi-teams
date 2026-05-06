@@ -236,12 +236,12 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 			pi.events?.emit?.(event, payload);
 		},
 	);
-	const foregroundControllers = new Set<AbortController>();
+	const foregroundControllers = new Map<string | symbol, AbortController>();
 	let liveSidebarRunId: string | undefined;
 	let renderScheduler: RenderScheduler | undefined;
 	let preloadTimer: ReturnType<typeof setTimeout> | undefined;
 	const stopSessionBoundSubagents = (): void => {
-		for (const controller of foregroundControllers) controller.abort();
+		for (const controller of foregroundControllers.values()) controller.abort();
 		foregroundControllers.clear();
 		subagentManager.abortAll();
 		terminateActiveChildPiProcesses();
@@ -277,7 +277,8 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	const startForegroundRun = (ctx: ExtensionContext, runner: (signal?: AbortSignal) => Promise<void>, runId?: string): void => {
 		const ownerGeneration = captureSessionGeneration();
 		const controller = new AbortController();
-		foregroundControllers.add(controller);
+		const key = runId ?? Symbol();
+		foregroundControllers.set(key, controller);
 		if (ctx.hasUI) {
 			setWorkingIndicator(ctx, { frames: ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"], intervalMs: 80 });
 			ctx.ui.setWorkingMessage(runId ? `pi-crew foreground run ${runId}...` : "pi-crew foreground run...");
@@ -297,7 +298,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 					if (isContextCurrent(ctx, ownerGeneration)) ctx.ui.notify(`pi-crew foreground run failed: ${message}`, "error");
 				})
 				.finally(() => {
-					foregroundControllers.delete(controller);
+					foregroundControllers.delete(key);
 					const ownerCurrent = isContextCurrent(ctx, ownerGeneration);
 					if (ownerCurrent && ctx.hasUI) {
 						setWorkingIndicator(ctx);
@@ -541,6 +542,12 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		});
 	} catch { /* older Pi without resources_discover */ }
 
+	const abortForegroundRun = (runId: string): boolean => {
+		const controller = foregroundControllers.get(runId);
+		if (!controller) return false;
+		controller.abort();
+		return true;
+	};
 	registerCompactionGuard(pi, { foregroundControllers });
 
 	// Phase 1.4: Permission gate for destructive team actions.
@@ -560,7 +567,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		};
 	});
 
-	registerTeamTool(pi, { foregroundControllers, startForegroundRun, openLiveSidebar, getManifestCache, getRunSnapshotCache, getMetricRegistry: () => metricRegistry, widgetState, onJsonEvent: (taskId, runId, event) => {
+	registerTeamTool(pi, { foregroundControllers, startForegroundRun, abortForegroundRun, openLiveSidebar, getManifestCache, getRunSnapshotCache, getMetricRegistry: () => metricRegistry, widgetState, onJsonEvent: (taskId, runId, event) => {
 		const record = event as Record<string, unknown>;
 		const eventType = typeof record.type === "string" ? record.type : undefined;
 		if (eventType) overflowTracker?.feedEvent(taskId, runId, eventType);
@@ -568,7 +575,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	registerSubagentTools(pi, subagentManager, { ownerSessionGeneration: captureSessionGeneration });
 	time("register.tools");
 
-	registerTeamCommands(pi, { startForegroundRun, openLiveSidebar, getManifestCache, getRunSnapshotCache, getMetricRegistry: () => metricRegistry, dismissNotifications: () => {
+	registerTeamCommands(pi, { startForegroundRun, abortForegroundRun, openLiveSidebar, getManifestCache, getRunSnapshotCache, getMetricRegistry: () => metricRegistry, dismissNotifications: () => {
 		widgetState.notificationCount = 0;
 		if (currentCtx) {
 			const uiConfig = loadConfig(currentCtx.cwd).config.ui;

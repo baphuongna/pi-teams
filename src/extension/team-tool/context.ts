@@ -12,6 +12,7 @@ export type TeamContext = Pick<ExtensionContext, "cwd"> & Partial<Pick<Extension
 	metricRegistry?: MetricRegistry;
 	signal?: AbortSignal;
 	startForegroundRun?: (runner: (signal?: AbortSignal) => Promise<void>, runId?: string) => void;
+	abortForegroundRun?: (runId: string) => boolean;
 	onRunStarted?: (runId: string) => void;
 	onJsonEvent?: (taskId: string, runId: string, event: unknown) => void;
 	config?: PiTeamsConfig;

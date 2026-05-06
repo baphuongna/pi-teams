@@ -101,7 +101,7 @@ test("activeRunRoots skips entries with missing stateRoot", () => {
 	});
 });
 
-test("blocked runs are not active-run registry roots", () => {
+test("blocked runs remain visible in active-run registry roots", () => {
 	withIsolatedHome(() => {
 		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-active-blocked-"));
 		fs.mkdirSync(path.join(cwd, ".crew"), { recursive: true });
@@ -111,7 +111,7 @@ test("blocked runs are not active-run registry roots", () => {
 			assert.equal(activeRunRoots().length, 1);
 			const running = updateRunStatus(created.manifest, "running", "started");
 			updateRunStatus(running, "blocked", "blocked terminal state");
-			assert.equal(activeRunRoots().length, 0);
+			assert.equal(activeRunRoots().length, 1);
 		} finally {
 			fs.rmSync(cwd, { recursive: true, force: true });
 		}
