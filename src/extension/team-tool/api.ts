@@ -17,6 +17,7 @@ import { readForegroundControlStatus, writeForegroundInterruptRequest } from "..
 import { followUpLiveAgent, getLiveAgent, listLiveAgents, resumeLiveAgent, steerLiveAgent, stopLiveAgent } from "../../subagents/live/manager.ts";
 import { appendLiveAgentControlRequest } from "../../subagents/live/control.ts";
 import { liveControlRealtimeMessage, publishLiveControlRealtime } from "../../subagents/live/realtime.ts";
+import { buildCapabilityInventory } from "../../runtime/capability-inventory.ts";
 import { resolveRealContainedPath } from "../../utils/safe-paths.ts";
 import type { PiTeamsToolResult } from "../tool-result.ts";
 import { configRecord, result, type TeamContext } from "./context.ts";
@@ -75,6 +76,10 @@ export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): 
 			return true;
 		});
 		return result(JSON.stringify(filtered, null, 2), { action: "api", status: "ok", ...(runIdFilter ? { runId: runIdFilter } : {}) });
+	}
+	if (operation === "inventory") {
+		const inventory = buildCapabilityInventory(ctx.cwd);
+		return result(JSON.stringify(inventory, null, 2), { action: "api", status: "ok" });
 	}
 	if (!params.runId) return result("API requires runId.", { action: "api", status: "error" }, true);
 	const loaded = loadRunManifestById(ctx.cwd, params.runId);
